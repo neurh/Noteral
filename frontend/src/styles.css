@@ -121,16 +121,18 @@ kbd {
 .no-drag, button, input, textarea, select, .tab, .menu, .window-controls, .tab-strip { --wails-draggable: no-drag; }
 
 /* App frame */
-.app-shell { display: grid; grid-template-rows: var(--titlebar-h) minmax(0, 1fr) var(--status-h); height: 100vh; background: var(--bg); }
-.app-body { display: flex; min-height: 0; position: relative; }
-.center-column { flex: 1; min-width: 0; min-height: 0; display: flex; background: var(--bg); position: relative; }
+.app-shell { display: flex; flex-direction: column; height: 100vh; background: var(--bg); }
+.app-body { display: flex; flex: 1; min-height: 0; position: relative; }
+.center-column { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); position: relative; }
 
 /* Titlebar */
 .titlebar {
   display: flex;
   align-items: center;
   gap: 0;
+  flex: 0 0 var(--titlebar-h);
   height: var(--titlebar-h);
+  min-width: 0;
   padding: 0 7px 0 0;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-raised) 76%, var(--bg));
@@ -139,13 +141,14 @@ kbd {
   position: relative;
   z-index: 30;
 }
-.titlebar-mac { padding-left: 78px; }
-.traffic-light-space { width: 0; }
-.titlebar-left, .titlebar-right { display: flex; align-items: center; gap: 3px; min-width: 0; }
-/* Keep the sidebar toggle centred over the rail column, and start the tabs
-   flush with the rail's right edge (the left sidebar's left edge). */
-.titlebar-left { flex: 0 0 var(--rail-w); justify-content: center; }
-.titlebar-right { flex: 0 0 auto; margin-left: 6px; }
+.titlebar-mac { padding-left: 22px; }
+.titlebar-mac.titlebar-after-sidebar { padding-left: 0; }
+/* macOS keeps native traffic lights above the app strip; reserve their band. */
+.app-shell[data-platform="darwin"] .rail { padding-top: 32px; }
+.app-shell[data-platform="darwin"] .titlebar,
+.app-shell[data-platform="darwin"] .left-sidebar-tabs,
+.app-shell[data-platform="darwin"] .right-tabs { margin-top: 32px; }
+.titlebar-right { display: flex; align-items: center; gap: 3px; min-width: 0; flex: 0 0 auto; margin-left: 6px; }
 .titlebar-spacer { flex: 1 1 auto; min-width: 6px; }
 .window-controls { display: flex; align-items: center; gap: 1px; margin-left: 3px; }
 .window-button {
@@ -208,10 +211,9 @@ kbd {
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-sunken) 50%, var(--bg));
   display: flex; flex-direction: column; align-items: center;
-  padding: 9px 0 8px; gap: 8px; user-select: none;
+  padding: 0 0 8px; gap: 8px; user-select: none;
 }
-.rail-top { display: grid; place-items: center; height: 28px; }
-.rail-logo { width: 18px; height: 18px; border-radius: 5px; background: var(--text); color: var(--bg); display: grid; place-items: center; font-family: var(--font-reading); font-size: 12px; font-weight: 650; }
+.rail-top { flex: 0 0 var(--titlebar-h); width: 100%; height: var(--titlebar-h); display: grid; place-items: center; }
 .rail-items { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; width: 100%; padding-top: 3px; }
 .rail-button {
   width: 36px; height: 36px; border: 0; border-radius: 8px; background: transparent;
@@ -243,10 +245,15 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   font-size: 10.5px; font-weight: 620; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint);
 }
 .sidebar-section-heading button { letter-spacing: normal; text-transform: none; }
-.left-tabs, .right-tabs {
-  display: flex; align-items: center; gap: 2px; height: 35px;
-  padding: 4px 8px; border-bottom: 1px solid var(--border);
+.left-sidebar-tabs, .right-tabs {
+  display: flex; align-items: center; gap: 2px;
+  flex: 0 0 var(--titlebar-h); height: var(--titlebar-h);
+  border-bottom: 1px solid var(--border);
 }
+.left-sidebar-tabs { padding: 0 8px; }
+.right-tabs { padding: 0 4px 0 8px; }
+.rail-top, .left-sidebar-tabs, .right-tabs { --wails-draggable: drag; user-select: none; }
+.right-tabs .window-controls { margin-left: 4px; }
 .left-tab, .right-tab {
   height: 26px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted);
   display: grid; place-items: center; padding: 0 8px;
@@ -255,7 +262,8 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .right-tab { width: 28px; }
 .left-tab:hover, .right-tab:hover { background: var(--bg-hover); color: var(--text); }
 .left-tab.active, .right-tab.active { background: var(--bg-active); color: var(--text); }
-.left-tab-spacer, .right-tab-spacer { flex: 1; }
+.left-tab-spacer { flex: 1; }
+.right-tabs-views { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
 .left-tab-count { font-size: 10px; color: var(--text-faint); padding-right: 3px; }
 .left-content, .right-content { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .left-scroll, .tree-scroll { overflow: auto; padding: 2px 6px 20px; }
@@ -412,7 +420,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .panel-note { color: var(--text-faint); font-size: 11px; line-height: 1.5; padding: 4px 7px; }
 
 /* Status bar */
-.status-bar { display: flex; align-items: center; justify-content: space-between; height: var(--status-h); border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-sunken) 55%, var(--bg)); padding: 0 10px; font-size: 10.5px; color: var(--text-faint); user-select: none; gap: 10px; }
+.status-bar { display: flex; flex: 0 0 var(--status-h); align-items: center; justify-content: space-between; height: var(--status-h); border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-sunken) 55%, var(--bg)); padding: 0 10px; font-size: 10.5px; color: var(--text-faint); user-select: none; gap: 10px; }
 .status-left, .status-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .save-state { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .save-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-faint); }
@@ -730,6 +738,8 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 }
 @media (max-width: 900px) {
   .left-sidebar { display: none; }
+  .rail-top { display: none; }
+  .rail-items { padding-top: 8px; }
   .page-editor { padding-left: 30px; padding-right: 30px; }
   .page-emblem { left: -28px; font-size: 21px; }
   .palette-item-subtitle { display: none; }

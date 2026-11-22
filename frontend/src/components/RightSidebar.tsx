@@ -5,6 +5,7 @@ import { editorBridge } from "../lib/editorBridge";
 import { formatDate } from "../lib/format";
 import { useAppStore, type RightTab } from "../store";
 import { usePluginPanels } from "../plugins/runtime";
+import { WindowControls } from "./WindowControls";
 
 const tabs: Array<{ id: RightTab; label: string; icon: typeof List }> = [
   { id: "outline", label: "Outline", icon: List },
@@ -15,6 +16,7 @@ const tabs: Array<{ id: RightTab; label: string; icon: typeof List }> = [
 export function RightSidebar() {
   const open = useAppStore((state) => state.settings.rightOpen);
   const width = useAppStore((state) => state.settings.rightWidth);
+  const platform = useAppStore((state) => state.bootstrap?.platform ?? "");
   const tab = useAppStore((state) => state.rightTab);
   const setTab = useAppStore((state) => state.setRightTab);
   const outline = useAppStore((state) => state.outline);
@@ -76,26 +78,28 @@ export function RightSidebar() {
           document.body.classList.add("resizing");
         }}
       />
-      <div className="right-tabs" role="tablist" aria-label="Inspector views">
-        {tabs.map((item) => {
-          const Icon = item.icon;
-          const selected = tab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-label={item.label}
-              title={item.label}
-              className={`right-tab ${selected ? "active" : ""}`}
-              onClick={() => setTab(item.id)}
-            >
-              <Icon size={15} />
-            </button>
-          );
-        })}
-        <div className="right-tab-spacer" />
+      <div className="right-tabs">
+        <div className="right-tabs-views" role="tablist" aria-label="Inspector views">
+          {tabs.map((item) => {
+            const Icon = item.icon;
+            const selected = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                aria-label={item.label}
+                title={item.label}
+                className={`right-tab ${selected ? "active" : ""}`}
+                onClick={() => setTab(item.id)}
+              >
+                <Icon size={15} />
+              </button>
+            );
+          })}
+        </div>
+        {platform !== "darwin" ? <WindowControls /> : null}
       </div>
       <div className="right-content">
         {!page ? <div className="empty-hint small"><p>Open a page to see its details.</p></div> : null}

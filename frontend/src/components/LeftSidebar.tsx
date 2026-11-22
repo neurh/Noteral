@@ -1,20 +1,14 @@
 import { useEffect, useRef } from "react";
-import { ChevronDown, Clock, ListTree, Plus, Star } from "lucide-react";
-import { useAppStore, type LeftTab } from "../store";
+import { ChevronDown, Plus } from "lucide-react";
+import { useAppStore } from "../store";
 import { PageTree } from "./PageTree";
 import { PageList } from "./PageList";
-
-const tabs: Array<{ id: LeftTab; label: string; icon: typeof ListTree }> = [
-  { id: "tree", label: "Page tree", icon: ListTree },
-  { id: "favorites", label: "Favorites", icon: Star },
-  { id: "recent", label: "Recent", icon: Clock },
-];
+import { LeftSidebarTabs } from "./LeftSidebarTabs";
 
 export function LeftSidebar() {
   const open = useAppStore((state) => state.settings.leftOpen);
   const width = useAppStore((state) => state.settings.leftWidth);
   const tab = useAppStore((state) => state.leftTab);
-  const setTab = useAppStore((state) => state.setLeftTab);
   const workspace = useAppStore((state) => state.workspace);
   const favorites = useAppStore((state) => state.favorites);
   const recent = useAppStore((state) => state.recent);
@@ -49,6 +43,7 @@ export function LeftSidebar() {
   const favoritePages = pages.filter((page) => favorites.includes(page.id));
   return (
     <aside className="left-sidebar" style={{ width }} aria-label="Sidebar">
+      <LeftSidebarTabs />
       <div className="workspace-switcher">
         <button
           type="button"
@@ -64,28 +59,6 @@ export function LeftSidebar() {
         <button type="button" className="icon-button" aria-label="New page" title="New page" onClick={() => void createPage()}>
           <Plus size={16} />
         </button>
-      </div>
-      <div className="left-tabs" role="tablist" aria-label="Sidebar views">
-        {tabs.map((item) => {
-          const Icon = item.icon;
-          const selected = tab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-label={item.label}
-              title={item.label}
-              className={`left-tab ${selected ? "active" : ""}`}
-              onClick={() => setTab(item.id)}
-            >
-              <Icon size={15} />
-            </button>
-          );
-        })}
-        <div className="left-tab-spacer" />
-        <span className="left-tab-count" title="Pages in workspace">{pages.length}</span>
       </div>
       <div className="left-content">
         {tab === "tree" ? <PageTree /> : null}

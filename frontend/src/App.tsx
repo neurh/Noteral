@@ -289,8 +289,8 @@ export default function App() {
   useEffect(() => {
     const onResize = () => {
       const state = store.getState();
-      if (window.innerWidth < 1100 && state.settings.rightOpen) state.updateSettings({ rightOpen: false }, false);
-      if (window.innerWidth < 860 && state.settings.leftOpen) state.updateSettings({ leftOpen: false }, false);
+      if (window.innerWidth <= 1180 && state.settings.rightOpen) state.updateSettings({ rightOpen: false }, false);
+      if (window.innerWidth <= 900 && state.settings.leftOpen) state.updateSettings({ leftOpen: false }, false);
     };
     onResize();
     window.addEventListener("resize", onResize);
@@ -344,11 +344,11 @@ export default function App() {
 
   return (
     <div className="app-shell" data-platform={bootstrap.platform}>
-      <TitleBar />
       <div className="app-body">
         <Rail />
         <LeftSidebar />
         <div className="center-column">
+          <TitleBar />
           <EditorStack />
         </div>
         <RightSidebar />

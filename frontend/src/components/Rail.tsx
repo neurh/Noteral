@@ -1,4 +1,4 @@
-import { Boxes, LibraryBig, Puzzle, Search, Settings } from "lucide-react";
+import { Boxes, LibraryBig, PanelLeft, Puzzle, Search, Settings } from "lucide-react";
 import { useAppStore } from "../store";
 
 const items = [
@@ -12,10 +12,22 @@ const items = [
 export function Rail() {
   const overlay = useAppStore((state) => state.overlay);
   const setOverlay = useAppStore((state) => state.setOverlay);
+  const leftOpen = useAppStore((state) => state.settings.leftOpen);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+
   return (
     <nav className="rail" aria-label="Primary">
-      <div className="rail-top" aria-hidden="true">
-        <span className="rail-logo">N</span>
+      <div className="rail-top">
+        <button
+          type="button"
+          className={`icon-button rail-toggle ${leftOpen ? "is-on" : ""}`}
+          aria-label={leftOpen ? "Hide sidebar" : "Show sidebar"}
+          aria-pressed={leftOpen}
+          title={leftOpen ? "Hide sidebar (Ctrl+B)" : "Show sidebar (Ctrl+B)"}
+          onClick={() => updateSettings({ leftOpen: !leftOpen })}
+        >
+          <PanelLeft size={17} />
+        </button>
       </div>
       <div className="rail-items">
         {items.map((item) => {
