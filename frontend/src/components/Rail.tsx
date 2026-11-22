@@ -1,4 +1,4 @@
-import { Boxes, LibraryBig, PanelLeft, Puzzle, Search, Settings } from "lucide-react";
+import { Layers, LibraryBig, PanelLeft, Puzzle, Search, Settings } from "lucide-react";
 import { useAppStore } from "../store";
 
 const items = [
@@ -9,7 +9,7 @@ const items = [
 
 const bottomItems = [
   { id: "settings", label: "Settings", icon: Settings },
-  { id: "workspaces", label: "Workspaces", icon: Boxes },
+  { id: "workspaces", label: "Workspaces", icon: Layers },
 ] as const;
 
 export function Rail() {

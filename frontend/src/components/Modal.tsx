@@ -66,8 +66,13 @@ export function Modal({ open, title, subtitle, onClose, children, footer, width 
       const input = panel.current?.querySelector<HTMLElement>(
         ".modal-body input:not([type='hidden']):not([type='checkbox']):not([type='radio']):not([type='range']), .modal-body textarea, .modal-body select",
       );
-      const fallback = panel.current?.querySelector<HTMLElement>(".modal-body button, .modal-body [tabindex]:not([tabindex='-1'])");
-      (input ?? fallback ?? panel.current)?.focus();
+      const footerAction = panel.current?.querySelector<HTMLElement>(
+        ".modal-footer .primary-button, .modal-footer .secondary-button",
+      );
+      const bodyAction = panel.current?.querySelector<HTMLElement>(
+        ".modal-body button, .modal-body [tabindex]:not([tabindex='-1'])",
+      );
+      (input ?? footerAction ?? bodyAction ?? panel.current)?.focus();
     }, 30);
     return () => {
       window.removeEventListener("keydown", onKey);
