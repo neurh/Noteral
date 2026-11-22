@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"noteral/internal/blocknote"
 )
@@ -73,7 +75,12 @@ func (s *Store) Snapshot(workspaceID string) (WorkspaceSnapshot, error) {
 	trash, _ := listTrash(ws.DB)
 	ui, _ := loadUISettings(ws.DB)
 	w.PageCount = len(pages)
-	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: ui.Tabs, ActivePageID: ui.ActivePageID, Trash: trash}, nil
+	valid := make(map[string]bool, len(pages))
+	for _, page := range pages {
+		valid[page.ID] = true
+	}
+	tabs, activeTab := normalizeTabState(ui.Tabs, ui.ActiveTabID, valid)
+	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: tabs, ActiveTabID: activeTab, ActivePageID: activePageForTab(activeTab), HomeTabs: normalizeHomeTabs(tabs, ui.HomeTabs), Trash: trash}, nil
 }
 
 // listTrash returns trashed pages whose parent is not also trashed, so each
@@ -687,8 +694,94 @@ func (s *Store) GetBacklinks(workspaceID, pageID string) ([]PageMeta, error) {
 	return out, rows.Err()
 }
 
-// SaveUITabs persists open tabs and the active page for a workspace.
-func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string) error {
+const homeTabPrefix = "home:"
+
+func isHomeTabID(id string) bool {
+	if !strings.HasPrefix(id, homeTabPrefix) || len(id) > 80 {
+		return false
+	}
+	suffix := id[len(homeTabPrefix):]
+	if suffix == "" {
+		return false
+	}
+	for _, r := range suffix {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func newHomeTabID() string {
+	return homeTabPrefix + strconv.FormatInt(time.Now().UnixNano(), 36)
+}
+
+func activePageForTab(tabID string) string {
+	if isHomeTabID(tabID) {
+		return ""
+	}
+	return tabID
+}
+
+var homeTemplates = map[string]bool{"default": true, "library": true, "focus": true, "gallery": true}
+var homeBackgrounds = map[string]bool{"paper": true, "linen": true, "sage": true, "clay": true, "dusk": true}
+
+func normalizeHomeSettings(in HomeTabSettings) HomeTabSettings {
+	out := HomeTabSettings{Template: "default", Background: "paper"}
+	if homeTemplates[in.Template] {
+		out.Template = in.Template
+	}
+	if homeBackgrounds[in.Background] {
+		out.Background = in.Background
+	}
+	return out
+}
+
+// normalizeHomeTabs keeps appearance settings only for Home tabs that are
+// actually open, filling defaults for new tabs and dropping stale entries.
+func normalizeHomeTabs(tabs []string, in map[string]HomeTabSettings) map[string]HomeTabSettings {
+	out := make(map[string]HomeTabSettings)
+	for _, tab := range tabs {
+		if !isHomeTabID(tab) {
+			continue
+		}
+		out[tab] = normalizeHomeSettings(in[tab])
+	}
+	return out
+}
+
+// normalizeTabState keeps known page tabs and reserved Home tabs, removes
+// duplicates, and guarantees that a workspace always has at least one tab.
+func normalizeTabState(tabs []string, active string, valid map[string]bool) ([]string, string) {
+	seen := make(map[string]bool, len(tabs))
+	clean := make([]string, 0, len(tabs))
+	for _, id := range tabs {
+		if len(clean) >= 50 {
+			break
+		}
+		if !valid[id] && !isHomeTabID(id) {
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		clean = append(clean, id)
+		seen[id] = true
+	}
+	if len(clean) == 0 {
+		clean = append(clean, newHomeTabID())
+		seen[clean[0]] = true
+	}
+	if !seen[active] {
+		active = clean[0]
+	}
+	return clean, active
+}
+
+// SaveUITabs persists open tabs and the active tab for a workspace. Tabs may be
+// page IDs or reserved Home tab IDs; active is the active tab, not necessarily
+// a page.
+func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string, homeTabs map[string]HomeTabSettings) error {
 	ws, err := s.workspace(workspaceID)
 	if err != nil {
 		return err
@@ -704,21 +797,8 @@ func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string) err
 		valid[id] = true
 	}
 	rows.Close()
-	seen := map[string]bool{}
-	clean := make([]string, 0, len(tabs))
-	for _, id := range tabs {
-		if valid[id] && !seen[id] && len(clean) < 50 {
-			clean = append(clean, id)
-			seen[id] = true
-		}
-	}
-	if !valid[active] {
-		active = ""
-	}
-	if active == "" && len(clean) > 0 {
-		active = clean[0]
-	}
-	raw, _ := json.Marshal(UISettings{Tabs: clean, ActivePageID: active})
+	clean, active := normalizeTabState(tabs, active, valid)
+	raw, _ := json.Marshal(UISettings{Tabs: clean, ActiveTabID: active, ActivePageID: activePageForTab(active), HomeTabs: normalizeHomeTabs(clean, homeTabs)})
 	_, err = ws.DB.Exec(`INSERT INTO workspace_settings(key,value) VALUES('ui',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, string(raw))
 	return err
 }
@@ -737,6 +817,12 @@ func loadUISettings(db *sql.DB) (UISettings, error) {
 	}
 	if ui.Tabs == nil {
 		ui.Tabs = []string{}
+	}
+	if ui.ActiveTabID == "" {
+		ui.ActiveTabID = ui.ActivePageID
+	}
+	if ui.ActiveTabID == "" && len(ui.Tabs) > 0 {
+		ui.ActiveTabID = ui.Tabs[0]
 	}
 	return ui, nil
 }
@@ -767,13 +853,27 @@ func removeFromTabsMany(tx *sql.Tx, pageIDs []string) error {
 			out = append(out, id)
 		}
 	}
-	if doomed[ui.ActivePageID] {
-		ui.ActivePageID = ""
-		if len(out) > 0 {
-			ui.ActivePageID = out[0]
+	if len(out) == 0 {
+		out = append(out, newHomeTabID())
+	}
+	activeTab := ui.ActiveTabID
+	if activeTab == "" {
+		activeTab = ui.ActivePageID
+	}
+	present := false
+	for _, id := range out {
+		if id == activeTab {
+			present = true
+			break
 		}
 	}
+	if !present {
+		activeTab = out[0]
+	}
 	ui.Tabs = out
+	ui.ActiveTabID = activeTab
+	ui.ActivePageID = activePageForTab(activeTab)
+	ui.HomeTabs = normalizeHomeTabs(out, ui.HomeTabs)
 	b, _ := json.Marshal(ui)
 	_, err := tx.Exec(`UPDATE workspace_settings SET value=? WHERE key='ui'`, string(b))
 	return err

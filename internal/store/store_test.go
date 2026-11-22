@@ -112,6 +112,61 @@ func TestSaveReopenConflictAndSearch(t *testing.T) {
 	}
 }
 
+func TestHomeSettingsDefaults(t *testing.T) {
+	got := normalizeHomeSettings(HomeTabSettings{Template: "neon", Background: "chartreuse"})
+	if got.Template != "default" || got.Background != "paper" {
+		t.Fatalf("unknown values should fall back to defaults: %+v", got)
+	}
+	got = normalizeHomeSettings(HomeTabSettings{Template: "focus", Background: "sage"})
+	if got.Template != "focus" || got.Background != "sage" {
+		t.Fatalf("supported values should survive: %+v", got)
+	}
+}
+
+func TestHomeTabsPersist(t *testing.T) {
+	st, _ := openTestStore(t)
+	homeTabs := map[string]HomeTabSettings{
+		"home:one":   {Template: "gallery", Background: "sage"},
+		"home:two":   {Template: "focus", Background: "dusk"},
+		"home:stale": {Template: "library", Background: "clay"},
+	}
+	if err := st.SaveUITabs("ws_default", []string{"home:one", "pg_welcome", "home:two", "home:one", "pg_missing"}, "home:two", homeTabs); err != nil {
+		t.Fatalf("save tabs: %v", err)
+	}
+	snap, err := st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snap.Tabs) != 3 || snap.Tabs[0] != "home:one" || snap.Tabs[1] != "pg_welcome" || snap.Tabs[2] != "home:two" {
+		t.Fatalf("unexpected home tabs: %#v", snap.Tabs)
+	}
+	if snap.ActiveTabID != "home:two" || snap.ActivePageID != "" {
+		t.Fatalf("unexpected active home tab: %q page=%q", snap.ActiveTabID, snap.ActivePageID)
+	}
+	if snap.HomeTabs["home:one"].Template != "gallery" || snap.HomeTabs["home:one"].Background != "sage" {
+		t.Fatalf("unexpected home one settings: %+v", snap.HomeTabs["home:one"])
+	}
+	if _, ok := snap.HomeTabs["home:stale"]; ok {
+		t.Fatal("stale home tab settings were persisted")
+	}
+
+	if err := st.SaveUITabs("ws_default", snap.Tabs, "pg_welcome", snap.HomeTabs); err != nil {
+		t.Fatalf("save page tab: %v", err)
+	}
+	snap, _ = st.Snapshot("ws_default")
+	if snap.ActiveTabID != "pg_welcome" || snap.ActivePageID != "pg_welcome" {
+		t.Fatalf("unexpected active page tab: %q page=%q", snap.ActiveTabID, snap.ActivePageID)
+	}
+
+	if err := st.SaveUITabs("ws_default", nil, "", nil); err != nil {
+		t.Fatalf("save empty tabs: %v", err)
+	}
+	snap, _ = st.Snapshot("ws_default")
+	if len(snap.Tabs) != 1 || !isHomeTabID(snap.Tabs[0]) || snap.ActiveTabID != snap.Tabs[0] || snap.ActivePageID != "" {
+		t.Fatalf("empty tabs should rest on Home: %#v active=%q page=%q", snap.Tabs, snap.ActiveTabID, snap.ActivePageID)
+	}
+}
+
 func TestBacklinksFavoritesTabsAndTrash(t *testing.T) {
 	st, _ := openTestStore(t)
 	child, err := st.CreatePage("ws_default", "")
@@ -133,15 +188,15 @@ func TestBacklinksFavoritesTabsAndTrash(t *testing.T) {
 	if err != nil || !favorite {
 		t.Fatalf("favorite: %v %v", favorite, err)
 	}
-	if err := st.SaveUITabs("ws_default", []string{"pg_welcome", child.ID, "pg_missing"}, child.ID); err != nil {
+	if err := st.SaveUITabs("ws_default", []string{"pg_welcome", child.ID, "pg_missing"}, child.ID, nil); err != nil {
 		t.Fatalf("save tabs: %v", err)
 	}
 	snap, err := st.Snapshot("ws_default")
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
 	}
-	if len(snap.Tabs) != 2 || snap.ActivePageID != child.ID {
-		t.Fatalf("unexpected tabs: %#v active=%s", snap.Tabs, snap.ActivePageID)
+	if len(snap.Tabs) != 2 || snap.ActiveTabID != child.ID || snap.ActivePageID != child.ID {
+		t.Fatalf("unexpected tabs: %#v activeTab=%s activePage=%s", snap.Tabs, snap.ActiveTabID, snap.ActivePageID)
 	}
 	if err := st.TrashPage("ws_default", child.ID); err != nil {
 		t.Fatalf("trash: %v", err)

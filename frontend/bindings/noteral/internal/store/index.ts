@@ -3,6 +3,7 @@
 
 export type {
     AppSettings,
+    HomeTabSettings,
     PageDocument,
     PageMeta,
     SaveResult,

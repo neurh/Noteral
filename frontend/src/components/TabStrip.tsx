@@ -1,43 +1,48 @@
 import { useRef } from "react";
-import { Plus, X } from "lucide-react";
-import { useAppStore } from "../store";
+import { House, Plus, X } from "lucide-react";
+import { HOME_TEMPLATE_LABELS } from "../lib/home";
+import { isHomeTab, useAppStore } from "../store";
 
 export function TabStrip() {
   const tabs = useAppStore((state) => state.tabs);
   const pages = useAppStore((state) => state.pages);
-  const active = useAppStore((state) => state.activePageId);
-  const selectPage = useAppStore((state) => state.selectPage);
+  const active = useAppStore((state) => state.activeTabId);
+  const homeTabs = useAppStore((state) => state.homeTabs);
+  const selectTab = useAppStore((state) => state.selectTab);
   const closeTab = useAppStore((state) => state.closeTab);
   const reorderTabs = useAppStore((state) => state.reorderTabs);
-  const createPage = useAppStore((state) => state.createPage);
+  const openHomeTab = useAppStore((state) => state.openHomeTab);
   const titles = new Map(pages.map((page) => [page.id, page.title]));
   const tabRefs = useRef(new Map<string, HTMLDivElement>());
   let dragIndex: number | null = null;
 
   function focusTab(index: number) {
     const next = Math.max(0, Math.min(tabs.length - 1, index));
-    const pageId = tabs[next];
-    if (!pageId) return;
-    void selectPage(pageId);
-    requestAnimationFrame(() => tabRefs.current.get(pageId)?.focus());
+    const tabId = tabs[next];
+    if (!tabId) return;
+    selectTab(tabId);
+    requestAnimationFrame(() => tabRefs.current.get(tabId)?.focus());
   }
 
   return (
-    <div className="tab-strip" role="tablist" aria-label="Open pages">
-      {tabs.map((pageId, index) => {
-        const title = titles.get(pageId) ?? "Untitled";
-        const selected = active === pageId;
+    <div className="tab-strip" role="tablist" aria-label="Open tabs">
+      {tabs.map((tabId, index) => {
+        const home = isHomeTab(tabId);
+        const title = home ? "Home" : titles.get(tabId) ?? "Untitled";
+        const homeTitle = home ? `Home · ${HOME_TEMPLATE_LABELS[homeTabs[tabId]?.template ?? "default"]}` : title;
+        const selected = active === tabId;
+        const canClose = !(home && tabs.length === 1);
         return (
           <div
-            key={pageId}
+            key={tabId}
             ref={(element) => {
-              if (element) tabRefs.current.set(pageId, element);
-              else tabRefs.current.delete(pageId);
+              if (element) tabRefs.current.set(tabId, element);
+              else tabRefs.current.delete(tabId);
             }}
             role="tab"
             aria-selected={selected}
             tabIndex={selected ? 0 : -1}
-            className={`tab ${selected ? "active" : ""}`}
+            className={`tab ${home ? "tab-home" : ""} ${selected ? "active" : ""}`}
             draggable
             onDragStart={(event) => {
               dragIndex = index;
@@ -60,13 +65,13 @@ export function TabStrip() {
             onMouseDown={(event) => {
               if (event.button === 1) {
                 event.preventDefault();
-                void closeTab(pageId);
+                if (canClose) void closeTab(tabId);
               }
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                void selectPage(pageId);
+                selectTab(tabId);
               } else if (event.key === "ArrowRight") {
                 event.preventDefault();
                 focusTab(index + 1);
@@ -81,26 +86,35 @@ export function TabStrip() {
                 focusTab(tabs.length - 1);
               }
             }}
-            onClick={() => void selectPage(pageId)}
-            title={title}
+            onClick={() => selectTab(tabId)}
+            title={homeTitle}
           >
+            {home ? <House size={13} className="tab-home-icon" aria-hidden="true" /> : null}
             <span className="tab-title">{title}</span>
-            <button
-              type="button"
-              className="tab-close"
-              aria-label={`Close ${title}`}
-              title={`Close ${title}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                void closeTab(pageId);
-              }}
-            >
-              <X size={12} />
-            </button>
+            {canClose ? (
+              <button
+                type="button"
+                className="tab-close"
+                aria-label={`Close ${homeTitle}`}
+                title={`Close ${homeTitle}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void closeTab(tabId);
+                }}
+              >
+                <X size={12} />
+              </button>
+            ) : null}
           </div>
         );
       })}
-      <button type="button" className="icon-button tab-new" aria-label="New page" title="New page (Ctrl+N)" onClick={() => void createPage()}>
+      <button
+        type="button"
+        className="icon-button tab-new"
+        aria-label="New tab"
+        title="New tab (Ctrl+T)"
+        onClick={() => openHomeTab()}
+      >
         <Plus size={15} />
       </button>
     </div>

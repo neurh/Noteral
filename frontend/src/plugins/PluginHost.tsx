@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import { editorBridge } from "../lib/editorBridge";
-import { useAppStore } from "../store";
+import { isHomeTab, useAppStore } from "../store";
 import { pluginRuntime } from "./runtime";
 
 export function PluginHost() {
@@ -55,7 +55,10 @@ export function PluginHost() {
       listTabs: () => {
         const state = useAppStore.getState();
         const titles = new Map(state.pages.map((page) => [page.id, page.title]));
-        return state.tabs.map((pageId) => ({ pageId, title: titles.get(pageId) ?? "Untitled", active: pageId === state.activePageId }));
+        return state.tabs.flatMap((pageId) => {
+          if (isHomeTab(pageId)) return [];
+          return [{ pageId, title: titles.get(pageId) ?? "Untitled", active: pageId === state.activeTabId }];
+        });
       },
       openPage: async (pageId) => {
         await useAppStore.getState().selectPage(pageId);

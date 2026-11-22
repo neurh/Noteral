@@ -47,22 +47,34 @@ type SearchHit struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// HomeTabSettings customizes a single Home tab.
+type HomeTabSettings struct {
+	Template   string `json:"template"`
+	Background string `json:"background"`
+}
+
 // WorkspaceSnapshot is everything needed to render a workspace shell without
 // reading page bodies.
 type WorkspaceSnapshot struct {
-	Workspace    Workspace  `json:"workspace"`
-	Pages        []PageMeta `json:"pages"`
-	Favorites    []string   `json:"favorites"`
-	Recent       []PageMeta `json:"recent"`
-	Tabs         []string   `json:"tabs"`
-	ActivePageID string     `json:"activePageId"`
-	Trash        []PageMeta `json:"trash"`
+	Workspace    Workspace                  `json:"workspace"`
+	Pages        []PageMeta                 `json:"pages"`
+	Favorites    []string                   `json:"favorites"`
+	Recent       []PageMeta                 `json:"recent"`
+	Tabs         []string                   `json:"tabs"`
+	ActiveTabID  string                     `json:"activeTabId"`
+	ActivePageID string                     `json:"activePageId"`
+	HomeTabs     map[string]HomeTabSettings `json:"homeTabs"`
+	Trash        []PageMeta                 `json:"trash"`
 }
 
-// UISettings is per-workspace layout state.
+// UISettings is per-workspace layout state. Tabs may contain page IDs and
+// reserved "home:" tab IDs; ActiveTabID is the selected tab, while ActivePageID
+// is empty when a Home tab is selected.
 type UISettings struct {
-	Tabs         []string `json:"tabs"`
-	ActivePageID string   `json:"activePageId"`
+	Tabs         []string                   `json:"tabs"`
+	ActiveTabID  string                     `json:"activeTabId"`
+	ActivePageID string                     `json:"activePageId"`
+	HomeTabs     map[string]HomeTabSettings `json:"homeTabs,omitempty"`
 }
 
 // AppSettings is global application preference state.

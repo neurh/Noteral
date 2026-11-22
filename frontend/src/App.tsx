@@ -4,7 +4,7 @@ import { AlertTriangle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api, errorMessage } from "./lib/api";
 import { commandRegistry, type AppCommand } from "./lib/commands";
 import { applyTheme, resolveTheme } from "./lib/theme";
-import { useAppStore } from "./store";
+import { isHomeTab, useAppStore } from "./store";
 import { useAppStore as store } from "./store";
 import { PluginHost } from "./plugins/PluginHost";
 import { TitleBar } from "./components/TitleBar";
@@ -81,10 +81,10 @@ function makeCommands(): AppCommand[] {
       id: "app.new-tab",
       title: "New tab",
       category: "Tabs",
-      description: "Open a fresh page in a new tab",
-      keywords: "create",
+      description: "Open a new Home tab",
+      keywords: "create home",
       shortcut: "Ctrl/⌘ T",
-      run: () => void store.getState().createPage(),
+      run: () => store.getState().openHomeTab(),
     },
     {
       id: "app.close-tab",
@@ -95,7 +95,7 @@ function makeCommands(): AppCommand[] {
       shortcut: "Ctrl/⌘ W",
       run: () => {
         const state = store.getState();
-        if (state.activePageId) void state.closeTab(state.activePageId);
+        if (state.activeTabId) void state.closeTab(state.activeTabId);
       },
     },
     {
@@ -233,6 +233,9 @@ export default function App() {
   const bootError = useAppStore((state) => state.bootError);
   const bootstrap = useAppStore((state) => state.bootstrap);
   const activeTitle = useAppStore((state) => state.documents[state.activePageId]?.title ?? "Noteral");
+  const activeTabId = useAppStore((state) => state.activeTabId);
+  const activePageId = useAppStore((state) => state.activePageId);
+  const showPageHeader = Boolean(activePageId) && !isHomeTab(activeTabId);
   const settings = useAppStore((state) => state.settings);
   const bootstrapApp = useAppStore((state) => state.bootstrapApp);
 
@@ -273,12 +276,15 @@ export default function App() {
         if (state.activePageId) void state.saveNow(state.activePageId);
         return;
       }
-      if (key === "n" || key === "t") {
+      if (key === "n") {
         event.preventDefault();
         void state.createPage();
+      } else if (key === "t") {
+        event.preventDefault();
+        state.openHomeTab();
       } else if (key === "w") {
         event.preventDefault();
-        if (state.activePageId) void state.closeTab(state.activePageId);
+        if (state.activeTabId) void state.closeTab(state.activeTabId);
       } else if (key === "b") {
         // Ctrl/Cmd+B is bold while writing; only toggle outside editable fields.
         if (isEditable(event.target) && !event.shiftKey) return;
@@ -380,7 +386,7 @@ export default function App() {
         <LeftSidebar />
         <div className="center-column">
           <TitleBar />
-          <PageHeader />
+          {showPageHeader ? <PageHeader /> : null}
           <EditorStack />
         </div>
         <RightSidebar />

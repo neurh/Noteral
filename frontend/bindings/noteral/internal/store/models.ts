@@ -50,6 +50,14 @@ export interface AppSettings {
 }
 
 /**
+ * HomeTabSettings customizes a single Home tab.
+ */
+export interface HomeTabSettings {
+    "template": string;
+    "background": string;
+}
+
+/**
  * PageDocument is a full page body loaded on demand.
  */
 export interface PageDocument {
@@ -123,6 +131,8 @@ export interface WorkspaceSnapshot {
     "favorites": string[] | null;
     "recent": PageMeta[] | null;
     "tabs": string[] | null;
+    "activeTabId": string;
     "activePageId": string;
+    "homeTabs": { [_ in string]?: HomeTabSettings } | null;
     "trash": PageMeta[] | null;
 }

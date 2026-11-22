@@ -20,8 +20,8 @@ func seedWelcomePage(ws *WorkspaceDB) error {
 	if err != nil {
 		return fmt.Errorf("seed welcome page: %w", err)
 	}
-	ui := `{"tabs":["` + id + `"],"activePageId":"` + id + `"}`
-	_, _ = ws.DB.Exec(`INSERT INTO workspace_settings(key,value) VALUES('ui',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, ui)
+	ui, _ := json.Marshal(UISettings{Tabs: []string{id}, ActiveTabID: id, ActivePageID: id})
+	_, _ = ws.DB.Exec(`INSERT INTO workspace_settings(key,value) VALUES('ui',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, string(ui))
 	_, _ = ws.DB.Exec(`INSERT INTO recent(page_id,opened_at) VALUES(?,?)`, id, now)
 	return nil
 }

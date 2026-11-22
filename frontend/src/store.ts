@@ -3,6 +3,7 @@ import { api, errorMessage, list } from "./lib/api";
 import type { AppSettings, Bootstrap, Info, PageDocument, PageMeta, Workspace, WorkspaceSnapshot } from "./lib/api";
 import { editorBridge, type OutlineItem } from "./lib/editorBridge";
 import { applyTheme, resolveTheme, type ResolvedTheme } from "./lib/theme";
+import { defaultHomeTabSettings, normalizeHomeTabSettings, type HomeTabSettings } from "./lib/home";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 export type Overlay = "palette" | "library" | "plugins" | "settings" | "workspaces" | null;
@@ -78,7 +79,9 @@ interface AppState {
   favorites: string[];
   recent: PageMeta[];
   tabs: string[];
+  homeTabs: Record<string, HomeTabSettings>;
   trash: PageMeta[];
+  activeTabId: string;
   activePageId: string;
   history: string[];
   historyIndex: number;
@@ -103,6 +106,9 @@ interface AppState {
   renameWorkspace: (id: string, name: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
   selectPage: (pageId: string, options?: { recordHistory?: boolean }) => Promise<void>;
+  selectTab: (tabId: string) => void;
+  openHomeTab: (settings?: Partial<HomeTabSettings>) => void;
+  updateHomeTab: (tabId: string, patch: Partial<HomeTabSettings>) => void;
   goBack: () => void;
   goForward: () => void;
   ensurePageLoaded: (pageId: string) => Promise<LoadedDocument | null>;
@@ -147,22 +153,76 @@ const editVersions = new Map<string, number>();
 const savedVersions = new Map<string, number>();
 const pageLoads = new Map<string, Promise<LoadedDocument | null>>();
 let toastSequence = 0;
+const HOME_TAB_PREFIX = "home:";
+let homeTabSequence = 0;
 
-function normalizeSnapshot(snapshot: WorkspaceSnapshot, previous?: AppState): { pages: PageMeta[]; tabs: string[]; active: string; favorites: string[]; recent: PageMeta[]; trash: PageMeta[] } {
+export function isHomeTab(tabId: string): boolean {
+  return tabId.startsWith(HOME_TAB_PREFIX);
+}
+
+function createHomeTabId(): string {
+  homeTabSequence += 1;
+  return `${HOME_TAB_PREFIX}${Date.now().toString(36)}-${homeTabSequence.toString(36)}`;
+}
+
+function pageIdForTab(tabId: string): string {
+  return tabId && !isHomeTab(tabId) ? tabId : "";
+}
+
+function pageTabs(tabs: string[]): string[] {
+  return tabs.filter((tabId) => !isHomeTab(tabId));
+}
+
+function withoutHomeTab(settings: Record<string, HomeTabSettings>, tabId: string): Record<string, HomeTabSettings> {
+  if (!isHomeTab(tabId) || !(tabId in settings)) return settings;
+  const next = { ...settings };
+  delete next[tabId];
+  return next;
+}
+
+function tabsWithPage(state: AppState, pageId: string): string[] {
+  if (state.tabs.includes(pageId)) return state.tabs;
+  if (isHomeTab(state.activeTabId)) {
+    return state.tabs.map((tabId) => (tabId === state.activeTabId ? pageId : tabId));
+  }
+  return [...state.tabs, pageId];
+}
+
+function homeTabsAfterPageOpen(state: AppState, pageId: string): Record<string, HomeTabSettings> {
+  if (!isHomeTab(state.activeTabId)) return state.homeTabs;
+  return tabsWithPage(state, pageId).includes(state.activeTabId)
+    ? state.homeTabs
+    : withoutHomeTab(state.homeTabs, state.activeTabId);
+}
+
+function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; tabs: string[]; homeTabs: Record<string, HomeTabSettings>; activeTabId: string; active: string; favorites: string[]; recent: PageMeta[]; trash: PageMeta[] } {
   const pages = list(snapshot.pages);
   const known = new Set(pages.map((page) => page.id));
-  let tabs = list(snapshot.tabs).filter((id) => known.has(id));
-  let active = snapshot.activePageId;
-  if (!tabs.includes(active)) active = tabs[0] ?? "";
-  if (!active && pages.length > 0) {
-    const preferred = previous?.activePageId && known.has(previous.activePageId) ? previous.activePageId : pages[0].id;
-    tabs = [preferred];
-    active = preferred;
+  const seen = new Set<string>();
+  let tabs = list(snapshot.tabs).filter((id) => {
+    if (seen.has(id)) return false;
+    if (!isHomeTab(id) && !known.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  let activeTabId = snapshot.activeTabId || snapshot.activePageId;
+  if (!tabs.includes(activeTabId)) {
+    activeTabId = tabs.includes(snapshot.activePageId) ? snapshot.activePageId : tabs[0] ?? "";
+  }
+  if (!activeTabId) {
+    activeTabId = createHomeTabId();
+    tabs = [activeTabId];
+  }
+  const homeTabs: Record<string, HomeTabSettings> = {};
+  for (const tabId of tabs) {
+    if (isHomeTab(tabId)) homeTabs[tabId] = normalizeHomeTabSettings(snapshot.homeTabs?.[tabId]);
   }
   return {
     pages,
     tabs,
-    active,
+    homeTabs,
+    activeTabId,
+    active: pageIdForTab(activeTabId),
     favorites: list(snapshot.favorites).filter((id) => known.has(id)),
     recent: list(snapshot.recent),
     trash: list(snapshot.trash),
@@ -170,7 +230,7 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot, previous?: AppState): { 
 }
 
 function snapshotPatch(snapshot: WorkspaceSnapshot, state: AppState): Partial<AppState> {
-  const normalized = normalizeSnapshot(snapshot, state);
+  const normalized = normalizeSnapshot(snapshot);
   const live = new Set(normalized.pages.map((page) => page.id));
   const documents: Record<string, LoadedDocument> = {};
   for (const [id, doc] of Object.entries(state.documents)) {
@@ -192,6 +252,8 @@ function snapshotPatch(snapshot: WorkspaceSnapshot, state: AppState): Partial<Ap
     favorites: normalized.favorites,
     recent: normalized.recent,
     tabs: normalized.tabs,
+    homeTabs: normalized.homeTabs,
+    activeTabId: normalized.activeTabId,
     activePageId: normalized.active,
     history: aligned.history,
     historyIndex: aligned.historyIndex,
@@ -212,7 +274,9 @@ function activatePagePatch(state: AppState, pageId: string): Partial<AppState> {
   if (!page) return {};
   const pushed = pushHistory(state.history, state.historyIndex, pageId);
   return {
-    tabs: state.tabs.includes(pageId) ? state.tabs : [...state.tabs, pageId],
+    tabs: tabsWithPage(state, pageId),
+    homeTabs: homeTabsAfterPageOpen(state, pageId),
+    activeTabId: pageId,
     activePageId: pageId,
     history: pushed.history,
     historyIndex: pushed.historyIndex,
@@ -296,7 +360,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   favorites: [],
   recent: [],
   tabs: [],
+  homeTabs: {},
   trash: [],
+  activeTabId: "",
   activePageId: "",
   history: [],
   historyIndex: -1,
@@ -359,7 +425,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       const snapshot = await api.openWorkspace(id);
       const workspaces = list(await api.listWorkspaces());
-      const normalized = normalizeSnapshot(snapshot, get());
+      const normalized = normalizeSnapshot(snapshot);
       pageLoads.clear();
       saveChains.clear();
       editVersions.clear();
@@ -371,7 +437,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         favorites: normalized.favorites,
         recent: normalized.recent,
         tabs: normalized.tabs,
+        homeTabs: normalized.homeTabs,
         trash: normalized.trash,
+        activeTabId: normalized.activeTabId,
         activePageId: normalized.active,
         history: normalized.active ? [normalized.active] : [],
         historyIndex: normalized.active ? 0 : -1,
@@ -381,12 +449,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         liveWordCount: 0,
         liveBlockCount: 0,
       });
-      const loaded = await Promise.all(normalized.tabs.map((pageId) => get().ensurePageLoaded(pageId)));
+      const restored = pageTabs(normalized.tabs);
+      const loaded = await Promise.all(restored.map((pageId) => get().ensurePageLoaded(pageId)));
       if (normalized.active) {
         await get().ensurePageLoaded(normalized.active);
         void get().refreshBacklinks();
       }
-      if (loaded.some((item) => !item) && normalized.tabs.length > 0) {
+      if (loaded.some((item) => !item) && restored.length > 0) {
         get().notify("Some tabs could not be restored.", "error");
       }
       scheduleTabs(get);
@@ -417,13 +486,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       pageLoads.clear();
       editVersions.clear();
       savedVersions.clear();
-      const normalized = normalizeSnapshot(snapshot, get());
+      const normalized = normalizeSnapshot(snapshot);
       set({
         pages: normalized.pages,
         favorites: normalized.favorites,
         recent: normalized.recent,
         tabs: normalized.tabs,
+        homeTabs: normalized.homeTabs,
         trash: normalized.trash,
+        activeTabId: normalized.activeTabId,
         activePageId: normalized.active,
         history: normalized.active ? [normalized.active] : [],
         historyIndex: normalized.active ? 0 : -1,
@@ -433,7 +504,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         liveWordCount: 0,
         liveBlockCount: 0,
       });
-      await Promise.all(normalized.tabs.map((pageId) => get().ensurePageLoaded(pageId)));
+      await Promise.all(pageTabs(normalized.tabs).map((pageId) => get().ensurePageLoaded(pageId)));
       if (normalized.active) void get().refreshBacklinks();
       scheduleTabs(get);
       get().notify(`Created ${snapshot.workspace.name}`, "success");
@@ -497,13 +568,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectPage: async (pageId, options) => {
     const page = get().pages.find((item) => item.id === pageId);
     if (!page) return;
-    let tabs = get().tabs;
-    if (!tabs.includes(pageId)) {
-      tabs = [...tabs, pageId];
-      set({ tabs });
-    }
+    const state = get();
+    const tabs = tabsWithPage(state, pageId);
+    if (tabs !== state.tabs) set({ tabs, homeTabs: homeTabsAfterPageOpen(state, pageId) });
     set((state) => {
       const next: Partial<AppState> = {
+        activeTabId: pageId,
         activePageId: pageId,
         outline: [],
         backlinks: [],
@@ -520,6 +590,50 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     await get().ensurePageLoaded(pageId);
     void get().refreshBacklinks();
+    scheduleTabs(get);
+  },
+
+  selectTab: (tabId) => {
+    if (!get().tabs.includes(tabId)) return;
+    if (!isHomeTab(tabId)) {
+      void get().selectPage(tabId);
+      return;
+    }
+    set({
+      activeTabId: tabId,
+      activePageId: "",
+      outline: [],
+      backlinks: [],
+      liveWordCount: 0,
+      liveBlockCount: 0,
+    });
+    scheduleTabs(get);
+  },
+
+  openHomeTab: (settings) => {
+    const tabId = createHomeTabId();
+    const homeSettings = normalizeHomeTabSettings(settings ?? defaultHomeTabSettings);
+    set((state) => ({
+      tabs: [...state.tabs, tabId],
+      homeTabs: { ...state.homeTabs, [tabId]: homeSettings },
+      activeTabId: tabId,
+      activePageId: "",
+      outline: [],
+      backlinks: [],
+      liveWordCount: 0,
+      liveBlockCount: 0,
+    }));
+    scheduleTabs(get);
+  },
+
+  updateHomeTab: (tabId, patch) => {
+    if (!isHomeTab(tabId) || !get().tabs.includes(tabId)) return;
+    set((state) => ({
+      homeTabs: {
+        ...state.homeTabs,
+        [tabId]: normalizeHomeTabSettings({ ...state.homeTabs[tabId], ...patch }),
+      },
+    }));
     scheduleTabs(get);
   },
 
@@ -565,7 +679,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         return {
           pages: [...state.pages, meta],
           documents: { ...state.documents, [loaded.id]: loaded },
-          tabs: state.tabs.includes(loaded.id) ? state.tabs : [...state.tabs, loaded.id],
+          tabs: tabsWithPage(state, loaded.id),
+          homeTabs: homeTabsAfterPageOpen(state, loaded.id),
+          activeTabId: loaded.id,
           activePageId: loaded.id,
           history: pushed.history,
           historyIndex: pushed.historyIndex,
@@ -580,31 +696,61 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  closeTab: async (pageId) => {
-    clearTimersFor(pageId);
-    const ok = await get().saveNow(pageId);
-    if (!ok) return;
-    const tabs = get().tabs;
-    const index = tabs.indexOf(pageId);
-    if (index < 0) return;
-    const nextTabs = tabs.filter((id) => id !== pageId);
-    let active = get().activePageId;
-    if (active === pageId) {
-      active = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0] ?? "";
+  closeTab: async (tabId) => {
+    const initialIndex = get().tabs.indexOf(tabId);
+    if (initialIndex < 0) return;
+    const closingHome = isHomeTab(tabId);
+    if (!closingHome) {
+      clearTimersFor(tabId);
+      const ok = await get().saveNow(tabId);
+      if (!ok) return;
     }
+    // Tabs can change while a page save is in flight.
+    const tabs = get().tabs;
+    const index = tabs.indexOf(tabId);
+    if (index < 0) return;
+    if (tabs.length === 1) {
+      // Closing the final page leaves a fresh Home tab. A lone Home tab is the
+      // resting state, so it stays put.
+      if (closingHome) return;
+      const home = createHomeTabId();
+      set((state) => {
+        const aligned = alignHistory(state.history.filter((id) => id !== tabId), "");
+        return {
+          tabs: [home],
+          homeTabs: { ...state.homeTabs, [home]: { ...defaultHomeTabSettings } },
+          activeTabId: home,
+          activePageId: "",
+          history: aligned.history,
+          historyIndex: aligned.historyIndex,
+          outline: [],
+          backlinks: [],
+          liveWordCount: 0,
+          liveBlockCount: 0,
+        };
+      });
+      scheduleTabs(get);
+      return;
+    }
+    const nextTabs = tabs.filter((id) => id !== tabId);
+    const currentTab = get().activeTabId;
+    const nextTab = currentTab === tabId ? nextTabs[Math.max(0, index - 1)] ?? nextTabs[0] : currentTab;
+    const nextPage = pageIdForTab(nextTab);
+    const activeChanged = nextTab !== currentTab;
     set((state) => {
-      const aligned = alignHistory(state.history.filter((id) => id !== pageId), active);
+      const aligned = alignHistory(state.history.filter((id) => id !== tabId), nextPage);
       return {
         tabs: nextTabs,
-        activePageId: active,
+        homeTabs: withoutHomeTab(state.homeTabs, tabId),
+        activeTabId: nextTab,
+        activePageId: nextPage,
         history: aligned.history,
         historyIndex: aligned.historyIndex,
-        outline: [],
-        backlinks: [],
+        ...(activeChanged ? { outline: [], backlinks: [], liveWordCount: 0, liveBlockCount: 0 } : {}),
       };
     });
-    if (active) {
-      await get().ensurePageLoaded(active);
+    if (activeChanged && nextPage) {
+      await get().ensurePageLoaded(nextPage);
       void get().refreshBacklinks();
     }
     scheduleTabs(get);
@@ -915,7 +1061,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const workspaceId = get().workspace?.id;
     if (!workspaceId) return;
     try {
-      await api.saveTabs(workspaceId, get().tabs, get().activePageId);
+      await api.saveTabs(workspaceId, get().tabs, get().activeTabId, get().homeTabs);
     } catch (error) {
       console.warn("Could not save tabs", error);
     }
