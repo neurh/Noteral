@@ -14,22 +14,32 @@ export interface AppSettings {
     "leftOpen": boolean;
     "rightOpen": boolean;
     "railOpen": boolean;
+
     /**
      * serif, sans
      */
     "editorFont": string;
+
     /**
      * reading text size in px
      */
     "fontSize": number;
+
     /**
      * reading line height
      */
     "lineHeight": number;
+
     /**
      * maximum reading measure in px
      */
     "pageWidth": number;
+
+    /**
+     * editor spans the available pane
+     */
+    "fullWidth": boolean;
+
     /**
      * milliseconds after the last edit
      */
@@ -49,6 +59,7 @@ export interface PageDocument {
     "icon": string;
     "position": number;
     "updatedAt": string;
+    "deletedAt"?: string;
     "docJson": string;
     "revision": number;
     "createdAt": string;
@@ -65,6 +76,7 @@ export interface PageMeta {
     "icon": string;
     "position": number;
     "updatedAt": string;
+    "deletedAt"?: string;
 }
 
 /**
@@ -110,4 +122,5 @@ export interface WorkspaceSnapshot {
     "recent": PageMeta[] | null;
     "tabs": string[] | null;
     "activePageId": string;
+    "trash": PageMeta[] | null;
 }

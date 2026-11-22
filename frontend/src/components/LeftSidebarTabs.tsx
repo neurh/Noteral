@@ -1,10 +1,11 @@
-import { Clock, ListTree, Star } from "lucide-react";
+import { Clock, ListTree, Star, Trash2 } from "lucide-react";
 import { useAppStore, type LeftTab } from "../store";
 
 const tabs: Array<{ id: LeftTab; label: string; icon: typeof ListTree }> = [
   { id: "tree", label: "Page tree", icon: ListTree },
   { id: "favorites", label: "Favorites", icon: Star },
   { id: "recent", label: "Recent", icon: Clock },
+  { id: "trash", label: "Trash", icon: Trash2 },
 ];
 
 export function LeftSidebarTabs() {

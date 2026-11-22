@@ -42,8 +42,24 @@ export function CreateWorkspace(name: string): $CancellablePromise<store$0.Works
     return $Call.ByID(1193029587, name);
 }
 
+/**
+ * DeletePage is kept for older renderers; it now moves the page to the trash
+ * rather than removing it permanently.
+ */
 export function DeletePage(workspaceID: string, pageID: string): $CancellablePromise<store$0.WorkspaceSnapshot> {
     return $Call.ByID(1840943378, workspaceID, pageID);
+}
+
+export function DeletePagePermanently(workspaceID: string, pageID: string): $CancellablePromise<store$0.WorkspaceSnapshot> {
+    return $Call.ByID(3455235351, workspaceID, pageID);
+}
+
+export function DuplicatePage(workspaceID: string, pageID: string): $CancellablePromise<$models.DuplicateResult> {
+    return $Call.ByID(973964764, workspaceID, pageID);
+}
+
+export function EmptyTrash(workspaceID: string): $CancellablePromise<store$0.WorkspaceSnapshot> {
+    return $Call.ByID(2040683095, workspaceID);
 }
 
 export function ExportPageJSON(workspaceID: string, pageID: string): $CancellablePromise<$models.ExportResult> {
@@ -153,6 +169,10 @@ export function RenameWorkspace(id: string, name: string): $CancellablePromise<s
     return $Call.ByID(3670673901, id, name);
 }
 
+export function RestorePage(workspaceID: string, pageID: string): $CancellablePromise<store$0.WorkspaceSnapshot> {
+    return $Call.ByID(1670290655, workspaceID, pageID);
+}
+
 export function RevealDataDir(): $CancellablePromise<void> {
     return $Call.ByID(1392811090);
 }
@@ -202,6 +222,10 @@ export function ToggleFavorite(workspaceID: string, pageID: string): $Cancellabl
 
 export function TogglePlugin(id: string, enabled: boolean): $CancellablePromise<plugins$0.Info> {
     return $Call.ByID(1068528329, id, enabled);
+}
+
+export function TrashPage(workspaceID: string, pageID: string): $CancellablePromise<store$0.WorkspaceSnapshot> {
+    return $Call.ByID(3332222871, workspaceID, pageID);
 }
 
 export function UninstallPlugin(id: string): $CancellablePromise<void> {

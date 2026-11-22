@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, FilePlus2, FileText, MoreHorizontal, Plus, Star, Trash2, Pencil, Download } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, FilePlus2, FileText, MoreHorizontal, Plus, Star, Trash2, Pencil, Download } from "lucide-react";
 import type { PageMeta } from "../lib/api";
 import { api, errorMessage } from "../lib/api";
 import { useAppStore } from "../store";
@@ -32,7 +32,8 @@ export function PageTree() {
   const selectPage = useAppStore((state) => state.selectPage);
   const createPage = useAppStore((state) => state.createPage);
   const renamePage = useAppStore((state) => state.renamePage);
-  const deletePage = useAppStore((state) => state.deletePage);
+  const duplicatePage = useAppStore((state) => state.duplicatePage);
+  const trashPage = useAppStore((state) => state.trashPage);
   const movePage = useAppStore((state) => state.movePage);
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
   const notify = useAppStore((state) => state.notify);
@@ -270,6 +271,7 @@ export function PageTree() {
                 <Star size={14} /> {favorite ? "Remove favorite" : "Add favorite"}
               </button>
               <button type="button" role="menuitem" onClick={() => void createPage(page.id)}><FilePlus2 size={14} /> New child page</button>
+              <button type="button" role="menuitem" onClick={() => { setMenuFor(null); void duplicatePage(page.id); }}><Copy size={14} /> Duplicate</button>
               <div className="menu-separator" />
               <button type="button" role="menuitem" onClick={() => void exportPage(page, "markdown")}><Download size={14} /> Export Markdown</button>
               <button type="button" role="menuitem" onClick={() => void exportPage(page, "json")}><Download size={14} /> Export JSON</button>
@@ -280,10 +282,10 @@ export function PageTree() {
                 className="danger"
                 onClick={() => {
                   setMenuFor(null);
-                  if (window.confirm(`Delete “${page.title}”? Its child pages will move up one level.`)) void deletePage(page.id);
+                  void trashPage(page.id);
                 }}
               >
-                <Trash2 size={14} /> Delete page
+                <Trash2 size={14} /> Move to trash
               </button>
             </div>
           ) : null}

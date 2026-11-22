@@ -4,6 +4,7 @@ import { useAppStore } from "../store";
 import { PageTree } from "./PageTree";
 import { PageList } from "./PageList";
 import { LeftSidebarTabs } from "./LeftSidebarTabs";
+import { TrashView } from "./TrashView";
 
 export function LeftSidebar() {
   const open = useAppStore((state) => state.settings.leftOpen);
@@ -64,6 +65,7 @@ export function LeftSidebar() {
         {tab === "tree" ? <PageTree /> : null}
         {tab === "favorites" ? <PageList pages={favoritePages} empty="Star pages you want close at hand." /> : null}
         {tab === "recent" ? <PageList pages={recent} empty="Pages you open will appear here." /> : null}
+        {tab === "trash" ? <TrashView /> : null}
       </div>
       <div
         className="resize-handle resize-handle-left"

@@ -12,9 +12,12 @@ telemetry, and no CDN at runtime.
 - Frameless desktop shell with a draggable title bar, tabs, page tree, command
   palette, inspector, status bar, and responsive sidebars.
 - BlockNote editor with headings, lists, checklists, quotes, code, tables,
-  links, slash commands, drag handles, pasted/dropped images and files.
-- Nested pages, inline rename, drag-to-reorder, favorites, recent pages, and
-  stable page-ID links with backlinks.
+  links, slash commands, drag handles, pasted/dropped images and files, plus
+  a full-width writing mode.
+- Nested pages, inline rename, drag-to-reorder, duplicate, favorites, recent
+  pages, and stable page-ID links with backlinks.
+- Trash with restore, permanent delete, and empty-all, so deleting a page is
+  reversible.
 - SQLite persistence, per-workspace databases, FTS5 full-text search, autosave
   with confirmed save states, and flush-before-quit.
 - Multiple workspaces with their own pages, assets, tabs, and search index.
@@ -174,8 +177,6 @@ Run the exact commands and see the recorded results in
   own; fetching a catalog URL is an explicit action and remote entries are
   installed separately.
 - **No sync, collaboration, mobile, or auto-update.**
-- **No trash/restore UI.** Deleting a page removes it from the UI and its
-  metadata (the SQLite row is soft-deleted, but there is no restore screen).
 - **Search is deliberately simple.** FTS5 prefix terms and title matching; no
   boolean/advanced query syntax.
 - **Markdown export is readable but lossy for custom/unknown blocks.** JSON

@@ -19,6 +19,14 @@ export interface Bootstrap {
     "dataWritable": boolean;
 }
 
+/**
+ * DuplicateResult is the new page plus the refreshed shell state.
+ */
+export interface DuplicateResult {
+    "pageId": string;
+    "snapshot": store$0.WorkspaceSnapshot;
+}
+
 export interface ExportResult {
     "path": string;
 }

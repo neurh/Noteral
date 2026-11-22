@@ -6,7 +6,7 @@ import { applyTheme, resolveTheme, type ResolvedTheme } from "./lib/theme";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 export type Overlay = "palette" | "library" | "plugins" | "settings" | "workspaces" | null;
-export type LeftTab = "tree" | "favorites" | "recent";
+export type LeftTab = "tree" | "favorites" | "recent" | "trash";
 export type RightTab = "outline" | "backlinks" | "info";
 
 export interface LoadedDocument {
@@ -43,6 +43,7 @@ export const defaultSettings: AppSettings = {
   fontSize: 17,
   lineHeight: 1.68,
   pageWidth: 780,
+  fullWidth: false,
   autosaveDelay: 700,
   spellcheck: true,
   reduceMotion: false,
@@ -76,6 +77,7 @@ interface AppState {
   favorites: string[];
   recent: PageMeta[];
   tabs: string[];
+  trash: PageMeta[];
   activePageId: string;
   history: string[];
   historyIndex: number;
@@ -107,7 +109,11 @@ interface AppState {
   createPage: (parentId?: string) => Promise<void>;
   closeTab: (pageId: string) => Promise<void>;
   renamePage: (pageId: string, title: string) => Promise<void>;
-  deletePage: (pageId: string) => Promise<void>;
+  trashPage: (pageId: string) => Promise<void>;
+  restorePage: (pageId: string) => Promise<void>;
+  deletePagePermanently: (pageId: string) => Promise<void>;
+  emptyTrash: () => Promise<void>;
+  duplicatePage: (pageId: string) => Promise<void>;
   movePage: (pageId: string, newParentId: string, beforeId: string) => Promise<void>;
   toggleFavorite: (pageId: string) => Promise<void>;
   reorderTabs: (from: number, to: number) => void;
@@ -140,7 +146,7 @@ const savedVersions = new Map<string, number>();
 const pageLoads = new Map<string, Promise<LoadedDocument | null>>();
 let toastSequence = 0;
 
-function normalizeSnapshot(snapshot: WorkspaceSnapshot, previous?: AppState): { pages: PageMeta[]; tabs: string[]; active: string; favorites: string[]; recent: PageMeta[] } {
+function normalizeSnapshot(snapshot: WorkspaceSnapshot, previous?: AppState): { pages: PageMeta[]; tabs: string[]; active: string; favorites: string[]; recent: PageMeta[]; trash: PageMeta[] } {
   const pages = list(snapshot.pages);
   const known = new Set(pages.map((page) => page.id));
   let tabs = list(snapshot.tabs).filter((id) => known.has(id));
@@ -151,7 +157,65 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot, previous?: AppState): { 
     tabs = [preferred];
     active = preferred;
   }
-  return { pages, tabs, active, favorites: list(snapshot.favorites).filter((id) => known.has(id)), recent: list(snapshot.recent) };
+  return {
+    pages,
+    tabs,
+    active,
+    favorites: list(snapshot.favorites).filter((id) => known.has(id)),
+    recent: list(snapshot.recent),
+    trash: list(snapshot.trash),
+  };
+}
+
+function snapshotPatch(snapshot: WorkspaceSnapshot, state: AppState): Partial<AppState> {
+  const normalized = normalizeSnapshot(snapshot, state);
+  const live = new Set(normalized.pages.map((page) => page.id));
+  const documents: Record<string, LoadedDocument> = {};
+  for (const [id, doc] of Object.entries(state.documents)) {
+    if (live.has(id)) {
+      documents[id] = doc;
+      continue;
+    }
+    clearTimersFor(id);
+    pageLoads.delete(id);
+    editVersions.delete(id);
+    savedVersions.delete(id);
+  }
+  const aligned = alignHistory(
+    state.history.filter((id) => live.has(id)),
+    normalized.active,
+  );
+  const patch: Partial<AppState> = {
+    pages: normalized.pages,
+    favorites: normalized.favorites,
+    recent: normalized.recent,
+    tabs: normalized.tabs,
+    activePageId: normalized.active,
+    history: aligned.history,
+    historyIndex: aligned.historyIndex,
+    trash: normalized.trash,
+    documents,
+  };
+  if (normalized.active !== state.activePageId) {
+    patch.outline = [];
+    patch.backlinks = [];
+    patch.liveWordCount = 0;
+    patch.liveBlockCount = 0;
+  }
+  return patch;
+}
+
+function activatePagePatch(state: AppState, pageId: string): Partial<AppState> {
+  const page = state.pages.find((item) => item.id === pageId);
+  if (!page) return {};
+  const pushed = pushHistory(state.history, state.historyIndex, pageId);
+  return {
+    tabs: state.tabs.includes(pageId) ? state.tabs : [...state.tabs, pageId],
+    activePageId: pageId,
+    history: pushed.history,
+    historyIndex: pushed.historyIndex,
+    recent: [page, ...state.recent.filter((item) => item.id !== pageId)].slice(0, 12),
+  };
 }
 
 function parseDocument(doc: PageDocument, workspaceId: string): LoadedDocument {
@@ -229,6 +293,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   favorites: [],
   recent: [],
   tabs: [],
+  trash: [],
   activePageId: "",
   history: [],
   historyIndex: -1,
@@ -303,6 +368,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         favorites: normalized.favorites,
         recent: normalized.recent,
         tabs: normalized.tabs,
+        trash: normalized.trash,
         activePageId: normalized.active,
         history: normalized.active ? [normalized.active] : [],
         historyIndex: normalized.active ? 0 : -1,
@@ -354,6 +420,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         favorites: normalized.favorites,
         recent: normalized.recent,
         tabs: normalized.tabs,
+        trash: normalized.trash,
         activePageId: normalized.active,
         history: normalized.active ? [normalized.active] : [],
         historyIndex: normalized.active ? 0 : -1,
@@ -567,39 +634,84 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  deletePage: async (pageId) => {
+  trashPage: async (pageId) => {
     const workspaceId = get().workspace?.id;
     if (!workspaceId) return;
     try {
       await get().saveNow(pageId);
-      const snapshot = await api.deletePage(workspaceId, pageId);
+      const snapshot = await api.trashPage(workspaceId, pageId);
       if (get().workspace?.id !== workspaceId) return;
-      clearTimersFor(pageId);
-      pageLoads.delete(pageId);
-      editVersions.delete(pageId);
-      savedVersions.delete(pageId);
-      const normalized = normalizeSnapshot(snapshot, get());
-      const documents = { ...get().documents };
-      delete documents[pageId];
-      const aligned = alignHistory(get().history.filter((id) => id !== pageId), normalized.active);
-      set({
-        pages: normalized.pages,
-        favorites: normalized.favorites,
-        recent: normalized.recent,
-        tabs: normalized.tabs,
-        activePageId: normalized.active,
-        history: aligned.history,
-        historyIndex: aligned.historyIndex,
-        documents,
-        outline: [],
-        backlinks: [],
-      });
-      if (normalized.active) {
-        await get().ensurePageLoaded(normalized.active);
+      set(snapshotPatch(snapshot, get()));
+      if (get().activePageId) {
+        await get().ensurePageLoaded(get().activePageId);
         void get().refreshBacklinks();
       }
       scheduleTabs(get);
       get().notify("Page moved to trash.", "info");
+    } catch (error) {
+      get().notify(errorMessage(error), "error");
+    }
+  },
+
+  restorePage: async (pageId) => {
+    const workspaceId = get().workspace?.id;
+    if (!workspaceId) return;
+    try {
+      const snapshot = await api.restorePage(workspaceId, pageId);
+      if (get().workspace?.id !== workspaceId) return;
+      set(snapshotPatch(snapshot, get()));
+      set(activatePagePatch(get(), pageId));
+      await get().ensurePageLoaded(pageId);
+      void get().refreshBacklinks();
+      scheduleTabs(get);
+      get().notify("Page restored.", "success");
+    } catch (error) {
+      get().notify(errorMessage(error), "error");
+    }
+  },
+
+  deletePagePermanently: async (pageId) => {
+    const workspaceId = get().workspace?.id;
+    if (!workspaceId) return;
+    try {
+      const snapshot = await api.deletePagePermanently(workspaceId, pageId);
+      if (get().workspace?.id !== workspaceId) return;
+      set(snapshotPatch(snapshot, get()));
+      if (get().activePageId) await get().ensurePageLoaded(get().activePageId);
+      scheduleTabs(get);
+      get().notify("Page deleted permanently.", "info");
+    } catch (error) {
+      get().notify(errorMessage(error), "error");
+    }
+  },
+
+  emptyTrash: async () => {
+    const workspaceId = get().workspace?.id;
+    if (!workspaceId) return;
+    try {
+      const snapshot = await api.emptyTrash(workspaceId);
+      if (get().workspace?.id !== workspaceId) return;
+      set(snapshotPatch(snapshot, get()));
+      scheduleTabs(get);
+      get().notify("Trash emptied.", "info");
+    } catch (error) {
+      get().notify(errorMessage(error), "error");
+    }
+  },
+
+  duplicatePage: async (pageId) => {
+    const workspaceId = get().workspace?.id;
+    if (!workspaceId) return;
+    try {
+      await get().saveNow(pageId);
+      const result = await api.duplicatePage(workspaceId, pageId);
+      if (get().workspace?.id !== workspaceId) return;
+      set(snapshotPatch(result.snapshot, get()));
+      set(activatePagePatch(get(), result.pageId));
+      await get().ensurePageLoaded(result.pageId);
+      void get().refreshBacklinks();
+      scheduleTabs(get);
+      get().notify("Page duplicated.", "success");
     } catch (error) {
       get().notify(errorMessage(error), "error");
     }

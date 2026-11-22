@@ -8,5 +8,6 @@ export {
 
 export type {
     Bootstrap,
+    DuplicateResult,
     ExportResult
 } from "./models.js";

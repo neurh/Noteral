@@ -112,7 +112,7 @@ func TestSaveReopenConflictAndSearch(t *testing.T) {
 	}
 }
 
-func TestBacklinksFavoritesTabsAndDelete(t *testing.T) {
+func TestBacklinksFavoritesTabsAndTrash(t *testing.T) {
 	st, _ := openTestStore(t)
 	child, err := st.CreatePage("ws_default", "")
 	if err != nil {
@@ -143,21 +143,200 @@ func TestBacklinksFavoritesTabsAndDelete(t *testing.T) {
 	if len(snap.Tabs) != 2 || snap.ActivePageID != child.ID {
 		t.Fatalf("unexpected tabs: %#v active=%s", snap.Tabs, snap.ActivePageID)
 	}
-	if err := st.DeletePage("ws_default", child.ID); err != nil {
-		t.Fatalf("delete: %v", err)
+	if err := st.TrashPage("ws_default", child.ID); err != nil {
+		t.Fatalf("trash: %v", err)
 	}
 	snap, err = st.Snapshot("ws_default")
 	if err != nil {
-		t.Fatalf("snapshot after delete: %v", err)
+		t.Fatalf("snapshot after trash: %v", err)
 	}
 	for _, id := range snap.Tabs {
 		if id == child.ID {
-			t.Fatal("deleted page remains in tabs")
+			t.Fatal("trashed page remains in tabs")
 		}
 	}
 	for _, id := range snap.Favorites {
 		if id == child.ID {
-			t.Fatal("deleted page remains a favorite")
+			t.Fatal("trashed page remains a favorite")
+		}
+	}
+	if len(snap.Trash) != 1 || snap.Trash[0].ID != child.ID {
+		t.Fatalf("unexpected trash: %+v", snap.Trash)
+	}
+	if _, err := st.OpenPage("ws_default", child.ID); err == nil {
+		t.Fatal("trashed page is still readable")
+	}
+	if err := st.RestorePage("ws_default", child.ID); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	snap, err = st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot after restore: %v", err)
+	}
+	if len(snap.Trash) != 0 {
+		t.Fatalf("trash should be empty: %+v", snap.Trash)
+	}
+	if _, err := st.OpenPage("ws_default", child.ID); err != nil {
+		t.Fatalf("restored page cannot be opened: %v", err)
+	}
+	if err := st.TrashPage("ws_default", child.ID); err != nil {
+		t.Fatalf("trash again: %v", err)
+	}
+	if err := st.DeletePagePermanently("ws_default", child.ID); err != nil {
+		t.Fatalf("delete permanently: %v", err)
+	}
+	if _, err := st.OpenPage("ws_default", child.ID); err == nil {
+		t.Fatal("permanently deleted page is still readable")
+	}
+}
+
+func TestTrashAndRestoreSubtree(t *testing.T) {
+	st, _ := openTestStore(t)
+	root, err := st.CreatePage("ws_default", "")
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	child, err := st.CreatePage("ws_default", root.ID)
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	grandchild, err := st.CreatePage("ws_default", child.ID)
+	if err != nil {
+		t.Fatalf("create grandchild: %v", err)
+	}
+	if err := st.TrashPage("ws_default", root.ID); err != nil {
+		t.Fatalf("trash root: %v", err)
+	}
+	snap, err := st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snap.Trash) != 1 || snap.Trash[0].ID != root.ID {
+		t.Fatalf("trash should show only the root: %+v", snap.Trash)
+	}
+	for _, id := range []string{root.ID, child.ID, grandchild.ID} {
+		if _, err := st.OpenPage("ws_default", id); err == nil {
+			t.Fatalf("trashed page %s is still readable", id)
+		}
+	}
+	if err := st.RestorePage("ws_default", root.ID); err != nil {
+		t.Fatalf("restore root: %v", err)
+	}
+	snap, err = st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot after restore: %v", err)
+	}
+	if len(snap.Trash) != 0 {
+		t.Fatalf("trash should be empty: %+v", snap.Trash)
+	}
+	for _, id := range []string{root.ID, child.ID, grandchild.ID} {
+		if _, err := st.OpenPage("ws_default", id); err != nil {
+			t.Fatalf("restored page %s cannot be opened: %v", id, err)
+		}
+	}
+	restoredChild, err := st.PageMetaByID("ws_default", child.ID)
+	if err != nil || restoredChild.ParentID != root.ID {
+		t.Fatalf("child parent was not preserved: %+v %v", restoredChild, err)
+	}
+}
+
+func TestRestoreReparentsWhenParentIsTrashed(t *testing.T) {
+	st, _ := openTestStore(t)
+	parent, _ := st.CreatePage("ws_default", "")
+	child, _ := st.CreatePage("ws_default", parent.ID)
+	if err := st.TrashPage("ws_default", child.ID); err != nil {
+		t.Fatalf("trash child: %v", err)
+	}
+	if err := st.TrashPage("ws_default", parent.ID); err != nil {
+		t.Fatalf("trash parent: %v", err)
+	}
+	if err := st.RestorePage("ws_default", child.ID); err != nil {
+		t.Fatalf("restore child: %v", err)
+	}
+	restored, err := st.PageMetaByID("ws_default", child.ID)
+	if err != nil {
+		t.Fatalf("load restored child: %v", err)
+	}
+	if restored.ParentID != "" {
+		t.Fatalf("restored child should become a root, parent=%q", restored.ParentID)
+	}
+	if snap, _ := st.Snapshot("ws_default"); len(snap.Trash) != 1 || snap.Trash[0].ID != parent.ID {
+		t.Fatalf("parent should remain in trash: %+v", snap.Trash)
+	}
+}
+
+func TestDuplicatePageCopiesSubtree(t *testing.T) {
+	st, _ := openTestStore(t)
+	root, err := st.CreatePage("ws_default", "")
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	child, err := st.CreatePage("ws_default", root.ID)
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	rootDoc := `[{"id":"b1","type":"paragraph","props":{},"content":[{"type":"text","text":"root copy text","styles":{}},{"type":"pageLink","props":{"pageId":"pg_welcome"}}],"children":[]}]`
+	if _, err := st.SavePage("ws_default", root.ID, rootDoc, root.Revision); err != nil {
+		t.Fatalf("save root: %v", err)
+	}
+	childDoc := `[{"id":"b1","type":"paragraph","props":{},"content":[{"type":"text","text":"child copy text","styles":{}}],"children":[]}]`
+	if _, err := st.SavePage("ws_default", child.ID, childDoc, child.Revision); err != nil {
+		t.Fatalf("save child: %v", err)
+	}
+	copyID, err := st.DuplicatePage("ws_default", root.ID)
+	if err != nil {
+		t.Fatalf("duplicate: %v", err)
+	}
+	copyRoot, err := st.OpenPage("ws_default", copyID)
+	if err != nil {
+		t.Fatalf("open copy: %v", err)
+	}
+	if copyRoot.Title != "Copy of Untitled" || !strings.Contains(copyRoot.DocJSON, "root copy text") {
+		t.Fatalf("unexpected copied root: title=%q doc=%s", copyRoot.Title, copyRoot.DocJSON)
+	}
+	children, err := st.PageChildren("ws_default", copyID)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("copied children: %+v %v", children, err)
+	}
+	copyChild, err := st.OpenPage("ws_default", children[0].ID)
+	if err != nil || !strings.Contains(copyChild.DocJSON, "child copy text") {
+		t.Fatalf("copied child doc: %+v %v", copyChild, err)
+	}
+	backlinks, err := st.GetBacklinks("ws_default", "pg_welcome")
+	if err != nil {
+		t.Fatalf("backlinks: %v", err)
+	}
+	foundCopy := false
+	for _, backlink := range backlinks {
+		if backlink.ID == copyID {
+			foundCopy = true
+		}
+	}
+	if !foundCopy {
+		t.Fatalf("copied page links were not indexed: %+v", backlinks)
+	}
+}
+
+func TestEmptyTrash(t *testing.T) {
+	st, _ := openTestStore(t)
+	first, _ := st.CreatePage("ws_default", "")
+	second, _ := st.CreatePage("ws_default", first.ID)
+	if err := st.TrashPage("ws_default", first.ID); err != nil {
+		t.Fatalf("trash: %v", err)
+	}
+	if err := st.EmptyTrash("ws_default"); err != nil {
+		t.Fatalf("empty trash: %v", err)
+	}
+	snap, err := st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snap.Trash) != 0 {
+		t.Fatalf("trash should be empty: %+v", snap.Trash)
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if _, err := st.OpenPage("ws_default", id); err == nil {
+			t.Fatalf("page %s survived empty trash", id)
 		}
 	}
 }

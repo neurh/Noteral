@@ -107,11 +107,56 @@ func (s *AppService) RenamePage(workspaceID, pageID, title string) (store.PageMe
 	return s.store.RenamePage(workspaceID, pageID, title)
 }
 
+// DuplicateResult is the new page plus the refreshed shell state.
+type DuplicateResult struct {
+	PageID   string                  `json:"pageId"`
+	Snapshot store.WorkspaceSnapshot `json:"snapshot"`
+}
+
+// DeletePage is kept for older renderers; it now moves the page to the trash
+// rather than removing it permanently.
 func (s *AppService) DeletePage(workspaceID, pageID string) (store.WorkspaceSnapshot, error) {
-	if err := s.store.DeletePage(workspaceID, pageID); err != nil {
+	return s.TrashPage(workspaceID, pageID)
+}
+
+func (s *AppService) TrashPage(workspaceID, pageID string) (store.WorkspaceSnapshot, error) {
+	if err := s.store.TrashPage(workspaceID, pageID); err != nil {
 		return store.WorkspaceSnapshot{}, err
 	}
 	return s.store.Snapshot(workspaceID)
+}
+
+func (s *AppService) RestorePage(workspaceID, pageID string) (store.WorkspaceSnapshot, error) {
+	if err := s.store.RestorePage(workspaceID, pageID); err != nil {
+		return store.WorkspaceSnapshot{}, err
+	}
+	return s.store.Snapshot(workspaceID)
+}
+
+func (s *AppService) DeletePagePermanently(workspaceID, pageID string) (store.WorkspaceSnapshot, error) {
+	if err := s.store.DeletePagePermanently(workspaceID, pageID); err != nil {
+		return store.WorkspaceSnapshot{}, err
+	}
+	return s.store.Snapshot(workspaceID)
+}
+
+func (s *AppService) EmptyTrash(workspaceID string) (store.WorkspaceSnapshot, error) {
+	if err := s.store.EmptyTrash(workspaceID); err != nil {
+		return store.WorkspaceSnapshot{}, err
+	}
+	return s.store.Snapshot(workspaceID)
+}
+
+func (s *AppService) DuplicatePage(workspaceID, pageID string) (DuplicateResult, error) {
+	newID, err := s.store.DuplicatePage(workspaceID, pageID)
+	if err != nil {
+		return DuplicateResult{}, err
+	}
+	snapshot, err := s.store.Snapshot(workspaceID)
+	if err != nil {
+		return DuplicateResult{}, err
+	}
+	return DuplicateResult{PageID: newID, Snapshot: snapshot}, nil
 }
 
 func (s *AppService) MovePage(workspaceID, pageID, newParentID, beforeID string) ([]store.PageMeta, error) {

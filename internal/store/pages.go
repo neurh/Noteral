@@ -69,9 +69,33 @@ func (s *Store) Snapshot(workspaceID string) (WorkspaceSnapshot, error) {
 	}
 	favorites, _ := listFavorites(ws.DB)
 	recent, _ := listRecent(ws.DB)
+	trash, _ := listTrash(ws.DB)
 	ui, _ := loadUISettings(ws.DB)
 	w.PageCount = len(pages)
-	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: ui.Tabs, ActivePageID: ui.ActivePageID}, nil
+	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: ui.Tabs, ActivePageID: ui.ActivePageID, Trash: trash}, nil
+}
+
+// listTrash returns trashed pages whose parent is not also trashed, so each
+// deleted subtree appears once in the trash instead of page by page.
+func listTrash(db *sql.DB) ([]PageMeta, error) {
+	rows, err := db.Query(`SELECT p.id,p.parent_id,p.title,p.icon,p.position,p.updated_at,p.deleted_at
+		FROM pages p
+		WHERE p.deleted_at IS NOT NULL
+		  AND NOT EXISTS (SELECT 1 FROM pages parent WHERE parent.id=p.parent_id AND parent.deleted_at IS NOT NULL)
+		ORDER BY p.deleted_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PageMeta
+	for rows.Next() {
+		var p PageMeta
+		if err := rows.Scan(&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Position, &p.UpdatedAt, &p.DeletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // OpenPage loads a full body, hydrating asset URLs for the webview, and records
@@ -215,9 +239,11 @@ func (s *Store) CreatePage(workspaceID, parentID string) (PageDocument, error) {
 	return PageDocument{PageMeta: PageMeta{ID: id, ParentID: parentID, Title: "Untitled", Position: maxPos + 1024, UpdatedAt: now}, DocJSON: hydrateAssetURLs(doc, workspaceID), Revision: 1, CreatedAt: now}, nil
 }
 
-// DeletePage removes a page permanently, reparenting its children, cleaning up
-// links/tabs/favorites and renumbering siblings. Daily backups provide recovery.
-func (s *Store) DeletePage(workspaceID, pageID string) error {
+// TrashPage soft-deletes a page and its live descendants under one timestamp,
+// so restoring the root can bring the whole subtree back. The page is removed
+// from tabs, recents and favorites views by the snapshot queries; its rows and
+// documents are kept for restore.
+func (s *Store) TrashPage(workspaceID, pageID string) error {
 	ws, err := s.workspace(workspaceID)
 	if err != nil {
 		return err
@@ -228,39 +254,212 @@ func (s *Store) DeletePage(workspaceID, pageID string) error {
 	}
 	defer tx.Rollback()
 	var parentID string
-	var position float64
-	if err := tx.QueryRow(`SELECT parent_id,position FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).Scan(&parentID, &position); err != nil {
+	if err := tx.QueryRow(`SELECT parent_id FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).Scan(&parentID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("page not found")
 		}
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE pages SET parent_id=?, updated_at=? WHERE parent_id=? AND deleted_at IS NULL`, parentID, nowString(), pageID); err != nil {
+	ids, err := liveSubtreeIDs(tx, pageID)
+	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM pages WHERE id=?`, pageID); err != nil {
+	deletedAt := nowString()
+	for _, id := range ids {
+		if _, err := tx.Exec(`UPDATE pages SET deleted_at=? WHERE id=?`, deletedAt, id); err != nil {
+			return err
+		}
+	}
+	if err := removeFromTabsMany(tx, ids); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM page_links WHERE source_page_id=? OR target_page_id=?`, pageID, pageID); err != nil {
+	if err := renumberSiblings(tx, parentID); err != nil {
 		return err
 	}
-	for _, stmt := range []string{
-		`DELETE FROM favorites WHERE page_id=?`,
-		`DELETE FROM recent WHERE page_id=?`,
-		`DELETE FROM tabs WHERE page_id=?`,
-	} {
-		if _, err := tx.Exec(stmt, pageID); err != nil {
+	return tx.Commit()
+}
+
+// RestorePage restores a trashed root and every descendant trashed in the same
+// operation. If the original parent is gone or still trashed, the restored
+// page becomes a root page.
+func (s *Store) RestorePage(workspaceID, pageID string) error {
+	ws, err := s.workspace(workspaceID)
+	if err != nil {
+		return err
+	}
+	tx, err := ws.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var parentID, deletedAt string
+	if err := tx.QueryRow(`SELECT parent_id,deleted_at FROM pages WHERE id=?`, pageID).Scan(&parentID, &deletedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("page not found")
+		}
+		return err
+	}
+	if deletedAt == "" {
+		return fmt.Errorf("page is not in the trash")
+	}
+	ids, err := trashCohortIDs(tx, pageID, deletedAt)
+	if err != nil {
+		return err
+	}
+	if parentID != "" {
+		var live int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM pages WHERE id=? AND deleted_at IS NULL`, parentID).Scan(&live); err != nil {
+			return err
+		}
+		if live == 0 {
+			parentID = ""
+		}
+	}
+	if parentID == "" {
+		var maxPos float64
+		if err := tx.QueryRow(`SELECT COALESCE(MAX(position),0) FROM pages WHERE parent_id='' AND deleted_at IS NULL`).Scan(&maxPos); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE pages SET parent_id='', position=? WHERE id=?`, maxPos+1024, pageID); err != nil {
+			return err
+		}
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(`UPDATE pages SET deleted_at=NULL WHERE id=? AND deleted_at=?`, id, deletedAt); err != nil {
 			return err
 		}
 	}
 	if err := renumberSiblings(tx, parentID); err != nil {
 		return err
 	}
-	// Remove page IDs from the persisted tab list.
-	if err := removeFromTabs(tx, pageID); err != nil {
+	return tx.Commit()
+}
+
+// DeletePagePermanently removes a trashed page and its trashed descendants.
+// It refuses to permanently delete a live page.
+func (s *Store) DeletePagePermanently(workspaceID, pageID string) error {
+	ws, err := s.workspace(workspaceID)
+	if err != nil {
+		return err
+	}
+	tx, err := ws.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var parentID, deletedAt string
+	if err := tx.QueryRow(`SELECT parent_id,deleted_at FROM pages WHERE id=?`, pageID).Scan(&parentID, &deletedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("page not found")
+		}
+		return err
+	}
+	if deletedAt == "" {
+		return fmt.Errorf("only pages in the trash can be deleted permanently")
+	}
+	ids, err := trashCohortIDs(tx, pageID, deletedAt)
+	if err != nil {
+		return err
+	}
+	if err := deletePages(tx, ids); err != nil {
+		return err
+	}
+	if err := renumberSiblings(tx, parentID); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// EmptyTrash permanently deletes every page currently in the trash.
+func (s *Store) EmptyTrash(workspaceID string) error {
+	ws, err := s.workspace(workspaceID)
+	if err != nil {
+		return err
+	}
+	tx, err := ws.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT id,parent_id FROM pages WHERE deleted_at IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	parents := map[string]bool{}
+	for rows.Next() {
+		var id, parentID string
+		if err := rows.Scan(&id, &parentID); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+		parents[parentID] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return tx.Commit()
+	}
+	if err := deletePages(tx, ids); err != nil {
+		return err
+	}
+	for parentID := range parents {
+		if err := renumberSiblings(tx, parentID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DuplicatePage deep-copies a live page subtree. The copy is inserted directly
+// after the source page and gets the same document bodies, a fresh revision and
+// freshly indexed page links.
+func (s *Store) DuplicatePage(workspaceID, pageID string) (string, error) {
+	ws, err := s.workspace(workspaceID)
+	if err != nil {
+		return "", err
+	}
+	tx, err := ws.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var parentID, title, icon, docJSON, textContent string
+	var position float64
+	if err := tx.QueryRow(`SELECT parent_id,title,icon,position,doc_json,text_content FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).
+		Scan(&parentID, &title, &icon, &position, &docJSON, &textContent); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("page not found")
+		}
+		return "", err
+	}
+	var nextPosition float64
+	if err := tx.QueryRow(`SELECT COALESCE(MIN(position),0) FROM pages WHERE parent_id=? AND deleted_at IS NULL AND position>?`, parentID, position).Scan(&nextPosition); err != nil {
+		return "", err
+	}
+	newPosition := position + 1024
+	if nextPosition > position {
+		newPosition = (position + nextPosition) / 2
+	}
+	newID := "pg_" + randomHex(8)
+	now := nowString()
+	if _, err := tx.Exec(`INSERT INTO pages(id,parent_id,title,icon,position,doc_json,text_content,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		newID, parentID, cleanTitle("Copy of "+title), icon, newPosition, docJSON, textContent, 1, now, now); err != nil {
+		return "", err
+	}
+	if err := indexLinks(tx, newID, docJSON, now); err != nil {
+		return "", err
+	}
+	if err := cloneChildren(tx, pageID, newID, now); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return newID, nil
 }
 
 // MovePage reparents and/or reorders a page. beforeID is the sibling to insert
@@ -517,6 +716,13 @@ func loadUISettings(db *sql.DB) (UISettings, error) {
 }
 
 func removeFromTabs(tx *sql.Tx, pageID string) error {
+	return removeFromTabsMany(tx, []string{pageID})
+}
+
+func removeFromTabsMany(tx *sql.Tx, pageIDs []string) error {
+	if len(pageIDs) == 0 {
+		return nil
+	}
 	var raw string
 	if err := tx.QueryRow(`SELECT value FROM workspace_settings WHERE key='ui'`).Scan(&raw); err != nil {
 		return nil
@@ -525,13 +731,17 @@ func removeFromTabs(tx *sql.Tx, pageID string) error {
 	if err := json.Unmarshal([]byte(raw), &ui); err != nil {
 		return nil
 	}
+	doomed := make(map[string]bool, len(pageIDs))
+	for _, id := range pageIDs {
+		doomed[id] = true
+	}
 	out := make([]string, 0, len(ui.Tabs))
 	for _, id := range ui.Tabs {
-		if id != pageID {
+		if !doomed[id] {
 			out = append(out, id)
 		}
 	}
-	if ui.ActivePageID == pageID {
+	if doomed[ui.ActivePageID] {
 		ui.ActivePageID = ""
 		if len(out) > 0 {
 			ui.ActivePageID = out[0]
@@ -541,6 +751,129 @@ func removeFromTabs(tx *sql.Tx, pageID string) error {
 	b, _ := json.Marshal(ui)
 	_, err := tx.Exec(`UPDATE workspace_settings SET value=? WHERE key='ui'`, string(b))
 	return err
+}
+
+func liveSubtreeIDs(tx *sql.Tx, rootID string) ([]string, error) {
+	rows, err := tx.Query(`WITH RECURSIVE sub(id) AS (
+		SELECT id FROM pages WHERE id=? AND deleted_at IS NULL
+		UNION ALL
+		SELECT p.id FROM pages p JOIN sub ON p.parent_id=sub.id WHERE p.deleted_at IS NULL
+	) SELECT id FROM sub`, rootID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func trashCohortIDs(tx *sql.Tx, rootID, deletedAt string) ([]string, error) {
+	rows, err := tx.Query(`WITH RECURSIVE sub(id) AS (
+		SELECT id FROM pages WHERE id=? AND deleted_at=?
+		UNION ALL
+		SELECT p.id FROM pages p JOIN sub ON p.parent_id=sub.id WHERE p.deleted_at=?
+	) SELECT id FROM sub`, rootID, deletedAt, deletedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func deletePages(tx *sql.Tx, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	if _, err := tx.Exec(`DELETE FROM page_links WHERE source_page_id IN (`+marks+`) OR target_page_id IN (`+marks+`)`, append(args, args...)...); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM favorites WHERE page_id IN (` + marks + `)`,
+		`DELETE FROM recent WHERE page_id IN (` + marks + `)`,
+		`DELETE FROM tabs WHERE page_id IN (` + marks + `)`,
+	} {
+		if _, err := tx.Exec(stmt, args...); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM pages WHERE id IN (`+marks+`)`, args...); err != nil {
+		return err
+	}
+	return removeFromTabsMany(tx, ids)
+}
+
+func indexLinks(tx *sql.Tx, pageID, docJSON, now string) error {
+	analysis, err := blocknote.Analyze(docJSON)
+	if err != nil {
+		return err
+	}
+	for _, targetID := range analysis.Backlinks {
+		if targetID == pageID {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO page_links(source_page_id,target_page_id,created_at) VALUES(?,?,?)`, pageID, targetID, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func cloneChildren(tx *sql.Tx, sourceParentID, newParentID, now string) error {
+	type childPage struct {
+		id, title, icon, docJSON, textContent string
+		position                              float64
+	}
+	rows, err := tx.Query(`SELECT id,title,icon,position,doc_json,text_content FROM pages WHERE parent_id=? AND deleted_at IS NULL ORDER BY position,title COLLATE NOCASE`, sourceParentID)
+	if err != nil {
+		return err
+	}
+	var children []childPage
+	for rows.Next() {
+		var c childPage
+		if err := rows.Scan(&c.id, &c.title, &c.icon, &c.position, &c.docJSON, &c.textContent); err != nil {
+			rows.Close()
+			return err
+		}
+		children = append(children, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, c := range children {
+		newID := "pg_" + randomHex(8)
+		if _, err := tx.Exec(`INSERT INTO pages(id,parent_id,title,icon,position,doc_json,text_content,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+			newID, newParentID, c.title, c.icon, c.position, c.docJSON, c.textContent, 1, now, now); err != nil {
+			return err
+		}
+		if err := indexLinks(tx, newID, c.docJSON, now); err != nil {
+			return err
+		}
+		if err := cloneChildren(tx, c.id, newID, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PageTitles returns a resolver map for all live pages.

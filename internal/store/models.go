@@ -19,6 +19,7 @@ type PageMeta struct {
 	Icon      string  `json:"icon"`
 	Position  float64 `json:"position"`
 	UpdatedAt string  `json:"updatedAt"`
+	DeletedAt string  `json:"deletedAt,omitempty"`
 }
 
 // PageDocument is a full page body loaded on demand.
@@ -54,6 +55,7 @@ type WorkspaceSnapshot struct {
 	Recent       []PageMeta `json:"recent"`
 	Tabs         []string   `json:"tabs"`
 	ActivePageID string     `json:"activePageId"`
+	Trash        []PageMeta `json:"trash"`
 }
 
 // UISettings is per-workspace layout state.
@@ -70,10 +72,11 @@ type AppSettings struct {
 	LeftOpen      bool    `json:"leftOpen"`
 	RightOpen     bool    `json:"rightOpen"`
 	RailOpen      bool    `json:"railOpen"`
-	EditorFont    string  `json:"editorFont"` // serif, sans
-	FontSize      int     `json:"fontSize"`   // reading text size in px
-	LineHeight    float64 `json:"lineHeight"` // reading line height
-	PageWidth     int     `json:"pageWidth"`  // maximum reading measure in px
+	EditorFont    string  `json:"editorFont"`    // serif, sans
+	FontSize      int     `json:"fontSize"`      // reading text size in px
+	LineHeight    float64 `json:"lineHeight"`    // reading line height
+	PageWidth     int     `json:"pageWidth"`     // maximum reading measure in px
+	FullWidth     bool    `json:"fullWidth"`     // editor spans the available pane
 	AutosaveDelay int     `json:"autosaveDelay"` // milliseconds after the last edit
 	Spellcheck    bool    `json:"spellcheck"`
 	ReduceMotion  bool    `json:"reduceMotion"`
@@ -93,6 +96,7 @@ func DefaultAppSettings() AppSettings {
 		FontSize:      17,
 		LineHeight:    1.68,
 		PageWidth:     780,
+		FullWidth:     false,
 		AutosaveDelay: 700,
 		Spellcheck:    true,
 		ReduceMotion:  false,

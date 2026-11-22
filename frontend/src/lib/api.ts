@@ -1,5 +1,5 @@
 import { AppService } from "../../bindings/noteral/internal/service";
-import type { Bootstrap, ExportResult } from "../../bindings/noteral/internal/service/models";
+import type { Bootstrap, DuplicateResult, ExportResult } from "../../bindings/noteral/internal/service/models";
 import type { Asset } from "../../bindings/noteral/internal/assets/models";
 import type { CatalogEntry, Info, Manifest, Runtime } from "../../bindings/noteral/internal/plugins/models";
 import type {
@@ -12,7 +12,7 @@ import type {
   WorkspaceSnapshot,
 } from "../../bindings/noteral/internal/store/models";
 
-export type { AppSettings, Asset, Bootstrap, CatalogEntry, ExportResult, Info, Manifest, PageDocument, PageMeta, Runtime, SaveResult, SearchHit, Workspace, WorkspaceSnapshot };
+export type { AppSettings, Asset, Bootstrap, CatalogEntry, DuplicateResult, ExportResult, Info, Manifest, PageDocument, PageMeta, Runtime, SaveResult, SearchHit, Workspace, WorkspaceSnapshot };
 
 export const api = {
   bootstrap: () => AppService.Bootstrap(),
@@ -23,7 +23,11 @@ export const api = {
   openPage: (workspaceId: string, pageId: string) => AppService.OpenPage(workspaceId, pageId),
   createPage: (workspaceId: string, parentId: string) => AppService.CreatePage(workspaceId, parentId),
   renamePage: (workspaceId: string, pageId: string, title: string) => AppService.RenamePage(workspaceId, pageId, title),
-  deletePage: (workspaceId: string, pageId: string) => AppService.DeletePage(workspaceId, pageId),
+  trashPage: (workspaceId: string, pageId: string) => AppService.TrashPage(workspaceId, pageId),
+  restorePage: (workspaceId: string, pageId: string) => AppService.RestorePage(workspaceId, pageId),
+  deletePagePermanently: (workspaceId: string, pageId: string) => AppService.DeletePagePermanently(workspaceId, pageId),
+  emptyTrash: (workspaceId: string) => AppService.EmptyTrash(workspaceId),
+  duplicatePage: (workspaceId: string, pageId: string) => AppService.DuplicatePage(workspaceId, pageId),
   movePage: (workspaceId: string, pageId: string, newParentId: string, beforeId: string) =>
     AppService.MovePage(workspaceId, pageId, newParentId, beforeId),
   savePage: (workspaceId: string, pageId: string, docJson: string, expectedRevision: number) =>

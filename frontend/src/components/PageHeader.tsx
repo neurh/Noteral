@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Download, FilePlus2, MoreHorizontal, Pencil, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, Download, FilePlus2, Maximize2, MoreHorizontal, Pencil, Star, Trash2 } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
 import { editorBridge } from "../lib/editorBridge";
 import { useAppStore } from "../store";
@@ -15,7 +15,10 @@ export function PageHeader() {
   const goForward = useAppStore((state) => state.goForward);
   const toggleFavorite = useAppStore((state) => state.toggleFavorite);
   const createPage = useAppStore((state) => state.createPage);
-  const deletePage = useAppStore((state) => state.deletePage);
+  const duplicatePage = useAppStore((state) => state.duplicatePage);
+  const trashPage = useAppStore((state) => state.trashPage);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+  const fullWidth = useAppStore((state) => state.settings.fullWidth);
   const notify = useAppStore((state) => state.notify);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuAnchor = useRef<HTMLDivElement>(null);
@@ -129,6 +132,19 @@ export function PageHeader() {
                   <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void createPage(page.id); }}>
                     <FilePlus2 size={14} /> New child page
                   </button>
+                  <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void duplicatePage(page.id); }}>
+                    <Copy size={14} /> Duplicate
+                  </button>
+                  <div className="menu-separator" />
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={fullWidth}
+                    onClick={() => updateSettings({ fullWidth: !fullWidth })}
+                  >
+                    <Maximize2 size={14} /> Full width
+                    <span className="menu-check" aria-hidden="true">{fullWidth ? <Check size={13} /> : null}</span>
+                  </button>
                   <div className="menu-separator" />
                   <button type="button" role="menuitem" onClick={() => void exportPage("markdown")}><Download size={14} /> Export Markdown</button>
                   <button type="button" role="menuitem" onClick={() => void exportPage("json")}><Download size={14} /> Export JSON</button>
@@ -139,10 +155,10 @@ export function PageHeader() {
                     className="danger"
                     onClick={() => {
                       setMenuOpen(false);
-                      if (window.confirm(`Delete “${title}”? Its child pages will move up one level.`)) void deletePage(page.id);
+                      void trashPage(page.id);
                     }}
                   >
-                    <Trash2 size={14} /> Delete page
+                    <Trash2 size={14} /> Move to trash
                   </button>
                 </div>
               ) : null}

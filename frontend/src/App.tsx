@@ -296,12 +296,12 @@ export default function App() {
 
   useEffect(() => {
     const root = document.documentElement;
-    root.style.setProperty("--page-width", `${settings.pageWidth}px`);
+    root.style.setProperty("--page-width", settings.fullWidth ? "100%" : `${settings.pageWidth}px`);
     root.style.setProperty("--editor-font-size", `${settings.fontSize}px`);
     root.style.setProperty("--editor-line-height", String(settings.lineHeight));
     root.dataset.editorFont = settings.editorFont;
     root.dataset.reduceMotion = settings.reduceMotion ? "true" : "false";
-  }, [settings.editorFont, settings.fontSize, settings.lineHeight, settings.pageWidth, settings.reduceMotion]);
+  }, [settings.editorFont, settings.fontSize, settings.fullWidth, settings.lineHeight, settings.pageWidth, settings.reduceMotion]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
