@@ -126,9 +126,9 @@ kbd {
 .titlebar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   height: var(--titlebar-h);
-  padding: 0 7px;
+  padding: 0 7px 0 0;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-raised) 76%, var(--bg));
   --wails-draggable: drag;
@@ -139,8 +139,10 @@ kbd {
 .titlebar-mac { padding-left: 78px; }
 .traffic-light-space { width: 0; }
 .titlebar-left, .titlebar-right { display: flex; align-items: center; gap: 3px; min-width: 0; }
-.titlebar-left { flex: 0 0 auto; }
-.titlebar-right { flex: 0 0 auto; }
+/* Keep the sidebar toggle centred over the rail column, and start the tabs
+   flush with the rail's right edge (the left sidebar's left edge). */
+.titlebar-left { flex: 0 0 var(--rail-w); justify-content: center; }
+.titlebar-right { flex: 0 0 auto; margin-left: 6px; }
 .titlebar-spacer { flex: 1 1 auto; min-width: 6px; }
 .window-controls { display: flex; align-items: center; gap: 1px; margin-left: 3px; }
 .window-button {
