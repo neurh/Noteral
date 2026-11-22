@@ -19,6 +19,7 @@ export interface EditorHandle {
   openPagePicker: () => void;
   scrollToBlock: (blockId: string) => void;
   focus: () => void;
+  focusTitle: () => void;
 }
 
 const handles = new Map<string, EditorHandle>();

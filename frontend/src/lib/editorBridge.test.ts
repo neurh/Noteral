@@ -12,6 +12,7 @@ function handle(): EditorHandle {
     openPagePicker: () => undefined,
     scrollToBlock: () => undefined,
     focus: () => undefined,
+    focusTitle: () => undefined,
   };
 }
 

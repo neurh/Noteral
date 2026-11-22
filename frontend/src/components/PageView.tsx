@@ -106,6 +106,7 @@ export function PageView({ page, active }: PageViewProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [title, setTitle] = useState(page.title);
   const ready = useRef(false);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const initialJson = useRef(page.docJson);
   const lastJson = useRef(page.docJson);
   const titleFor = useMemo(() => new Map(pages.map((item) => [item.id, item.title])), [pages]);
@@ -174,6 +175,13 @@ export function PageView({ page, active }: PageViewProps) {
         target?.scrollIntoView({ behavior: "smooth", block: "center" });
       },
       focus: () => editor.focus(),
+      focusTitle: () => {
+        const input = titleInputRef.current;
+        if (!input) return;
+        input.scrollIntoView({ behavior: "smooth", block: "center" });
+        input.focus();
+        input.select();
+      },
     };
     return editorBridge.register(page.id, handle);
   }, [editor, page.id, titleFor]);
@@ -233,6 +241,7 @@ export function PageView({ page, active }: PageViewProps) {
             <div className="page-title-row">
               <span className="page-emblem" aria-hidden="true">{page.icon || "✦"}</span>
               <input
+                ref={titleInputRef}
                 className="page-title-input"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}

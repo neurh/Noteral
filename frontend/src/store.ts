@@ -77,6 +77,8 @@ interface AppState {
   recent: PageMeta[];
   tabs: string[];
   activePageId: string;
+  history: string[];
+  historyIndex: number;
   documents: Record<string, LoadedDocument>;
   settings: AppSettings;
   resolvedTheme: ResolvedTheme;
@@ -97,7 +99,9 @@ interface AppState {
   createWorkspace: (name: string) => Promise<void>;
   renameWorkspace: (id: string, name: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
-  selectPage: (pageId: string) => Promise<void>;
+  selectPage: (pageId: string, options?: { recordHistory?: boolean }) => Promise<void>;
+  goBack: () => void;
+  goForward: () => void;
   ensurePageLoaded: (pageId: string) => Promise<LoadedDocument | null>;
   reloadPage: (pageId: string) => Promise<void>;
   createPage: (parentId?: string) => Promise<void>;
@@ -168,6 +172,19 @@ function parseDocument(doc: PageDocument, workspaceId: string): LoadedDocument {
   };
 }
 
+function pushHistory(history: string[], index: number, pageId: string): { history: string[]; historyIndex: number } {
+  if (history[index] === pageId) return { history, historyIndex: index };
+  const next = [...history.slice(0, index + 1), pageId];
+  return { history: next, historyIndex: next.length - 1 };
+}
+
+function alignHistory(history: string[], active: string): { history: string[]; historyIndex: number } {
+  const index = history.lastIndexOf(active);
+  if (index >= 0) return { history, historyIndex: index };
+  if (!active) return { history, historyIndex: history.length - 1 };
+  return { history: [...history, active], historyIndex: history.length };
+}
+
 function scheduleTabs(get: () => AppState) {
   if (tabTimer) clearTimeout(tabTimer);
   tabTimer = setTimeout(() => {
@@ -213,6 +230,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   recent: [],
   tabs: [],
   activePageId: "",
+  history: [],
+  historyIndex: -1,
   documents: {},
   settings: defaultSettings,
   resolvedTheme: "light",
@@ -285,6 +304,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         recent: normalized.recent,
         tabs: normalized.tabs,
         activePageId: normalized.active,
+        history: normalized.active ? [normalized.active] : [],
+        historyIndex: normalized.active ? 0 : -1,
         documents: {},
         outline: [],
         backlinks: [],
@@ -334,6 +355,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         recent: normalized.recent,
         tabs: normalized.tabs,
         activePageId: normalized.active,
+        history: normalized.active ? [normalized.active] : [],
+        historyIndex: normalized.active ? 0 : -1,
         documents: {},
         outline: [],
         backlinks: [],
@@ -401,7 +424,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ documents: { ...state.documents, [pageId]: loaded }, outline: [] }));
   },
 
-  selectPage: async (pageId) => {
+  selectPage: async (pageId, options) => {
     const page = get().pages.find((item) => item.id === pageId);
     if (!page) return;
     let tabs = get().tabs;
@@ -409,17 +432,43 @@ export const useAppStore = create<AppState>((set, get) => ({
       tabs = [...tabs, pageId];
       set({ tabs });
     }
-    set({
-      activePageId: pageId,
-      outline: [],
-      backlinks: [],
-      liveWordCount: 0,
-      liveBlockCount: 0,
-      recent: [page, ...get().recent.filter((item) => item.id !== pageId)].slice(0, 12),
+    set((state) => {
+      const next: Partial<AppState> = {
+        activePageId: pageId,
+        outline: [],
+        backlinks: [],
+        liveWordCount: 0,
+        liveBlockCount: 0,
+        recent: [page, ...state.recent.filter((item) => item.id !== pageId)].slice(0, 12),
+      };
+      if (options?.recordHistory !== false) {
+        const pushed = pushHistory(state.history, state.historyIndex, pageId);
+        next.history = pushed.history;
+        next.historyIndex = pushed.historyIndex;
+      }
+      return next;
     });
     await get().ensurePageLoaded(pageId);
     void get().refreshBacklinks();
     scheduleTabs(get);
+  },
+
+  goBack: () => {
+    const { history, historyIndex, pages } = get();
+    let index = historyIndex - 1;
+    while (index >= 0 && !pages.some((page) => page.id === history[index])) index -= 1;
+    if (index < 0) return;
+    set({ historyIndex: index });
+    void get().selectPage(history[index], { recordHistory: false });
+  },
+
+  goForward: () => {
+    const { history, historyIndex, pages } = get();
+    let index = historyIndex + 1;
+    while (index < history.length && !pages.some((page) => page.id === history[index])) index += 1;
+    if (index >= history.length) return;
+    set({ historyIndex: index });
+    void get().selectPage(history[index], { recordHistory: false });
   },
 
   createPage: async (parentId = "") => {
@@ -441,11 +490,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           position: Math.max(0, ...state.pages.map((page) => page.position)) + 1024,
           updatedAt: loaded.updatedAt,
         };
+        const pushed = pushHistory(state.history, state.historyIndex, loaded.id);
         return {
           pages: [...state.pages, meta],
           documents: { ...state.documents, [loaded.id]: loaded },
           tabs: state.tabs.includes(loaded.id) ? state.tabs : [...state.tabs, loaded.id],
           activePageId: loaded.id,
+          history: pushed.history,
+          historyIndex: pushed.historyIndex,
           outline: [],
           backlinks: [],
           recent: [meta, ...state.recent.filter((item) => item.id !== loaded.id)].slice(0, 12),
@@ -469,7 +521,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (active === pageId) {
       active = nextTabs[Math.max(0, index - 1)] ?? nextTabs[0] ?? "";
     }
-    set({ tabs: nextTabs, activePageId: active, outline: [], backlinks: [] });
+    set((state) => {
+      const aligned = alignHistory(state.history.filter((id) => id !== pageId), active);
+      return {
+        tabs: nextTabs,
+        activePageId: active,
+        history: aligned.history,
+        historyIndex: aligned.historyIndex,
+        outline: [],
+        backlinks: [],
+      };
+    });
     if (active) {
       await get().ensurePageLoaded(active);
       void get().refreshBacklinks();
@@ -519,12 +581,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       const normalized = normalizeSnapshot(snapshot, get());
       const documents = { ...get().documents };
       delete documents[pageId];
+      const aligned = alignHistory(get().history.filter((id) => id !== pageId), normalized.active);
       set({
         pages: normalized.pages,
         favorites: normalized.favorites,
         recent: normalized.recent,
         tabs: normalized.tabs,
         activePageId: normalized.active,
+        history: aligned.history,
+        historyIndex: aligned.historyIndex,
         documents,
         outline: [],
         backlinks: [],

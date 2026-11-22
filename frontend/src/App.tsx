@@ -8,6 +8,7 @@ import { useAppStore } from "./store";
 import { useAppStore as store } from "./store";
 import { PluginHost } from "./plugins/PluginHost";
 import { TitleBar } from "./components/TitleBar";
+import { PageHeader } from "./components/PageHeader";
 import { Rail } from "./components/Rail";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { EditorStack } from "./components/EditorStack";
@@ -37,6 +38,24 @@ function makeCommands(): AppCommand[] {
       keywords: "search find quick open",
       shortcut: "Ctrl/⌘ K",
       run: () => store.getState().setOverlay("palette"),
+    },
+    {
+      id: "app.go-back",
+      title: "Go back",
+      category: "Navigation",
+      description: "Return to the previously visited page",
+      keywords: "history previous",
+      shortcut: "Alt+←",
+      run: () => store.getState().goBack(),
+    },
+    {
+      id: "app.go-forward",
+      title: "Go forward",
+      category: "Navigation",
+      description: "Return to the page you navigated away from",
+      keywords: "history next",
+      shortcut: "Alt+→",
+      run: () => store.getState().goForward(),
     },
     {
       id: "app.new-page",
@@ -233,9 +252,17 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
-      if (!mod) return;
       const key = event.key.toLowerCase();
       const state = store.getState();
+      if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        // Option+Arrow moves by word on macOS; keep that while writing.
+        if (isEditable(event.target)) return;
+        event.preventDefault();
+        if (event.key === "ArrowLeft") state.goBack();
+        else state.goForward();
+        return;
+      }
+      if (!mod) return;
       if (key === "k" || key === "p") {
         event.preventDefault();
         state.setOverlay("palette");
@@ -257,6 +284,10 @@ export default function App() {
         if (isEditable(event.target) && !event.shiftKey) return;
         event.preventDefault();
         state.updateSettings(event.shiftKey ? { rightOpen: !state.settings.rightOpen } : { leftOpen: !state.settings.leftOpen });
+      } else if (key === "[" || key === "]") {
+        event.preventDefault();
+        if (key === "[") state.goBack();
+        else state.goForward();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -349,6 +380,7 @@ export default function App() {
         <LeftSidebar />
         <div className="center-column">
           <TitleBar />
+          <PageHeader />
           <EditorStack />
         </div>
         <RightSidebar />
