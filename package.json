@@ -1,0 +1,9 @@
+{
+  "name": "noteral",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first notes for the desktop",
+  "scripts": {
+    "plugins:build": "node scripts/build-plugins.mjs"
+  }
+}

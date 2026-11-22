@@ -1,0 +1,108 @@
+import { useEffect, useRef } from "react";
+import { ChevronDown, Clock, ListTree, Plus, Star } from "lucide-react";
+import { useAppStore, type LeftTab } from "../store";
+import { PageTree } from "./PageTree";
+import { PageList } from "./PageList";
+
+const tabs: Array<{ id: LeftTab; label: string; icon: typeof ListTree }> = [
+  { id: "tree", label: "Page tree", icon: ListTree },
+  { id: "favorites", label: "Favorites", icon: Star },
+  { id: "recent", label: "Recent", icon: Clock },
+];
+
+export function LeftSidebar() {
+  const open = useAppStore((state) => state.settings.leftOpen);
+  const width = useAppStore((state) => state.settings.leftWidth);
+  const tab = useAppStore((state) => state.leftTab);
+  const setTab = useAppStore((state) => state.setLeftTab);
+  const workspace = useAppStore((state) => state.workspace);
+  const favorites = useAppStore((state) => state.favorites);
+  const recent = useAppStore((state) => state.recent);
+  const pages = useAppStore((state) => state.pages);
+  const createPage = useAppStore((state) => state.createPage);
+  const setOverlay = useAppStore((state) => state.setOverlay);
+  const updateSettings = useAppStore((state) => state.updateSettings);
+  const persistSettings = useAppStore((state) => state.persistSettingsNow);
+  const resizing = useRef(false);
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (!resizing.current) return;
+      const next = Math.max(220, Math.min(420, event.clientX - 56));
+      updateSettings({ leftWidth: next }, false);
+    };
+    const onUp = () => {
+      if (!resizing.current) return;
+      resizing.current = false;
+      document.body.classList.remove("resizing");
+      void persistSettings();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [updateSettings, persistSettings]);
+
+  if (!open) return null;
+  const favoritePages = pages.filter((page) => favorites.includes(page.id));
+  return (
+    <aside className="left-sidebar" style={{ width }} aria-label="Sidebar">
+      <div className="workspace-switcher">
+        <button
+          type="button"
+          className="workspace-button"
+          onClick={() => setOverlay("workspaces")}
+          aria-label={`Workspace: ${workspace?.name ?? "None"}. Switch workspace`}
+          title="Switch workspace"
+        >
+          <span className="workspace-avatar" aria-hidden="true">{(workspace?.name ?? "W").slice(0, 1).toUpperCase()}</span>
+          <span className="workspace-name">{workspace?.name ?? "Workspace"}</span>
+          <ChevronDown size={13} />
+        </button>
+        <button type="button" className="icon-button" aria-label="New page" title="New page" onClick={() => void createPage()}>
+          <Plus size={16} />
+        </button>
+      </div>
+      <div className="left-tabs" role="tablist" aria-label="Sidebar views">
+        {tabs.map((item) => {
+          const Icon = item.icon;
+          const selected = tab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              aria-label={item.label}
+              title={item.label}
+              className={`left-tab ${selected ? "active" : ""}`}
+              onClick={() => setTab(item.id)}
+            >
+              <Icon size={15} />
+            </button>
+          );
+        })}
+        <div className="left-tab-spacer" />
+        <span className="left-tab-count" title="Pages in workspace">{pages.length}</span>
+      </div>
+      <div className="left-content">
+        {tab === "tree" ? <PageTree /> : null}
+        {tab === "favorites" ? <PageList pages={favoritePages} empty="Star pages you want close at hand." /> : null}
+        {tab === "recent" ? <PageList pages={recent} empty="Pages you open will appear here." /> : null}
+      </div>
+      <div
+        className="resize-handle resize-handle-left"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        title="Drag to resize sidebar"
+        onPointerDown={() => {
+          resizing.current = true;
+          document.body.classList.add("resizing");
+        }}
+      />
+    </aside>
+  );
+}

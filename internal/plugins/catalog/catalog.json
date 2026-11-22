@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "com.noteral.reading-time",
+      "name": "Reading Time",
+      "version": "1.0.0",
+      "sdkVersion": "1.0.0",
+      "description": "A live word count and reading-time estimate for the page you are writing.",
+      "author": "Noteral",
+      "entry": "plugin.js",
+      "permissions": [
+        "editor.read",
+        "ui.status",
+        "ui.panel"
+      ],
+      "contributes": {
+        "statusItems": [
+          {
+            "id": "reading-time",
+            "label": "Reading time",
+            "description": "Estimated reading time and word count for the active page"
+          }
+        ],
+        "panels": [
+          {
+            "id": "reading-stats",
+            "title": "Reading stats",
+            "description": "Word count and reading-time estimate for the active page"
+          }
+        ]
+      }
+    },
+    {
+      "id": "com.noteral.meeting-notes",
+      "name": "Meeting Notes",
+      "version": "1.0.0",
+      "sdkVersion": "1.0.0",
+      "description": "Adds a slash command that inserts a lightweight meeting-notes template.",
+      "author": "Noteral",
+      "entry": "plugin.js",
+      "permissions": [
+        "editor.read",
+        "editor.write",
+        "ui.notify"
+      ],
+      "contributes": {
+        "commands": [
+          {
+            "id": "insert-meeting-notes",
+            "title": "Insert meeting notes template",
+            "description": "Heading, attendees, agenda, decisions and action items",
+            "keywords": "meeting agenda notes template"
+          }
+        ]
+      }
+    }
+  ]
+}

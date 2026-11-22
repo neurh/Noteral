@@ -1,0 +1,21 @@
+{
+  "id": "com.example.starter",
+  "name": "Starter Plugin",
+  "version": "1.0.0",
+  "sdkVersion": "1.0.0",
+  "description": "A small starting point: a live word count and a summary command.",
+  "author": "You",
+  "entry": "plugin.js",
+  "permissions": ["editor.read", "editor.write", "ui.status", "ui.panel"],
+  "contributes": {
+    "commands": [
+      { "id": "insert-summary", "title": "Insert word-count summary", "description": "Adds a short summary paragraph at the cursor." }
+    ],
+    "statusItems": [
+      { "id": "words", "label": "Starter words" }
+    ],
+    "panels": [
+      { "id": "starter-panel", "title": "Starter panel", "description": "A read-only inspector panel." }
+    ]
+  }
+}

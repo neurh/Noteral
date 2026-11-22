@@ -1,0 +1,20 @@
+{
+  "id": "com.noteral.meeting-notes",
+  "name": "Meeting Notes",
+  "version": "1.0.0",
+  "sdkVersion": "1.0.0",
+  "description": "Adds a slash command that starts a structured meeting note.",
+  "author": "Noteral",
+  "entry": "plugin.js",
+  "permissions": ["editor.read", "editor.write", "ui.notify"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "insert-meeting-notes",
+        "title": "Insert meeting notes template",
+        "description": "Adds attendees, agenda, decisions, and action items.",
+        "keywords": "meeting agenda notes template actions"
+      }
+    ]
+  }
+}
