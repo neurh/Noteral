@@ -12,7 +12,6 @@ export function EditorStack() {
     return (
       <div className="empty-editor" role="main">
         <div className="empty-editor-card">
-          <span className="empty-emblem" aria-hidden="true">✦</span>
           <h1>Make room for a thought.</h1>
           <p>Pages are local, quick, and yours. Start with a blank page or open one from the sidebar.</p>
           <button type="button" className="primary-button" onClick={() => void createPage()}>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CornerDownLeft, FileText, Search } from "lucide-react";
 import { useAppStore } from "../store";
 import { Modal } from "./Modal";
+import { PageIcon } from "./PageIcon";
 
 interface PagePickerProps {
   open: boolean;
@@ -77,7 +78,7 @@ export function PagePickerDialog({ open, onClose, onPick, title = "Link to a pag
             onMouseEnter={() => setIndex(itemIndex)}
             onClick={() => pick(page.id)}
           >
-            <span className="tree-icon" aria-hidden="true">{page.icon || <FileText size={14} />}</span>
+            <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={<FileText size={14} />} /></span>
             <span>{page.title}</span>
             {itemIndex === index ? <CornerDownLeft size={13} className="picker-enter" /> : null}
           </button>

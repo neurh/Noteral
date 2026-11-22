@@ -317,6 +317,79 @@ func TestDuplicatePageCopiesSubtree(t *testing.T) {
 	}
 }
 
+func TestPageAppearancePersistsAndCopies(t *testing.T) {
+	st, _ := openTestStore(t)
+	page, err := st.CreatePage("ws_default", "")
+	if err != nil {
+		t.Fatalf("create page: %v", err)
+	}
+	icon := "lucide:sparkles:#b1533d"
+	cover := "image:wild-bloom"
+	meta, err := st.SetPageAppearance("ws_default", page.ID, icon, cover)
+	if err != nil {
+		t.Fatalf("set appearance: %v", err)
+	}
+	if meta.Icon != icon || meta.Cover != cover {
+		t.Fatalf("unexpected appearance: %+v", meta)
+	}
+	doc, err := st.OpenPage("ws_default", page.ID)
+	if err != nil || doc.Icon != icon || doc.Cover != cover {
+		t.Fatalf("appearance was not persisted: %+v %v", doc.PageMeta, err)
+	}
+	copyID, err := st.DuplicatePage("ws_default", page.ID)
+	if err != nil {
+		t.Fatalf("duplicate: %v", err)
+	}
+	copied, err := st.OpenPage("ws_default", copyID)
+	if err != nil || copied.Cover != cover || copied.Icon != icon {
+		t.Fatalf("appearance was not copied: %+v %v", copied.PageMeta, err)
+	}
+	if err := st.TrashPage("ws_default", page.ID); err != nil {
+		t.Fatalf("trash: %v", err)
+	}
+	if err := st.RestorePage("ws_default", page.ID); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	restored, err := st.OpenPage("ws_default", page.ID)
+	if err != nil || restored.Cover != cover {
+		t.Fatalf("appearance did not survive trash: %+v %v", restored.PageMeta, err)
+	}
+	if _, err := st.SetPageAppearance("ws_default", page.ID, "", strings.Repeat("x", maxAppearanceBytes+1)); err == nil {
+		t.Fatal("oversized appearance should fail")
+	}
+	if _, err := st.SetPageAppearance("ws_default", page.ID, "bad\x00icon", ""); err == nil {
+		t.Fatal("NUL in appearance should fail")
+	}
+}
+
+func TestWorkspaceMigrationAddsCover(t *testing.T) {
+	db, err := openDB(filepath.Join(t.TempDir(), "workspace.db"))
+	if err != nil {
+		t.Fatalf("open workspace db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE pages (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create old pages table: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatalf("set old schema version: %v", err)
+	}
+	if err := migrateWorkspace(db); err != nil {
+		t.Fatalf("migrate workspace: %v", err)
+	}
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 2 {
+		t.Fatalf("schema version = %d, %v", version, err)
+	}
+	if _, err := db.Exec(`INSERT INTO pages(id,cover) VALUES('pg_test','image:alpine-dawn')`); err != nil {
+		t.Fatalf("insert cover: %v", err)
+	}
+	var cover string
+	if err := db.QueryRow(`SELECT cover FROM pages WHERE id='pg_test'`).Scan(&cover); err != nil || cover != "image:alpine-dawn" {
+		t.Fatalf("cover = %q, %v", cover, err)
+	}
+}
+
 func TestEmptyTrash(t *testing.T) {
 	st, _ := openTestStore(t)
 	first, _ := st.CreatePage("ws_default", "")

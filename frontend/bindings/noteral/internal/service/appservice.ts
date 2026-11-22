@@ -216,6 +216,10 @@ export function SetApp(app: application$0.App | null): $CancellablePromise<void>
     return $Call.ByID(1110382117, app);
 }
 
+export function SetPageAppearance(workspaceID: string, pageID: string, icon: string, cover: string): $CancellablePromise<store$0.PageMeta> {
+    return $Call.ByID(2588795471, workspaceID, pageID, icon, cover);
+}
+
 export function ToggleFavorite(workspaceID: string, pageID: string): $CancellablePromise<boolean> {
     return $Call.ByID(4022802562, workspaceID, pageID);
 }

@@ -23,6 +23,8 @@ export const api = {
   openPage: (workspaceId: string, pageId: string) => AppService.OpenPage(workspaceId, pageId),
   createPage: (workspaceId: string, parentId: string) => AppService.CreatePage(workspaceId, parentId),
   renamePage: (workspaceId: string, pageId: string, title: string) => AppService.RenamePage(workspaceId, pageId, title),
+  setPageAppearance: (workspaceId: string, pageId: string, icon: string, cover: string) =>
+    AppService.SetPageAppearance(workspaceId, pageId, icon, cover),
   trashPage: (workspaceId: string, pageId: string) => AppService.TrashPage(workspaceId, pageId),
   restorePage: (workspaceId: string, pageId: string) => AppService.RestorePage(workspaceId, pageId),
   deletePagePermanently: (workspaceId: string, pageId: string) => AppService.DeletePagePermanently(workspaceId, pageId),

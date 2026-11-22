@@ -16,6 +16,9 @@ telemetry, and no CDN at runtime.
   a full-width writing mode.
 - Nested pages, inline rename, drag-to-reorder, duplicate, favorites, recent
   pages, and stable page-ID links with backlinks.
+- Page icons and covers: search the bundled Lucide set, browse the full emoji
+  catalog with skin tones, upload a local image, and pick icon colors or a cover
+  from curated colors, gradients, and offline illustrations.
 - Trash with restore, permanent delete, and empty-all, so deleting a page is
   reversible.
 - SQLite persistence, per-workspace databases, FTS5 full-text search, autosave

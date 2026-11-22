@@ -1,16 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type Block } from "@blocknote/core";
 import { SuggestionMenuController, getDefaultReactSlashMenuItems, useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { FileSymlink, RefreshCw } from "lucide-react";
+import { FileSymlink, ImagePlus, Move, RefreshCw, SmilePlus, X } from "lucide-react";
 import { api } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
+import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
 import { commandRegistry } from "../lib/commands";
 import { editorBridge, type OutlineItem } from "../lib/editorBridge";
 import { useAppStore, type LoadedDocument } from "../store";
 import { pageLinkSpec } from "./PageLink";
+import { PageIcon, parsePageIcon } from "./PageIcon";
 import { PagePickerDialog } from "./PagePickerDialog";
+
+const IconPickerDialog = lazy(() => import("./IconPickerDialog").then((module) => ({ default: module.IconPickerDialog })));
+const CoverPickerDialog = lazy(() => import("./CoverPickerDialog").then((module) => ({ default: module.CoverPickerDialog })));
+const preloadIconPicker = () => { void import("./IconPickerDialog"); };
+const preloadCoverPicker = () => { void import("./CoverPickerDialog"); };
 
 const schema = BlockNoteSchema.create({
   blockSpecs: defaultBlockSpecs,
@@ -34,6 +41,10 @@ function inlineText(content: unknown, titleFor?: (id: string) => string | undefi
       return "";
     })
     .join("");
+}
+
+function clampCoverPosition(value: number): number {
+  return Math.min(100, Math.max(0, value));
 }
 
 function countWords(text: string): number {
@@ -100,17 +111,53 @@ export function PageView({ page, active }: PageViewProps) {
   const spellcheck = useAppStore((state) => state.settings.spellcheck);
   const markDirty = useAppStore((state) => state.markDirty);
   const renamePage = useAppStore((state) => state.renamePage);
+  const setPageAppearance = useAppStore((state) => state.setPageAppearance);
   const reloadPage = useAppStore((state) => state.reloadPage);
   const setOutline = useAppStore((state) => state.setOutline);
   const setLiveStats = useAppStore((state) => state.setLiveStats);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [coverOffset, setCoverOffset] = useState<CoverPosition>(() => coverPositionOf(page.cover));
+  const [coverEditing, setCoverEditing] = useState(false);
+  const [coverDragging, setCoverDragging] = useState(false);
   const [title, setTitle] = useState(page.title);
   const ready = useRef(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const initialJson = useRef(page.docJson);
   const lastJson = useRef(page.docJson);
+  const coverOffsetRef = useRef(coverOffset);
+  const coverDragRef = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number; width: number; height: number } | null>(null);
   const titleFor = useMemo(() => new Map(pages.map((item) => [item.id, item.title])), [pages]);
   const initialContent = useMemo(() => parseDocument(page.docJson), [page.id, page.loadVersion]);
+  const canRepositionCover = isPositionableCover(page.cover);
+  const cover = coverStyle(withCoverPosition(page.cover, coverOffset.x, coverOffset.y));
+  const icon = parsePageIcon(page.icon) ? page.icon : "";
+
+  useEffect(() => {
+    // The pickers are split out of the initial bundle. Warm them once the page
+    // is idle so the first click opens with no perceptible wait.
+    const timer = setTimeout(() => {
+      preloadIconPicker();
+      preloadCoverPicker();
+    }, 900);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const next = coverPositionOf(page.cover);
+    coverOffsetRef.current = next;
+    setCoverOffset(next);
+    coverDragRef.current = null;
+    setCoverDragging(false);
+    if (!page.cover) setCoverEditing(false);
+  }, [page.cover]);
+
+  useEffect(() => {
+    setCoverEditing(false);
+    coverDragRef.current = null;
+    setCoverDragging(false);
+  }, [page.id]);
 
   const editor = useCreateBlockNote(
     {
@@ -205,6 +252,51 @@ export function PageView({ page, active }: PageViewProps) {
     if (clean !== page.title) void renamePage(page.id, clean);
   }
 
+  function persistCoverPosition() {
+    const next = withCoverPosition(page.cover, coverOffsetRef.current.x, coverOffsetRef.current.y);
+    if (next !== page.cover) void setPageAppearance(page.id, icon, next);
+  }
+
+  function handleCoverPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!coverEditing || !canRepositionCover || !event.isPrimary || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("button")) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    coverDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: coverOffsetRef.current.x,
+      baseY: coverOffsetRef.current.y,
+      width: rect.width,
+      height: rect.height,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCoverDragging(true);
+  }
+
+  function handleCoverPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = coverDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const next = {
+      x: clampCoverPosition(drag.baseX + ((event.clientX - drag.startX) / Math.max(1, drag.width)) * 100),
+      y: clampCoverPosition(drag.baseY + ((event.clientY - drag.startY) / Math.max(1, drag.height)) * 100),
+    };
+    coverOffsetRef.current = next;
+    setCoverOffset(next);
+  }
+
+  function handleCoverPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = coverDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    coverDragRef.current = null;
+    setCoverDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    persistCoverPosition();
+  }
+
   async function onChange() {
     if (!ready.current) return;
     let json: string;
@@ -237,27 +329,99 @@ export function PageView({ page, active }: PageViewProps) {
     <div className={`page-pane ${active ? "active" : ""}`} aria-hidden={!active}>
       <div className="page-scroll">
         <div className="page-document">
-          <div className="page-editor">
-            <div className="page-title-row">
-              <span className="page-emblem" aria-hidden="true">{page.icon || "✦"}</span>
-              <input
-                ref={titleInputRef}
-                className="page-title-input"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                onBlur={commitTitle}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    (event.currentTarget as HTMLInputElement).blur();
-                  } else if (event.key === "Escape") {
-                    setTitle(page.title);
-                    (event.currentTarget as HTMLInputElement).blur();
-                  }
-                }}
-                aria-label="Page title"
-                spellCheck={false}
-              />
+          <div className={`page-editor ${cover ? "has-cover" : ""} ${icon ? "has-icon" : ""}`}>
+            <div className="page-head">
+              {cover ? (
+                <div className="page-cover-wrap">
+                <div
+                  className={`page-cover ${coverEditing ? "editing" : ""} ${coverDragging ? "dragging" : ""}`}
+                  style={cover}
+                  role="img"
+                  aria-label={coverEditing ? "Page cover. Drag to reposition." : "Page cover"}
+                  onPointerDown={handleCoverPointerDown}
+                  onPointerMove={handleCoverPointerMove}
+                  onPointerUp={handleCoverPointerUp}
+                  onPointerCancel={handleCoverPointerUp}
+                >
+                  <div className="page-cover-actions">
+                    {canRepositionCover ? (
+                      <button
+                        type="button"
+                        className={`page-cover-action ${coverEditing ? "active" : ""}`}
+                        onClick={() => setCoverEditing((value) => !value)}
+                        title={coverEditing ? "Finish repositioning" : "Reposition cover"}
+                        aria-label={coverEditing ? "Finish repositioning cover" : "Reposition cover"}
+                        aria-pressed={coverEditing}
+                      >
+                        <Move size={15} />
+                      </button>
+                    ) : null}
+                    <button type="button" className="page-cover-action" onClick={() => setCoverPickerOpen(true)} onPointerEnter={preloadCoverPicker} title="Change cover" aria-label="Change cover">
+                      <ImagePlus size={15} />
+                    </button>
+                    <button type="button" className="page-cover-action" onClick={() => { setCoverEditing(false); void setPageAppearance(page.id, icon, ""); }} title="Remove cover" aria-label="Remove cover">
+                      <X size={15} />
+                    </button>
+                  </div>
+                  {coverEditing && canRepositionCover ? (
+                    <div className="page-cover-hint"><Move size={12} /> Drag to reposition</div>
+                  ) : null}
+                </div>
+                {icon ? (
+                  <button
+                    type="button"
+                    className="page-cover-badge"
+                    onClick={() => setIconPickerOpen(true)}
+                    onPointerEnter={preloadIconPicker}
+                    title="Change page icon"
+                    aria-label="Change page icon"
+                  >
+                    <PageIcon value={icon} size={52} />
+                  </button>
+                ) : null}
+                </div>
+              ) : null}
+              {!icon || !cover ? (
+                <div className={`page-appearance ${!cover && icon ? "with-icon" : ""}`}>
+                  {!cover && icon ? (
+                    <button type="button" className="page-appearance-icon" onClick={() => setIconPickerOpen(true)} onPointerEnter={preloadIconPicker} title="Change page icon" aria-label="Change page icon">
+                      <PageIcon value={icon} size={46} />
+                    </button>
+                  ) : null}
+                  <div className="page-appearance-bar">
+                    {!icon ? (
+                      <button type="button" className="page-appearance-button" onClick={() => setIconPickerOpen(true)} onPointerEnter={preloadIconPicker}>
+                        <SmilePlus size={14} /> Add icon
+                      </button>
+                    ) : null}
+                    {!cover ? (
+                      <button type="button" className="page-appearance-button" onClick={() => setCoverPickerOpen(true)} onPointerEnter={preloadCoverPicker}>
+                        <ImagePlus size={14} /> Add cover
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              <div className="page-title-row">
+                <input
+                  ref={titleInputRef}
+                  className="page-title-input"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  onBlur={commitTitle}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      (event.currentTarget as HTMLInputElement).blur();
+                    } else if (event.key === "Escape") {
+                      setTitle(page.title);
+                      (event.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
+                  aria-label="Page title"
+                  spellCheck={false}
+                />
+              </div>
             </div>
             {page.error ? (
               <div className="save-error" role="alert">
@@ -307,6 +471,37 @@ export function PageView({ page, active }: PageViewProps) {
           </div>
         </div>
       </div>
+      {iconPickerOpen ? (
+        <Suspense fallback={null}>
+          <IconPickerDialog
+            open
+            workspaceId={workspace?.id ?? ""}
+            pageId={page.id}
+            current={icon}
+            onClose={() => setIconPickerOpen(false)}
+            onPick={(value) => {
+              setIconPickerOpen(false);
+              void setPageAppearance(page.id, value, page.cover);
+            }}
+          />
+        </Suspense>
+      ) : null}
+      {coverPickerOpen ? (
+        <Suspense fallback={null}>
+          <CoverPickerDialog
+            open
+            workspaceId={workspace?.id ?? ""}
+            pageId={page.id}
+            current={page.cover}
+            onClose={() => setCoverPickerOpen(false)}
+            onPick={(value) => {
+              setCoverPickerOpen(false);
+              setCoverEditing(false);
+              void setPageAppearance(page.id, icon, value);
+            }}
+          />
+        </Suspense>
+      ) : null}
       <PagePickerDialog
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}

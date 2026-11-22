@@ -57,6 +57,7 @@ export interface PageDocument {
     "parentId": string;
     "title": string;
     "icon": string;
+    "cover": string;
     "position": number;
     "updatedAt": string;
     "deletedAt"?: string;
@@ -74,6 +75,7 @@ export interface PageMeta {
     "parentId": string;
     "title": string;
     "icon": string;
+    "cover": string;
     "position": number;
     "updatedAt": string;
     "deletedAt"?: string;

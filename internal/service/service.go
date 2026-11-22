@@ -107,6 +107,10 @@ func (s *AppService) RenamePage(workspaceID, pageID, title string) (store.PageMe
 	return s.store.RenamePage(workspaceID, pageID, title)
 }
 
+func (s *AppService) SetPageAppearance(workspaceID, pageID, icon, cover string) (store.PageMeta, error) {
+	return s.store.SetPageAppearance(workspaceID, pageID, icon, cover)
+}
+
 // DuplicateResult is the new page plus the refreshed shell state.
 type DuplicateResult struct {
 	PageID   string                  `json:"pageId"`

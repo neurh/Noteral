@@ -17,6 +17,7 @@ type PageMeta struct {
 	ParentID  string  `json:"parentId"`
 	Title     string  `json:"title"`
 	Icon      string  `json:"icon"`
+	Cover     string  `json:"cover"`
 	Position  float64 `json:"position"`
 	UpdatedAt string  `json:"updatedAt"`
 	DeletedAt string  `json:"deletedAt,omitempty"`

@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Copy, FilePlus2, FileText, MoreHorizontal, P
 import type { PageMeta } from "../lib/api";
 import { api, errorMessage } from "../lib/api";
 import { useAppStore } from "../store";
+import { PageIcon } from "./PageIcon";
 
 type DropZone = "before" | "after" | "inside";
 
@@ -232,7 +233,7 @@ export function PageTree() {
               onDoubleClick={() => beginRename(page)}
               title={page.title}
             >
-              <span className="tree-icon" aria-hidden="true">{page.icon || <FileText size={14} />}</span>
+              <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={<FileText size={14} />} /></span>
               <span className="tree-title">{page.title}</span>
               {favorite ? <Star size={11} className="tree-star" aria-label="Favorite" /> : null}
             </button>

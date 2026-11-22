@@ -16,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,80}$`)
 
@@ -132,7 +132,7 @@ func (s *Store) migrateApp() error {
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			)`,
-			`PRAGMA user_version = 1`,
+			`PRAGMA user_version = 2`,
 		}
 		for _, stmt := range stmts {
 			if _, err := tx.Exec(stmt); err != nil {
@@ -141,6 +141,11 @@ func (s *Store) migrateApp() error {
 		}
 		if err := tx.Commit(); err != nil {
 			return err
+		}
+	}
+	if version > 0 && version < schemaVersion {
+		if _, err := s.appDB.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			return fmt.Errorf("upgrade application schema: %w", err)
 		}
 	}
 	return nil
@@ -487,6 +492,7 @@ func migrateWorkspace(db *sql.DB) error {
 				parent_id TEXT NOT NULL DEFAULT '',
 				title TEXT NOT NULL DEFAULT '',
 				icon TEXT NOT NULL DEFAULT '',
+				cover TEXT NOT NULL DEFAULT '',
 				position REAL NOT NULL DEFAULT 0,
 				doc_json TEXT NOT NULL DEFAULT '[]',
 				text_content TEXT NOT NULL DEFAULT '',
@@ -534,12 +540,28 @@ func migrateWorkspace(db *sql.DB) error {
 				INSERT INTO pages_fts(pages_fts,rowid,title,text_content) VALUES('delete',old.seq,old.title,old.text_content);
 				INSERT INTO pages_fts(rowid,title,text_content) VALUES(new.seq,new.title,new.text_content);
 			END`,
-			`PRAGMA user_version = 1`,
+			`PRAGMA user_version = 2`,
 		}
 		for _, stmt := range stmts {
 			if _, err := tx.Exec(stmt); err != nil {
 				return fmt.Errorf("initialize workspace database: %w", err)
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	if version == 1 {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(`ALTER TABLE pages ADD COLUMN cover TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add page cover column: %w", err)
+		}
+		if _, err := tx.Exec(`PRAGMA user_version = 2`); err != nil {
+			return fmt.Errorf("upgrade workspace schema: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
 			return err

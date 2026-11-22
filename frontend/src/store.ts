@@ -15,6 +15,7 @@ export interface LoadedDocument {
   parentId: string;
   title: string;
   icon: string;
+  cover: string;
   docJson: string;
   loadVersion: number;
   revision: number;
@@ -109,6 +110,7 @@ interface AppState {
   createPage: (parentId?: string) => Promise<void>;
   closeTab: (pageId: string) => Promise<void>;
   renamePage: (pageId: string, title: string) => Promise<void>;
+  setPageAppearance: (pageId: string, icon: string, cover: string) => Promise<void>;
   trashPage: (pageId: string) => Promise<void>;
   restorePage: (pageId: string) => Promise<void>;
   deletePagePermanently: (pageId: string) => Promise<void>;
@@ -225,6 +227,7 @@ function parseDocument(doc: PageDocument, workspaceId: string): LoadedDocument {
     parentId: doc.parentId ?? "",
     title: doc.title,
     icon: doc.icon ?? "",
+    cover: doc.cover ?? "",
     docJson: doc.docJson,
     loadVersion: 0,
     revision: doc.revision ?? 0,
@@ -554,6 +557,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           parentId: loaded.parentId,
           title: loaded.title,
           icon: loaded.icon,
+          cover: loaded.cover,
           position: Math.max(0, ...state.pages.map((page) => page.position)) + 1024,
           updatedAt: loaded.updatedAt,
         };
@@ -630,6 +634,46 @@ export const useAppStore = create<AppState>((set, get) => ({
       }));
       if (get().activePageId === pageId) void get().refreshBacklinks();
     } catch (error) {
+      get().notify(errorMessage(error), "error");
+    }
+  },
+
+  setPageAppearance: async (pageId, icon, cover) => {
+    const workspaceId = get().workspace?.id;
+    const previous = get().pages.find((item) => item.id === pageId);
+    if (!workspaceId || !previous) return;
+    if (previous.icon === icon && previous.cover === cover) return;
+    const apply = (meta: PageMeta) => {
+      set((state) => ({
+        pages: state.pages.map((item) =>
+          item.id === pageId ? { ...item, icon: meta.icon, cover: meta.cover, updatedAt: meta.updatedAt } : item,
+        ),
+        recent: state.recent.map((item) =>
+          item.id === pageId ? { ...item, icon: meta.icon, cover: meta.cover, updatedAt: meta.updatedAt } : item,
+        ),
+        trash: state.trash.map((item) => (item.id === pageId ? { ...item, icon: meta.icon, cover: meta.cover } : item)),
+        documents: state.documents[pageId]
+          ? {
+              ...state.documents,
+              [pageId]: {
+                ...state.documents[pageId],
+                icon: meta.icon,
+                cover: meta.cover,
+                updatedAt: meta.updatedAt,
+              },
+            }
+          : state.documents,
+      }));
+    };
+    // The picker should feel immediate; the local database write is quick and
+    // the previous value is restored if it fails.
+    apply({ ...previous, icon, cover });
+    try {
+      const meta = await api.setPageAppearance(workspaceId, pageId, icon, cover);
+      if (get().workspace?.id !== workspaceId) return;
+      apply(meta);
+    } catch (error) {
+      apply(previous);
       get().notify(errorMessage(error), "error");
     }
   },

@@ -16,7 +16,7 @@ func seedWelcomePage(ws *WorkspaceDB) error {
 	now := nowString()
 	id := "pg_welcome"
 	_, err = ws.DB.Exec(`INSERT INTO pages(id,parent_id,title,icon,position,doc_json,text_content,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		id, "", "Welcome to Noteral", "✦", 1024, doc, analysis.Text, 1, now, now)
+		id, "", "Welcome to Noteral", "", 1024, doc, analysis.Text, 1, now, now)
 	if err != nil {
 		return fmt.Errorf("seed welcome page: %w", err)
 	}

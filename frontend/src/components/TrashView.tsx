@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FileText, RotateCcw, Trash2 } from "lucide-react";
 import { relativeTime } from "../lib/format";
 import { useAppStore } from "../store";
+import { PageIcon } from "./PageIcon";
 
 export function TrashView() {
   const trash = useAppStore((state) => state.trash);
@@ -69,7 +70,7 @@ export function TrashView() {
         {trash.map((page) => (
           <div key={page.id} className="page-list-row trash-row" role="listitem">
             <div className="page-list-main trash-main">
-              <span className="tree-icon" aria-hidden="true">{page.icon || <FileText size={14} />}</span>
+              <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={<FileText size={14} />} /></span>
               <span className="page-list-copy">
                 <span className="page-list-title">{page.title}</span>
                 <span className="page-list-time">Deleted {relativeTime(page.deletedAt)}</span>
