@@ -7,7 +7,8 @@ import { applyTheme, resolveTheme } from "./lib/theme";
 import { isHomeTab, useAppStore } from "./store";
 import { useAppStore as store } from "./store";
 import { PluginHost } from "./plugins/PluginHost";
-import { TitleBar } from "./components/TitleBar";
+import { TopBar } from "./components/TopBar";
+import { TabStrip } from "./components/TabStrip";
 import { PageHeader } from "./components/PageHeader";
 import { Rail } from "./components/Rail";
 import { LeftSidebar } from "./components/LeftSidebar";
@@ -381,11 +382,16 @@ export default function App() {
 
   return (
     <div className="app-shell" data-platform={bootstrap.platform}>
+      <TopBar />
       <div className="app-body">
-        <Rail />
-        <LeftSidebar />
+        <div className="left-panel">
+          <Rail />
+          <LeftSidebar />
+        </div>
         <div className="center-column">
-          <TitleBar />
+          <div className="main-tabs">
+            <TabStrip />
+          </div>
           {showPageHeader ? <PageHeader /> : null}
           <EditorStack />
         </div>

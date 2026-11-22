@@ -32,3 +32,33 @@ Not checked:
 - Very long workspace names, 200% zoom, and reduced-motion behavior of the modal entrance.
 - Concurrent rename while switching workspaces (no visual regression seen; not stress-tested).
 - Workspace deletion is not part of this dialog and was not added or reviewed.
+
+# Rehearsal: top bar and inset panels (app frame)
+
+Gold: the app's own layers — `--bg-sunken` shell, `--bg` panels, 1px `--border`, `--radius-lg` 14px, the accent square + serif "N" already used by the splash brand, and the existing `icon-button`/`window-controls`. The window chrome was rebuilt around that: a transparent 46px top bar (brand + sidebar toggle left, 430px search centered, inspector toggle + window controls right) over three inset panels — left (rail + sidebar in one rounded panel), center, right — separated by an 8px `--panel-gap`, with the tab row moved into the top of the main panel above the page header.
+
+States: page open, Home tab (no page header under the tabs), left sidebar closed (rail alone), both sidebars closed, dark theme, macOS traffic-light band, 1180/900/600 breakpoints, 390×844 mobile, handle hover, after a sidebar drag, Library overlay, command palette.
+
+Captured: exact CDP viewports 1366×745 (the running app's real window size) and 390×844, DPR1 full frames plus DPR2 crops for edge judgement. Frames in `/tmp/noteral-stage/`: `01-app-1366.png`, `02-app-1366-home.png`, `03-app-1366-left-closed.png`, `04-app-1366-both-closed.png`, `05-app-1366-dark.png`, `06-app-1366-darwin.png`, `07-app-1180.png`, `08-app-900.png`, `09-app-390.png`, `10-detail-topbar-left.png`, `11-detail-rail-join.png`, `12-detail-main-top.png`, `13-detail-right-panel.png`, `14-detail-status.png`, `15-detail-left-bottom.png`, `20c/20d-handle-*-hover.png`, `21-after-restore.png`, `22-overlay-library.png`, `23-palette.png`, `24-final-1366.png`. Harness: `stage.vite.config.ts` + `stage.html` + `stage/` (mocked `AppService` binding), launched with `npx vite --config stage.vite.config.ts --port 9355`, shot with Playwright (`/tmp/stage-shots.mjs`, `/tmp/stage-interactions.mjs`, `/tmp/final-check.mjs`); the harness was removed after the pass.
+
+Gate: not a filmed faux-UI demo, so the stageshow `film --gate` loop does not apply. Rehearsed as a real app screen: exact-size stills per state plus scripted interaction and geometry checks.
+
+Frames → findings → fixes:
+- Geometry dump (`.left-panel` 8…339, `.center-column` 347…1053, `.right-sidebar` 1062…1358, status 717…745, `scrollHeight == innerHeight`) confirmed the 8px gaps, 1px seams, 14px radii, and no page-level overflow; `--panel-gap` is the only spacing constant involved.
+- Sidebar drags anchored on `window.innerWidth`/the rail width, so the first pointermove jumped the panel by the new inset + border (≈36px right, ≈3.5px left). Now the pointerdown records the measured panel rect and the drag adds the pointer delta: 272→320 for +48 travel (left) and 296→336 for −40 (right), exact and without a grab jump.
+- `.resize-handle::after` was pinned at `left: 3px` of a 7px handle, which put the hover accent line 5px inside the new seam. The line now sits on the handle's inner edge (`right: 0` / `left: 0`), landing next to the panel border while keeping the full 7px grab area.
+- The main tab row reuses `--panel-head-h` (44px) and the page-header tint, so the rail, sidebar and tab rows all align at the same height and the tab strip reads as the panel's own head rather than a leftover title bar.
+- macOS: the old 32px reserved band (rail padding-top, sidebar-tab margins) is gone; the top bar now owns the traffic-light space via `padding-left: 78px`, which is where the native buttons are drawn. Verified only as layout, not against real AppKit.
+- Narrow widths: brand name and the search kbd hide ≤860px, the search collapses to a 30px icon ≤520px, the inspector toggle hides ≤1180px exactly where the inspector itself hides, and the rail alone still reads as a panel when the sidebar is closed.
+
+Interaction checks: Ctrl+B / Ctrl+Shift+B still hide both panels (they unmount, as before); the Library overlay and the command palette open above the inset panels with no z-order change; no console or page errors during the pass.
+
+Assumptions:
+- "move tabs section in top and under header bar" (m00001) reads as: the tabs stay the first row of the main panel, directly under the new top bar, with the page header below them (the pre-change order of tab row above page header is preserved). If the page header was meant to come first, it is a one-line swap in `App.tsx`.
+
+Not checked:
+- Real Wails frameless drag/resize behaviour of the top bar in the GTK window (the bar keeps `--wails-draggable: drag` with every control as `no-drag`; only exercised in the browser harness).
+- Real macOS traffic lights, Windows WebView2 font/AA and window-control glyphs, and touch input on the drag handles.
+- 200% zoom, IME, reduced-motion transitions.
+
+Round 2 (same session): the rail now carries a divider at its right edge while the sidebar is open — it is the sidebar's own `border-left`, so it appears and disappears with the sidebar instead of leaving a stray line on the rail; and the outer/inter-panel spacing dropped from 8px to 6px (`--panel-gap`, a single knob for both the outer margin and the gaps). Re-rehearsed on the rebuilt stage: `railToSidebarGap 0`, `sidebarBorderLeft 1px rgb(228, 220, 208)` and `0px` once the sidebar is closed, panel edges 6 / 341 / 1059 / 1366, no page overflow, no console or page errors. Frames: `/tmp/noteral-stage/30-tweaks-1366.png`, `31-tweaks-left-closed.png`, `32-tweaks-390.png`, `33-detail-seam.png` (2×), `34-detail-corners.png` (2×).

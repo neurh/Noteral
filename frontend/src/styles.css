@@ -33,7 +33,9 @@
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
-  --titlebar-h: 44px;
+  --panel-head-h: 44px;
+  --topbar-h: 46px;
+  --panel-gap: 6px;
   --status-h: 28px;
   --rail-w: 56px;
   --page-width: 780px;
@@ -120,36 +122,56 @@ kbd {
 .danger { color: var(--danger) !important; }
 .no-drag, button, input, textarea, select, .tab, .menu, .window-controls, .tab-strip { --wails-draggable: no-drag; }
 
-/* App frame */
-.app-shell { display: flex; flex-direction: column; height: 100vh; background: var(--bg); }
-.app-body { display: flex; flex: 1; min-height: 0; position: relative; }
-.center-column { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); position: relative; }
+/* App frame — transparent top bar over inset panels. */
+.app-shell { display: flex; flex-direction: column; height: 100vh; background: var(--bg-sunken); }
+.app-body {
+  display: flex; flex: 1; min-height: 0; position: relative;
+  gap: var(--panel-gap); padding: 3px var(--panel-gap) var(--panel-gap);
+}
+.center-column {
+  flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg); position: relative;
+  border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;
+}
 
-/* Titlebar */
-.titlebar {
-  display: flex;
+/* Top bar */
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 430px) 1fr;
   align-items: center;
-  gap: 0;
-  flex: 0 0 var(--titlebar-h);
-  height: var(--titlebar-h);
+  gap: 12px;
+  flex: 0 0 var(--topbar-h);
+  height: var(--topbar-h);
   min-width: 0;
-  padding: 0 7px 0 0;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-raised) 76%, var(--bg));
+  padding: 0 10px;
+  background: transparent;
   --wails-draggable: drag;
   user-select: none;
   position: relative;
   z-index: 30;
 }
-.titlebar-mac { padding-left: 22px; }
-.titlebar-mac.titlebar-after-sidebar { padding-left: 0; }
-/* macOS keeps native traffic lights above the app strip; reserve their band. */
-.app-shell[data-platform="darwin"] .rail { padding-top: 32px; }
-.app-shell[data-platform="darwin"] .titlebar,
-.app-shell[data-platform="darwin"] .left-sidebar-tabs,
-.app-shell[data-platform="darwin"] .right-tabs { margin-top: 32px; }
-.titlebar-right { display: flex; align-items: center; gap: 3px; min-width: 0; flex: 0 0 auto; margin-left: 6px; }
-.titlebar-spacer { flex: 1 1 auto; min-width: 6px; }
+/* macOS draws the traffic lights inside this row, before the brand. */
+.app-shell[data-platform="darwin"] .topbar { padding-left: 78px; }
+.topbar-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.topbar-right { display: flex; align-items: center; gap: 3px; justify-content: flex-end; min-width: 0; }
+.topbar-brand { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.topbar-mark {
+  width: 23px; height: 23px; border-radius: 7px; flex: 0 0 auto;
+  background: var(--accent); color: #fff8f3;
+  display: grid; place-items: center; font: 560 14px/1 var(--font-reading);
+}
+.topbar-name { font: 560 13px/1 var(--font-ui); letter-spacing: 0.01em; color: var(--text); white-space: nowrap; }
+.topbar-center { display: flex; align-items: center; justify-content: center; min-width: 0; }
+.topbar-search {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; height: 30px;
+  padding: 0 7px 0 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-raised) 68%, transparent);
+  color: var(--text-faint); font-size: 12.5px; text-align: left;
+}
+.topbar-search:hover { border-color: var(--border-strong); background: var(--bg-raised); color: var(--text-muted); }
+.topbar-search svg { flex: 0 0 auto; }
+.topbar-search-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-search kbd { flex: 0 0 auto; }
 .window-controls { display: flex; align-items: center; gap: 1px; margin-left: 3px; }
 .window-button {
   width: 32px; height: 27px; border: 0; border-radius: 5px; background: transparent;
@@ -257,15 +279,19 @@ kbd {
 .tab-strip-empty { color: var(--text-faint); font-size: 11.5px; padding: 0 8px; }
 
 /* Rail */
+/* The rail and the page sidebar share one rounded panel, with no seam. */
+.left-panel {
+  display: flex; flex: 0 0 auto; min-height: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;
+  background: color-mix(in srgb, var(--bg-sunken) 48%, var(--bg));
+}
 .rail {
   width: var(--rail-w); flex: 0 0 var(--rail-w);
-  border-right: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-sunken) 50%, var(--bg));
+  background: color-mix(in srgb, var(--bg-sunken) 48%, var(--bg));
   display: flex; flex-direction: column; align-items: center;
-  padding: 0 0 8px; gap: 8px; user-select: none;
+  padding: 6px 0 8px; gap: 8px; user-select: none;
 }
-.rail-top { flex: 0 0 var(--titlebar-h); width: 100%; height: var(--titlebar-h); display: grid; place-items: center; }
-.rail-items { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; width: 100%; padding-top: 3px; }
+.rail-items { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; width: 100%; padding-top: 0; }
 .rail-button {
   width: 36px; height: 36px; border: 0; border-radius: 8px; background: transparent;
   color: var(--text-muted); display: grid; place-items: center; position: relative;
@@ -283,29 +309,36 @@ kbd {
   display: flex; flex-direction: column; background: color-mix(in srgb, var(--bg-sunken) 48%, var(--bg));
   min-height: 0;
 }
-.left-sidebar { border-right: 1px solid var(--border); }
-.right-sidebar { border-left: 1px solid var(--border); }
+/* The divider only exists while the sidebar shares the rail's panel. */
+.left-sidebar { border-left: 1px solid var(--border); }
+.right-sidebar { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
 .resize-handle { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 20; cursor: col-resize; }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
-.resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; transition: background 120ms; }
+.resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; width: 1px; background: transparent; transition: background 120ms; }
+.resize-handle-left::after { right: 0; }
+.resize-handle-right::after { left: 0; }
 .resize-handle:hover::after, .resize-handle:focus-visible::after { background: var(--accent); }
-.resize-handle-left { right: -4px; }
-.resize-handle-right { left: -4px; }
+.resize-handle-left { right: 0; }
+.resize-handle-right { left: 0; }
 .sidebar-section-heading {
   display: flex; align-items: center; justify-content: space-between;
   height: 35px; padding: 8px 9px 4px 12px;
   font-size: 10.5px; font-weight: 620; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint);
 }
 .sidebar-section-heading button { letter-spacing: normal; text-transform: none; }
-.left-sidebar-tabs, .right-tabs {
+.left-sidebar-tabs, .right-tabs, .main-tabs {
   display: flex; align-items: center; gap: 2px;
-  flex: 0 0 var(--titlebar-h); height: var(--titlebar-h);
+  flex: 0 0 var(--panel-head-h); height: var(--panel-head-h);
   border-bottom: 1px solid var(--border);
 }
 .left-sidebar-tabs { padding: 0 8px; }
-.right-tabs { padding: 0 4px 0 8px; }
-.rail-top, .left-sidebar-tabs, .right-tabs { --wails-draggable: drag; user-select: none; }
-.right-tabs .window-controls { margin-left: 4px; }
+.right-tabs { padding: 0 8px; }
+.left-sidebar-tabs, .right-tabs, .main-tabs { --wails-draggable: drag; user-select: none; }
+.main-tabs {
+  gap: 8px; padding: 0 8px; min-width: 0;
+  background: color-mix(in srgb, var(--bg-raised) 42%, var(--bg));
+}
+.main-tabs .tab-strip { flex: 1 1 auto; }
 .left-tab, .right-tab {
   height: 26px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted);
   display: grid; place-items: center; padding: 0 8px;
@@ -752,7 +785,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .panel-note { color: var(--text-faint); font-size: 11px; line-height: 1.5; padding: 4px 7px; }
 
 /* Status bar */
-.status-bar { display: flex; flex: 0 0 var(--status-h); align-items: center; justify-content: space-between; height: var(--status-h); border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-sunken) 55%, var(--bg)); padding: 0 10px; font-size: 10.5px; color: var(--text-faint); user-select: none; gap: 10px; }
+.status-bar { display: flex; flex: 0 0 var(--status-h); align-items: center; justify-content: space-between; height: var(--status-h); border-top: 0; background: transparent; padding: 0 12px; font-size: 10.5px; color: var(--text-faint); user-select: none; gap: 10px; }
 .status-left, .status-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .save-state { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .save-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-faint); }
@@ -1329,13 +1362,23 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* drag handle */
 .drag-handle { cursor: grab; }
 
+/* Narrow windows keep the search usable without crowding the bar. */
+@media (max-width: 860px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
+  .topbar-name { display: none; }
+  .topbar-search kbd { display: none; }
+}
+@media (max-width: 520px) {
+  .topbar-search-label { display: none; }
+  .topbar-search { justify-content: center; padding: 0; width: 30px; }
+}
+
 @media (max-width: 1180px) {
   .right-sidebar { display: none; }
+  .topbar-toggle-right { display: none; }
 }
 @media (max-width: 900px) {
   .left-sidebar { display: none; }
-  .rail-top { display: none; }
-  .rail-items { padding-top: 8px; }
   .page-editor { padding-left: 30px; padding-right: 30px; }
   .page-cover-wrap { margin-top: -18px; }
   .page-cover { height: 168px; }

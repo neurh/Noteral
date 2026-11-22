@@ -18,17 +18,19 @@ export function LeftSidebar() {
   const setOverlay = useAppStore((state) => state.setOverlay);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const persistSettings = useAppStore((state) => state.persistSettingsNow);
-  const resizing = useRef(false);
+  const resizing = useRef<{ x: number; width: number } | null>(null);
+  const asideRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
-      if (!resizing.current) return;
-      const next = Math.max(220, Math.min(420, event.clientX - 56));
+      const start = resizing.current;
+      if (!start) return;
+      const next = Math.max(220, Math.min(420, start.width + (event.clientX - start.x)));
       updateSettings({ leftWidth: next }, false);
     };
     const onUp = () => {
       if (!resizing.current) return;
-      resizing.current = false;
+      resizing.current = null;
       document.body.classList.remove("resizing");
       void persistSettings();
     };
@@ -43,7 +45,7 @@ export function LeftSidebar() {
   if (!open) return null;
   const favoritePages = pages.filter((page) => favorites.includes(page.id));
   return (
-    <aside className="left-sidebar" style={{ width }} aria-label="Sidebar">
+    <aside className="left-sidebar" ref={asideRef} style={{ width }} aria-label="Sidebar">
       <LeftSidebarTabs />
       <div className="workspace-switcher">
         <button
@@ -73,8 +75,8 @@ export function LeftSidebar() {
         aria-orientation="vertical"
         aria-label="Resize sidebar"
         title="Drag to resize sidebar"
-        onPointerDown={() => {
-          resizing.current = true;
+        onPointerDown={(event) => {
+          resizing.current = { x: event.clientX, width: asideRef.current?.getBoundingClientRect().width ?? width };
           document.body.classList.add("resizing");
         }}
       />

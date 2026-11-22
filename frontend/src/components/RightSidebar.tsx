@@ -5,7 +5,6 @@ import { editorBridge } from "../lib/editorBridge";
 import { formatDate } from "../lib/format";
 import { useAppStore, type RightTab } from "../store";
 import { usePluginPanels } from "../plugins/runtime";
-import { WindowControls } from "./WindowControls";
 
 const tabs: Array<{ id: RightTab; label: string; icon: typeof List }> = [
   { id: "outline", label: "Outline", icon: List },
@@ -16,7 +15,6 @@ const tabs: Array<{ id: RightTab; label: string; icon: typeof List }> = [
 export function RightSidebar() {
   const open = useAppStore((state) => state.settings.rightOpen);
   const width = useAppStore((state) => state.settings.rightWidth);
-  const platform = useAppStore((state) => state.bootstrap?.platform ?? "");
   const tab = useAppStore((state) => state.rightTab);
   const setTab = useAppStore((state) => state.setRightTab);
   const outline = useAppStore((state) => state.outline);
@@ -31,17 +29,19 @@ export function RightSidebar() {
   const updateSettings = useAppStore((state) => state.updateSettings);
   const persistSettings = useAppStore((state) => state.persistSettingsNow);
   const notify = useAppStore((state) => state.notify);
-  const resizing = useRef(false);
+  const resizing = useRef<{ x: number; width: number } | null>(null);
+  const asideRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
-      if (!resizing.current) return;
-      const next = Math.max(260, Math.min(420, window.innerWidth - event.clientX));
+      const start = resizing.current;
+      if (!start) return;
+      const next = Math.max(260, Math.min(420, start.width + (start.x - event.clientX)));
       updateSettings({ rightWidth: next }, false);
     };
     const onUp = () => {
       if (!resizing.current) return;
-      resizing.current = false;
+      resizing.current = null;
       document.body.classList.remove("resizing");
       void persistSettings();
     };
@@ -66,15 +66,15 @@ export function RightSidebar() {
   }
 
   return (
-    <aside className="right-sidebar" style={{ width }} aria-label="Inspector">
+    <aside className="right-sidebar" ref={asideRef} style={{ width }} aria-label="Inspector">
       <div
         className="resize-handle resize-handle-right"
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize inspector"
         title="Drag to resize inspector"
-        onPointerDown={() => {
-          resizing.current = true;
+        onPointerDown={(event) => {
+          resizing.current = { x: event.clientX, width: asideRef.current?.getBoundingClientRect().width ?? width };
           document.body.classList.add("resizing");
         }}
       />
@@ -99,7 +99,6 @@ export function RightSidebar() {
             );
           })}
         </div>
-        {platform !== "darwin" ? <WindowControls /> : null}
       </div>
       <div className="right-content">
         {!page ? <div className="empty-hint small"><p>Open a page to see its details.</p></div> : null}
