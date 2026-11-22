@@ -1,197 +1,137 @@
 # Noteral
 
-A local-first desktop notes app for people who think in pages. Noteral is built
-with **Wails v3**, Go, React 19, TypeScript, and BlockNote. Notes live in a
-library folder in your user profile (`~/Library/Application Support/Noteral` on
-macOS, `%LOCALAPPDATA%\Noteral` on Windows, `~/.local/share/noteral` on Linux):
-no account, no sync service, no telemetry, and no CDN at runtime.
+**A quiet, local-first home for everything you write.**
 
-![Noteral editor](docs/noteral-editor.png)
+Noteral is a desktop notes app for people who think in pages. It pairs a calm,
+block-based editor with a library that nests as deeply as your ideas do, so a
+passing thought can become a project, a research archive, or a second brain
+without ever leaving the page where it began.
 
-## What is here
+Everything stays on your computer. There is no account to create, no sync
+service in the middle, and no feed asking for attention. Open Noteral on a
+plane, in a cabin, or years from now, and your library is still yours.
 
-- Frameless desktop shell with a draggable title bar, tabs, page tree, command
-  palette, inspector, status bar, and responsive sidebars.
-- BlockNote editor with headings, lists, checklists, quotes, code, tables,
-  links, slash commands, drag handles, pasted/dropped images and files, plus
-  a full-width writing mode.
-- Nested pages, inline rename, drag-to-reorder, duplicate, favorites, recent
-  pages, and stable page-ID links with backlinks.
-- Page icons and covers: search the bundled Lucide set, browse the full emoji
-  catalog with skin tones, upload a local image, and pick icon colors or a cover
-  from curated colors, gradients, and offline illustrations.
-- Trash with restore, permanent delete, and empty-all, so deleting a page is
-  reversible.
-- SQLite persistence, per-workspace databases, FTS5 full-text search, autosave
-  with confirmed save states, and flush-before-quit.
-- Multiple workspaces with their own pages, assets, tabs, and search index.
-- Sandboxed plugin system with a versioned TypeScript SDK, permissions,
-  commands, status items, read-only inspector panels, settings, and events.
-- Two installable examples (**Reading Time**, **Meeting Notes**) and a starter
-  plugin template.
-- Light, dark, and system themes; local Inter/Newsreader fonts.
+![Noteral's editor with the page tree, open tabs, and inspector](docs/noteral-editor.png)
 
-The implementation status and known limitations are listed at the end of this
-file. The original product brief is in [`docs/goal.md`](docs/goal.md).
+## Note-taking should not feel like renting
 
-## Requirements
+Most note apps are built to capture more: more tabs, more integrations, more
+places to lose the thing you just wrote. Convenience often arrives with an
+account, a subscription, and your thinking living on someone else's server. The
+simpler alternatives go the other way, until every note piles up in one endless
+list.
 
-| Tool | Version used |
-| --- | --- |
-| Go | 1.26+ (tested with 1.27.4) |
-| Node.js / npm | Node 22+ (tested with 24.18.1 / npm 12) |
-| Wails CLI | v3.1.0 |
-| Linux native deps | GTK 3, WebKitGTK 4.1, gcc, pkg-config |
+Noteral takes a different path. It is designed for private, durable notes that
+can grow in structure without asking you to become a system administrator. The
+result feels less like a service and more like a good desk: quiet, familiar, and
+ready when you sit down.
 
-Install the Wails CLI:
+## Who it's for
 
-```sh
-go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
-# ~/go/bin is usually on PATH; otherwise use $(go env GOPATH)/bin/wails3
-```
+- Writers and researchers who collect fragments before they become chapters.
+- Students and lifelong learners building a personal knowledge base.
+- Builders, consultants, and makers juggling projects, clients, and ideas.
+- Anyone who wants their notes to work offline and still be here when the app of
+  the moment is gone.
+- People who think in outlines and pages, not chat threads or infinite boards.
 
-This checkout targets **Wails v3.1.0**. Wails v3.1's Linux default backend is
-GTK4/WebKitGTK 6; the Linux build tasks in this repository force the GTK3
-backend because that is what the verified host provides:
+## What you can do
 
-```yaml
-# build/linux/Taskfile.yml
--tags gtk3              # development
--tags production,gtk3   # production
-```
+### Write without breaking your stride
 
-If your machine has GTK4/WebKitGTK 6 and you want to use it, remove `gtk3` from
-those build flags and verify the native build again.
+Pages are made of blocks that adapt to what you are writing: headings, lists,
+checklists, quotes, code, tables, and links. Type `/` for commands, drag blocks
+to reorganize, and paste or drop images and files straight into the page. When
+you want the words to fill the window, switch to full width and keep going.
+Autosave works in the background and tells you when your changes are safely
+stored.
 
-## Install dependencies
+### Let structure emerge
 
-```sh
-npm --prefix frontend install
-npm run plugins:build
-```
+Nest pages under pages, rename them inline, reorder them by dragging, duplicate
+one to start a variation, and star the ones you return to. Give a page an icon
+or a cover from a built-in collection, an emoji, or an image of your own. Link
+pages to each other while you write, and the inspector shows what links back, so
+a personal wiki grows without a separate setup ritual.
 
-`plugins:build` compiles the SDK payload, both catalog examples, and the starter
-example. Re-run it after changing anything under `sdk/` or `examples/`.
+### Find the thread again
 
-## Development
+Open the command palette to jump to a page or run an action without hunting
+through menus. Search the current library by title or body text and see the
+matching passage in context. Favorites and recent pages are always close, so
+yesterday's train of thought is never far away.
 
-```sh
-# Native Wails app + Vite dev server (HMR for the renderer)
-wails3 dev -config ./build/config.yml -port 9245
-```
+### Pick up exactly where you left off
 
-`build/linux/Taskfile.yml` builds the Go side with `-tags gtk3`. Vite serves the
-renderer at port 9245 and proxies `/__assets` to the small Go asset server on
-port 9246 (used only in development). Embedding the production frontend is still
-verified by a normal native build.
+Keep several pages open in tabs. Reopen Noteral and the last workspace, your
+tabs, and the active page return as you left them. Home is a starting point
+rather than a dashboard: choose a calm **Default** view, a browsable
+**Library**, a date-and-greeting **Focus** view, or a visual **Gallery** of your
+pages. Each Home tab remembers its own view and background, so you can keep one
+home for work and another for everything else.
 
-Useful isolated commands:
+### Make the page feel like yours
 
-```sh
-# TypeScript + Vite production build
-npm --prefix frontend run build
+Follow the system theme or choose light or dark. Write in a literary serif or a
+crisp sans; adjust text size, line spacing, and reading width until the page
+feels right. Turn off motion, show word and block counts, toggle spellcheck, and
+resize the panels around your work. Small comforts matter when you spend real
+time thinking on a screen.
 
-# Frontend unit tests
-npm --prefix frontend test
+### Keep separate parts of life separate
 
-# Go tests (gtk3 is required on this host)
-go test -tags gtk3 ./...
+Create workspaces for different projects or roles. Each has its own pages,
+images, tabs, favorites, and search, so a client archive never mixes with a
+journal. Switch workspaces in a couple of clicks, rename them, and let Noteral
+return you to the one you used last.
 
-# Production native binary -> bin/noteral
-wails3 build
+### Trust what happens to your notes
 
-# Run a specific data directory
-./bin/noteral --data-dir /tmp/noteral-demo
-```
+Noteral saves continuously, shows an honest save state, and finishes pending
+edits before you quit. Pages you delete go to Trash, where they can be restored
+or permanently removed. A daily snapshot of your notes is kept for the last
+seven days. Your notes, images, settings, and backups live together in one
+folder. Open or copy its location from Settings, and back it up whenever you
+like. Export a page as Markdown with its images, or as a structured copy that
+preserves its content.
 
-### A clean local run
+There is no account, no sync service, and no telemetry. When you move to another
+computer, you take the folder with you.
 
-```sh
-rm -rf /tmp/noteral-demo
-./bin/noteral --data-dir /tmp/noteral-demo
-```
+### Add what you need, nothing more
 
-The first launch creates **Default Workspace** and a seeded **Welcome to
-Noteral** page exactly once. Quit the app and copy the library folder to move
-it to another machine.
+Install extensions from the built-in catalog or from a file, turn them on or
+off, and remove them when they are no longer useful. Extensions can add
+commands, status-bar information, inspector panels, and their own settings, and
+they declare the permissions they need. Small examples such as **Reading Time**
+and **Meeting Notes** show how a quiet app can become a little more personal
+without turning into a platform.
 
-## Data layout
+## A day in Noteral
 
-The root is chosen in this order:
+1. Open Noteral. A Home tab gives you favorites and the pages you touched most
+   recently, ready when you want a clean beginning.
+2. Start a page with a title, then write the first thought beneath it. Use the
+   `/` menu when you need a heading, a checklist, or a link to somewhere else.
+3. As the page grows, nest related pages beneath it and drag them into the order
+   that matches your thinking.
+4. Star the pages that matter this week. When you need to move, press `⌘K` or
+   `Ctrl+K` and jump straight to another page or action.
+5. Open a tab for a different thread, and switch workspaces when you move from
+   one part of your life to another.
+6. Close the app. Nothing to sync, nothing to upload. When you return,
+   everything is where you left it.
 
-1. `--data-dir <path>` (also accepts `--data-dir=<path>`)
-2. `NOTERAL_DATA_DIR` environment variable
-3. The platform's per-user application-data directory:
-   - macOS: `~/Library/Application Support/Noteral`
-   - Windows: `%LOCALAPPDATA%\Noteral`
-   - Linux: `$XDG_DATA_HOME/noteral` (default `~/.local/share/noteral`)
+## What Noteral believes
 
-If no home directory can be resolved, Noteral falls back to `Data/` beside the
-executable. Startup fails with an explicit error if the directory cannot be
-created or written; there is no browser-storage fallback. An older build's
-`Data/` library beside the executable is moved into the new root on first
-launch.
+- **Your notes are yours.** They live on your device, in a folder you control,
+  in formats you can take elsewhere.
+- **Calm is a feature.** The best note app disappears while you write and is
+  still dependable when you come back.
+- **Structure should grow with you.** A page can be a sentence or a whole world;
+  Noteral never makes you choose up front.
+- **Software should last.** No dependency on an account, a subscription, or a
+  service that might change its mind.
 
-```text
-<data root>/
-├── noteral.db                         app registry, settings, plugin state, meta
-├── workspaces/
-│   └── ws_<id>/
-│       ├── workspace.db               pages, links, tabs, FTS5 index
-│       └── assets/
-│           └── 2026/11/<id>-photo.png relative asset storage
-├── plugins/
-│   └── com.example.plugin/
-│       ├── plugin.json                installed manifest
-│       ├── plugin.js                  sandboxed entry point
-│       └── settings.json              plugin-owned settings (if used)
-└── backups/
-    └── 2026-11-21/                    daily VACUUM INTO snapshots, 7 days
-```
-
-Asset references are stored relative (`assets/<yyyy>/<mm>/<file>`), never as
-absolute paths. The app serves them through a validated `/__assets/<workspace>/`
-route.
-
-## Documentation
-
-- [Plugin SDK and plugin guide](docs/PLUGIN_SDK.md)
-- [Architecture and persistence](docs/ARCHITECTURE.md)
-- [Testing and verification](docs/TESTING.md)
-- [Original product brief](docs/goal.md)
-- [Starter plugin](examples/starter/README.md)
-
-## Verified on this machine
-
-Linux (Debian 13, X11, GTK 3.24, WebKitGTK 4.1) was tested with a native Wails
-build and an end-to-end UI/DB journey: first launch, typing, autosave, image
-paste, page links, workspace creation/switching, full-text search, plugin
-install/enable/disable, and close/reopen with flushed content.
-
-Run the exact commands and see the recorded results in
-[`docs/TESTING.md`](docs/TESTING.md).
-
-## Known limitations
-
-- **macOS and Windows were not built or run here.** The Wails window code keeps
-  native macOS traffic lights with the hidden-inset title bar, and uses custom
-  controls on Linux/Windows, but only Linux was verified. Packaging (`.app`,
-  `.msi`, `.deb`) was not exercised.
-- **Linux requires GTK3/WebKitGTK 4.1** for the verified build. The forced
-  `gtk3` tag is intentional; see the requirements section.
-- **Plugin panels are read-only plain text.** Plugins cannot render arbitrary
-  HTML/React into the privileged renderer. Commands, status items, panels,
-  settings, document reads/writes, search, tabs, and navigation go through the
-  permission-checked host boundary.
-- **Remote catalogs are fetch-only.** Noteral never contacts the network on its
-  own; fetching a catalog URL is an explicit action and remote entries are
-  installed separately.
-- **No sync, collaboration, mobile, or auto-update.**
-- **Search is deliberately simple.** FTS5 prefix terms and title matching; no
-  boolean/advanced query syntax.
-- **Markdown export is readable but lossy for custom/unknown blocks.** JSON
-  export is the lossless format.
-- **No native application menu bar** is rendered; primary actions use the
-  command system (titlebar menu, shortcuts, palette, plugin commands).
-- Window resizing/dragging on Linux relies on the window manager; the verified
-  X11 session supports both.
+Noteral is a place to think, keep, and return to. Quietly. Locally. For as long
+as you need it.

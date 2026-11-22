@@ -4,8 +4,7 @@ Verified on **2026-11-21** on Linux (Debian 13, X11, i3), Go 1.27.4,
 Node 24.18.1/npm 12.0.2, GTK 3.24, WebKitGTK 4.1.
 
 This document separates automated checks, a scripted native acceptance run, and
-things that were **not** tested. The original acceptance criteria are in
-[`goal.md`](goal.md).
+things that were **not** tested.
 
 ## Automated checks
 
