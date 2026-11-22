@@ -214,6 +214,7 @@ export default function App() {
   const bootError = useAppStore((state) => state.bootError);
   const bootstrap = useAppStore((state) => state.bootstrap);
   const activeTitle = useAppStore((state) => state.documents[state.activePageId]?.title ?? "Noteral");
+  const settings = useAppStore((state) => state.settings);
   const bootstrapApp = useAppStore((state) => state.bootstrapApp);
 
   useEffect(() => {
@@ -261,6 +262,15 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--page-width", `${settings.pageWidth}px`);
+    root.style.setProperty("--editor-font-size", `${settings.fontSize}px`);
+    root.style.setProperty("--editor-line-height", String(settings.lineHeight));
+    root.dataset.editorFont = settings.editorFont;
+    root.dataset.reduceMotion = settings.reduceMotion ? "true" : "false";
+  }, [settings.editorFont, settings.fontSize, settings.lineHeight, settings.pageWidth, settings.reduceMotion]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");

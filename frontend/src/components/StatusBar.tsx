@@ -4,6 +4,7 @@ import { useAppStore } from "../store";
 
 export function StatusBar() {
   const document = useAppStore((state) => state.documents[state.activePageId]);
+  const showStats = useAppStore((state) => state.settings.showStats);
   const liveWords = useAppStore((state) => state.liveWordCount);
   const liveBlocks = useAppStore((state) => state.liveBlockCount);
   const statuses = usePluginStatuses();
@@ -28,7 +29,7 @@ export function StatusBar() {
           <span className="save-dot" aria-hidden="true" />
           <span aria-live="polite">{label}</span>
         </span>
-        {document ? (
+        {document && showStats ? (
           <>
             <span className="status-divider" aria-hidden="true">·</span>
             <span>{liveWords.toLocaleString()} words</span>

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Plus, X } from "lucide-react";
 import { useAppStore } from "../store";
 
@@ -10,7 +11,16 @@ export function TabStrip() {
   const reorderTabs = useAppStore((state) => state.reorderTabs);
   const createPage = useAppStore((state) => state.createPage);
   const titles = new Map(pages.map((page) => [page.id, page.title]));
+  const tabRefs = useRef(new Map<string, HTMLDivElement>());
   let dragIndex: number | null = null;
+
+  function focusTab(index: number) {
+    const next = Math.max(0, Math.min(tabs.length - 1, index));
+    const pageId = tabs[next];
+    if (!pageId) return;
+    void selectPage(pageId);
+    requestAnimationFrame(() => tabRefs.current.get(pageId)?.focus());
+  }
 
   return (
     <div className="tab-strip" role="tablist" aria-label="Open pages">
@@ -20,6 +30,10 @@ export function TabStrip() {
         return (
           <div
             key={pageId}
+            ref={(element) => {
+              if (element) tabRefs.current.set(pageId, element);
+              else tabRefs.current.delete(pageId);
+            }}
             role="tab"
             aria-selected={selected}
             tabIndex={selected ? 0 : -1}
@@ -53,6 +67,18 @@ export function TabStrip() {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 void selectPage(pageId);
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                focusTab(index + 1);
+              } else if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                focusTab(index - 1);
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                focusTab(0);
+              } else if (event.key === "End") {
+                event.preventDefault();
+                focusTab(tabs.length - 1);
               }
             }}
             onClick={() => void selectPage(pageId)}

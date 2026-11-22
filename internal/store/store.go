@@ -337,6 +337,21 @@ func (s *Store) GetAppSettings() AppSettings {
 	if out.Theme != "light" && out.Theme != "dark" && out.Theme != "system" {
 		out.Theme = "system"
 	}
+	if out.EditorFont != "serif" && out.EditorFont != "sans" {
+		out.EditorFont = "serif"
+	}
+	if out.FontSize < 15 || out.FontSize > 20 {
+		out.FontSize = 17
+	}
+	if out.LineHeight < 1.45 || out.LineHeight > 1.9 {
+		out.LineHeight = 1.68
+	}
+	if out.PageWidth < 640 || out.PageWidth > 900 {
+		out.PageWidth = 780
+	}
+	if out.AutosaveDelay < 300 || out.AutosaveDelay > 2000 {
+		out.AutosaveDelay = 700
+	}
 	return out
 }
 

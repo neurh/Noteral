@@ -64,17 +64,40 @@ type UISettings struct {
 
 // AppSettings is global application preference state.
 type AppSettings struct {
-	Theme      string `json:"theme"` // light, dark, system
-	LeftWidth  int    `json:"leftWidth"`
-	RightWidth int    `json:"rightWidth"`
-	LeftOpen   bool   `json:"leftOpen"`
-	RightOpen  bool   `json:"rightOpen"`
-	RailOpen   bool   `json:"railOpen"`
+	Theme         string  `json:"theme"` // light, dark, system
+	LeftWidth     int     `json:"leftWidth"`
+	RightWidth    int     `json:"rightWidth"`
+	LeftOpen      bool    `json:"leftOpen"`
+	RightOpen     bool    `json:"rightOpen"`
+	RailOpen      bool    `json:"railOpen"`
+	EditorFont    string  `json:"editorFont"` // serif, sans
+	FontSize      int     `json:"fontSize"`   // reading text size in px
+	LineHeight    float64 `json:"lineHeight"` // reading line height
+	PageWidth     int     `json:"pageWidth"`  // maximum reading measure in px
+	AutosaveDelay int     `json:"autosaveDelay"` // milliseconds after the last edit
+	Spellcheck    bool    `json:"spellcheck"`
+	ReduceMotion  bool    `json:"reduceMotion"`
+	ShowStats     bool    `json:"showStats"`
 }
 
 // DefaultAppSettings returns the initial visual layout.
 func DefaultAppSettings() AppSettings {
-	return AppSettings{Theme: "system", LeftWidth: 272, RightWidth: 296, LeftOpen: true, RightOpen: true, RailOpen: true}
+	return AppSettings{
+		Theme:         "system",
+		LeftWidth:     272,
+		RightWidth:    296,
+		LeftOpen:      true,
+		RightOpen:     true,
+		RailOpen:      true,
+		EditorFont:    "serif",
+		FontSize:      17,
+		LineHeight:    1.68,
+		PageWidth:     780,
+		AutosaveDelay: 700,
+		Spellcheck:    true,
+		ReduceMotion:  false,
+		ShowStats:     true,
+	}
 }
 
 // ConflictError means another writer changed the page between load and save.

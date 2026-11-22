@@ -97,6 +97,7 @@ export function PageView({ page, active }: PageViewProps) {
   const workspace = useAppStore((state) => state.workspace);
   const pages = useAppStore((state) => state.pages);
   const theme = useAppStore((state) => state.resolvedTheme);
+  const spellcheck = useAppStore((state) => state.settings.spellcheck);
   const markDirty = useAppStore((state) => state.markDirty);
   const renamePage = useAppStore((state) => state.renamePage);
   const reloadPage = useAppStore((state) => state.reloadPage);
@@ -267,6 +268,7 @@ export function PageView({ page, active }: PageViewProps) {
               editor={editor}
               theme={theme}
               slashMenu={false}
+              spellCheck={spellcheck}
               className="noteral-editor"
               onChange={() => void onChange()}
             >

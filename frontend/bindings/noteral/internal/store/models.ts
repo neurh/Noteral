@@ -14,6 +14,29 @@ export interface AppSettings {
     "leftOpen": boolean;
     "rightOpen": boolean;
     "railOpen": boolean;
+    /**
+     * serif, sans
+     */
+    "editorFont": string;
+    /**
+     * reading text size in px
+     */
+    "fontSize": number;
+    /**
+     * reading line height
+     */
+    "lineHeight": number;
+    /**
+     * maximum reading measure in px
+     */
+    "pageWidth": number;
+    /**
+     * milliseconds after the last edit
+     */
+    "autosaveDelay": number;
+    "spellcheck": boolean;
+    "reduceMotion": boolean;
+    "showStats": boolean;
 }
 
 /**

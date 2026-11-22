@@ -39,7 +39,32 @@ export const defaultSettings: AppSettings = {
   leftOpen: true,
   rightOpen: true,
   railOpen: true,
+  editorFont: "serif",
+  fontSize: 17,
+  lineHeight: 1.68,
+  pageWidth: 780,
+  autosaveDelay: 700,
+  spellcheck: true,
+  reduceMotion: false,
+  showStats: true,
 };
+
+function clamp(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeSettings(input: Partial<AppSettings> | null | undefined): AppSettings {
+  const merged = { ...defaultSettings, ...(input ?? {}) };
+  return {
+    ...merged,
+    editorFont: merged.editorFont === "sans" ? "sans" : "serif",
+    fontSize: Math.round(clamp(merged.fontSize, 15, 20, 17)),
+    lineHeight: Math.round(clamp(merged.lineHeight, 1.45, 1.9, 1.68) * 100) / 100,
+    pageWidth: Math.round(clamp(merged.pageWidth, 640, 900, 780)),
+    autosaveDelay: Math.round(clamp(merged.autosaveDelay, 300, 2000, 700)),
+  };
+}
 
 interface AppState {
   status: "loading" | "ready" | "error";
@@ -207,7 +232,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       applyTheme("light");
       const boot = await api.bootstrap();
-      const settings = boot.settings ?? defaultSettings;
+      const settings = normalizeSettings(boot.settings);
       const resolved = resolveTheme(settings.theme);
       applyTheme(resolved);
       const workspaces = list(boot.workspaces);
@@ -569,7 +594,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         [pageId]: { ...state.documents[pageId], saveState: "dirty", wordCount: stats.wordCount, blockCount: stats.blockCount },
       },
     }));
-    scheduleSave(get, pageId);
+    scheduleSave(get, pageId, get().settings.autosaveDelay);
   },
 
   saveNow: (pageId) => {
@@ -715,7 +740,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   updateSettings: (patch, persist = true) => {
-    const settings = { ...get().settings, ...patch };
+    const settings = normalizeSettings({ ...get().settings, ...patch });
     const resolved = resolveTheme(settings.theme);
     set({ settings, resolvedTheme: resolved });
     applyTheme(resolved);
