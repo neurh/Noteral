@@ -2,11 +2,14 @@ import { Boxes, LibraryBig, PanelLeft, Puzzle, Search, Settings } from "lucide-r
 import { useAppStore } from "../store";
 
 const items = [
-  { id: "workspaces", label: "Workspaces", icon: Boxes },
   { id: "library", label: "Library", icon: LibraryBig },
   { id: "palette", label: "Search", icon: Search },
   { id: "plugins", label: "Plugins", icon: Puzzle },
+] as const;
+
+const bottomItems = [
   { id: "settings", label: "Settings", icon: Settings },
+  { id: "workspaces", label: "Workspaces", icon: Boxes },
 ] as const;
 
 export function Rail() {
@@ -48,8 +51,24 @@ export function Rail() {
           );
         })}
       </div>
-      <div className="rail-bottom" aria-hidden="true">
-        <span className="rail-dot" />
+      <div className="rail-bottom">
+        {bottomItems.map((item) => {
+          const Icon = item.icon;
+          const selected = overlay === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`rail-button ${selected ? "selected" : ""}`}
+              aria-label={item.label}
+              aria-pressed={selected}
+              title={item.label}
+              onClick={() => setOverlay(item.id)}
+            >
+              <Icon size={19} strokeWidth={1.8} />
+            </button>
+          );
+        })}
       </div>
     </nav>
   );
