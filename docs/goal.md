@@ -28,7 +28,7 @@ Autosave without interrupting typing or moving the caret. Show an unobtrusive **
 
 ## 4. Keep all app-owned data together
 
-Default to a portable `Data/` directory beside the executable, or beside the `.app` bundle on macOS. Resolve it from the application location, not the current working directory. If it is unwritable, explain the problem and support an explicit `--data-dir` override; do not silently save notes somewhere else.
+Default to the platform's per-user application-data directory: `~/Library/Application Support/Noteral` on macOS, `%LOCALAPPDATA%\Noteral` on Windows, and `$XDG_DATA_HOME/noteral` (or `~/.local/share/noteral`) on Linux. Keep the whole library in that one folder and move a legacy `Data/` directory beside the application into it on first launch. If it is unwritable, explain the problem and support an explicit `--data-dir` override; do not silently save notes somewhere else.
 
 - On first launch, create **Default Workspace** and an editable **Welcome** page exactly once.
 - Support creating, renaming, and switching workspaces. Reopen the last active workspace on launch.

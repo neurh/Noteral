@@ -222,7 +222,7 @@ function makeCommands(): AppCommand[] {
       id: "app.reveal-data",
       title: "Open data folder",
       category: "Noteral",
-      description: "Show the portable Noteral library folder",
+      description: "Show the Noteral library folder",
       run: () => void api.revealDataDir().catch((error) => store.getState().notify(errorMessage(error), "error")),
     },
   ];

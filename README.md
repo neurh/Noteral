@@ -2,8 +2,9 @@
 
 A local-first desktop notes app for people who think in pages. Noteral is built
 with **Wails v3**, Go, React 19, TypeScript, and BlockNote. Notes live in a
-portable `Data/` folder beside the application: no account, no sync service, no
-telemetry, and no CDN at runtime.
+library folder in your user profile (`~/Library/Application Support/Noteral` on
+macOS, `%LOCALAPPDATA%\Noteral` on Windows, `~/.local/share/noteral` on Linux):
+no account, no sync service, no telemetry, and no CDN at runtime.
 
 ![Noteral editor](docs/noteral-editor.png)
 
@@ -111,8 +112,8 @@ rm -rf /tmp/noteral-demo
 ```
 
 The first launch creates **Default Workspace** and a seeded **Welcome to
-Noteral** page exactly once. Move the `Data/` folder while the app is closed to
-move the library to another machine.
+Noteral** page exactly once. Quit the app and copy the library folder to move
+it to another machine.
 
 ## Data layout
 
@@ -120,13 +121,19 @@ The root is chosen in this order:
 
 1. `--data-dir <path>` (also accepts `--data-dir=<path>`)
 2. `NOTERAL_DATA_DIR` environment variable
-3. `Data/` beside the executable (macOS: beside the `.app` bundle)
+3. The platform's per-user application-data directory:
+   - macOS: `~/Library/Application Support/Noteral`
+   - Windows: `%LOCALAPPDATA%\Noteral`
+   - Linux: `$XDG_DATA_HOME/noteral` (default `~/.local/share/noteral`)
 
-Startup fails with an explicit error if the directory cannot be created or
-written. There is no silent fallback to a home directory or browser storage.
+If no home directory can be resolved, Noteral falls back to `Data/` beside the
+executable. Startup fails with an explicit error if the directory cannot be
+created or written; there is no browser-storage fallback. An older build's
+`Data/` library beside the executable is moved into the new root on first
+launch.
 
 ```text
-Data/
+<data root>/
 ├── noteral.db                         app registry, settings, plugin state, meta
 ├── workspaces/
 │   └── ws_<id>/

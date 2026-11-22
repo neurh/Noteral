@@ -200,7 +200,7 @@ zip -r starter.noteral-plugin.zip plugin.json plugin.js
 
 The zip may contain the manifest and entry at the root, or a single top-level
 folder containing them. Install it from the Plugin Manager. The installed copy
-is `Data/plugins/<id>/`; settings are kept beside it in `settings.json`.
+is `<data root>/plugins/<id>/`; settings are kept beside it in `settings.json`.
 
 ## Catalog format
 

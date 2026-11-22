@@ -72,9 +72,7 @@ func listItem(kind, text string, checked bool) map[string]any {
 
 func welcomeDocument() string {
 	blocks := []any{
-		paragraph(inline("Noteral is a quiet, local-first place to write. Everything you create stays in a portable ",
-			styled("Data/", map[string]any{"code": true}),
-			" folder beside the app — no account, no syncing, no telemetry.")),
+		paragraph(inline("Noteral is a quiet, local-first place to write. Everything you create stays in one local library folder on this machine — no account, no syncing, no telemetry.")),
 		heading(2, "A calmer place to think"),
 		paragraph(inline("Use the sidebar to keep pages nested and ordered. Drag pages to rearrange them, double-click a title to rename it, and open as many tabs as you need.")),
 		listItem("bulletListItem", "Type / on an empty line for headings, lists, tables, code and more.", false),

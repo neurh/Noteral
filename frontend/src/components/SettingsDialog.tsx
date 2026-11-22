@@ -433,12 +433,12 @@ export function SettingsDialog() {
           ) : null}
 
           {section === "data" ? (
-            <SettingsPane title="Data" description="Your notes, attachments, workspaces, and plugin settings live in one portable folder.">
+            <SettingsPane title="Data" description="Your notes, attachments, workspaces, and plugin settings live together in one local library folder.">
               <section className="settings-group">
                 <div className="data-card">
                   <span className="data-card-icon"><HardDrive size={18} /></span>
                   <div className="data-card-main">
-                    <span className="data-card-label">Portable library folder</span>
+                    <span className="data-card-label">Library folder</span>
                     <code title={bootstrap?.dataDir}>{bootstrap?.dataDir ?? "…"}</code>
                   </div>
                   <div className="data-card-actions">

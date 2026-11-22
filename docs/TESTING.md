@@ -56,7 +56,7 @@ acceptance run rather than unit mocks.
 Data directory: `/tmp/noteral-final` (removed before the run). Binary:
 `./bin/noteral --data-dir /tmp/noteral-final`, window 1366×745.
 
-1. **First launch** — created `Data/noteral.db`, `Default Workspace`, a seeded
+1. **First launch** — created `noteral.db` in the data directory, `Default Workspace`, a seeded
    `Welcome to Noteral` page, and UI settings. `meta` contained
    `initialized=1`, `welcome_seeded=1`. Restarting did not duplicate the
    welcome page.

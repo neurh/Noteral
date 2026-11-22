@@ -30,12 +30,16 @@ proxies `/__assets` to a local Go server on port 9246.
 
 ## Data directories
 
-Chosen by `--data-dir`, then `NOTERAL_DATA_DIR`, then `Data/` beside the
-executable (macOS: beside the `.app`). Startup writes and removes a probe file;
+Chosen by `--data-dir`, then `NOTERAL_DATA_DIR`, then the platform's per-user
+application-data directory (`~/Library/Application Support/Noteral` on macOS,
+`%LOCALAPPDATA%\Noteral` on Windows, `$XDG_DATA_HOME/noteral` or
+`~/.local/share/noteral` on Linux). If no home directory is available it falls
+back to `Data/` beside the executable, and a legacy `Data/` library is moved
+into the new root on first launch. Startup writes and removes a probe file;
 failure is fatal with instructions to pass `--data-dir`.
 
 ```text
-Data/
+<data root>/
 ├── noteral.db
 ├── workspaces/<workspace-id>/workspace.db
 ├── workspaces/<workspace-id>/assets/<yyyy>/<mm>/<random>-<name>
