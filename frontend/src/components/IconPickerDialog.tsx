@@ -10,12 +10,30 @@ import { Modal } from "./Modal";
 
 const ICON_NAMES = Object.keys(ICON_NODES).sort();
 const ICON_COLORS = ["#b1533d", "#c68d4d", "#7f825c", "#4f6555", "#4b7187", "#6f4c63", "#8d5558", "#64727d", "#6b5142", "#8b8174", "#2c2822", "#d4765c"];
-const POPULAR_ICONS = [
-  "star", "heart", "book-open", "lightbulb", "sparkles", "sun", "moon", "leaf", "flower-2", "coffee",
-  "laptop", "code", "pen-line", "notebook-pen", "folder", "archive", "compass", "map", "rocket", "target",
-  "flame", "zap", "palette", "music", "camera", "globe", "house", "briefcase", "graduation-cap", "dumbbell",
-  "check", "circle-check", "flag", "gem", "key", "lock", "gift", "cloud", "mountain", "sprout",
-];
+const RECENT_ICONS_KEY = "noteral.recentIcons.v1";
+const RECENT_EMOJI_KEY = "noteral.recentEmoji.v1";
+const RECENT_LIMIT = 16;
+
+function readRecent(key: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string" && item.length > 0).slice(0, RECENT_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function rememberRecent(key: string, value: string): string[] {
+  const next = [value, ...readRecent(key).filter((item) => item !== value)].slice(0, RECENT_LIMIT);
+  try {
+    window.localStorage.setItem(key, JSON.stringify(next));
+  } catch {
+    // Storage can be unavailable in restricted webviews; the picker still works.
+  }
+  return next;
+}
 
 const ACCEPTED_IMAGES = "image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp";
 const MAX_UPLOAD = 8 * 1024 * 1024;
@@ -168,6 +186,8 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [recentIcons, setRecentIcons] = useState<string[]>(() => readRecent(RECENT_ICONS_KEY));
+  const [recentEmoji, setRecentEmoji] = useState<string[]>(() => readRecent(RECENT_EMOJI_KEY));
   const fileInput = useRef<HTMLInputElement>(null);
   const parsed = parsePageIcon(current);
   const selectedEmoji = parsed?.kind === "emoji" ? parsed.char : "";
@@ -187,13 +207,19 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
     return ICON_NAMES.filter((name) => normalizeIconSearch(name).includes(needle));
   }, [query]);
 
-  const popular = useMemo(() => POPULAR_ICONS.filter((name) => ICON_NODES[name]), []);
-  const remainingIcons = useMemo(() => {
-    if (query.trim()) return iconResults;
-    const shown = new Set(popular);
-    return iconResults.filter((name) => !shown.has(name));
-  }, [iconResults, popular, query]);
-  const icons = useIncremental(remainingIcons.length, `icons:${query}`);
+  const icons = useIncremental(iconResults.length, `icons:${query}`);
+
+  const visibleRecentIcons = useMemo(() => {
+    const seen = new Set<string>();
+    return recentIcons.filter((value) => {
+      const recent = parsePageIcon(value);
+      if (!recent || recent.kind === "image") return false;
+      const key = recent.kind === "lucide" ? `lucide:${recent.name}` : `emoji:${recent.char}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [recentIcons]);
 
   const emojiResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -209,25 +235,49 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
 
   const chooseEmoji = (emoji: EmojiEntry, event: React.MouseEvent<HTMLButtonElement>) => {
     if (!emoji.skins.length) {
-      onPick(`emoji:${emoji.unicode}`);
+      const value = `emoji:${emoji.unicode}`;
+      setRecentEmoji(rememberRecent(RECENT_EMOJI_KEY, value));
+      onPick(value);
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
     setPopover({ kind: "skin", emoji, rect, current: parsed?.kind === "emoji" ? parsed.char : "" });
   };
 
+  function rememberIcon(value: string) {
+    setRecentIcons(rememberRecent(RECENT_ICONS_KEY, value));
+  }
+
+  function rememberEmoji(value: string) {
+    setRecentEmoji(rememberRecent(RECENT_EMOJI_KEY, value));
+  }
+
+  function pickRecentIcon(value: string) {
+    rememberIcon(value);
+    onPick(value);
+  }
+
+  function pickRecentEmoji(value: string) {
+    rememberEmoji(value);
+    onPick(value);
+  }
+
   function pickRandom() {
     setPopover(null);
     if (tab === "emoji") {
       if (!emojiResults.length) return;
       const emoji = emojiResults[Math.floor(Math.random() * emojiResults.length)];
-      onPick(`emoji:${emoji.unicode}`);
+      const value = `emoji:${emoji.unicode}`;
+      rememberEmoji(value);
+      onPick(value);
       return;
     }
     if (!iconResults.length) return;
     const name = iconResults[Math.floor(Math.random() * iconResults.length)];
     const color = parsed?.kind === "lucide" && parsed.color ? `:${parsed.color}` : "";
-    onPick(`lucide:${name}${color}`);
+    const value = `lucide:${name}${color}`;
+    rememberIcon(value);
+    onPick(value);
   }
 
   async function upload(file: File | undefined) {
@@ -326,22 +376,27 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
               if (node.scrollHeight - node.scrollTop - node.clientHeight < 320) icons.showMore();
             }}
           >
-            {!query.trim() && popular.length ? (
+            {!query.trim() && visibleRecentIcons.length ? (
               <section className="appearance-section">
-                <h3>Popular</h3>
-                <div className="icon-grid">
-                  {popular.map((name) => (
-                    <button
-                      key={name}
-                      type="button"
-                      className={`appearance-icon-cell ${parsed?.kind === "lucide" && parsed.name === name ? "selected" : ""}`}
-                      onClick={(event) => chooseIcon(name, event)}
-                      title={iconLabel(name)}
-                      aria-label={iconLabel(name)}
-                    >
-                      <IconGlyph name={name} size={19} />
-                    </button>
-                  ))}
+                <h3>Recently used</h3>
+                <div className="recent-strip">
+                  {visibleRecentIcons.map((value) => {
+                    const recent = parsePageIcon(value);
+                    if (!recent || recent.kind === "image") return null;
+                    const selected = recent.kind === "lucide" && parsed?.kind === "lucide" && parsed.name === recent.name;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`appearance-icon-cell ${selected ? "selected" : ""}`}
+                        onClick={() => pickRecentIcon(value)}
+                        title={recent.kind === "lucide" ? iconLabel(recent.name) : recent.char}
+                        aria-label={recent.kind === "lucide" ? iconLabel(recent.name) : recent.char}
+                      >
+                        {recent.kind === "lucide" ? <IconGlyph name={recent.name} size={19} color={recent.color} /> : <span className="recent-emoji">{recent.char}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </section>
             ) : null}
@@ -350,7 +405,7 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
               {iconResults.length === 0 ? <div className="appearance-empty">No icons match “{query}”.</div> : (
                 <>
                   <div className="icon-grid">
-                    {remainingIcons.slice(0, icons.count).map((name) => (
+                    {iconResults.slice(0, icons.count).map((name) => (
                       <button
                         key={name}
                         type="button"
@@ -363,7 +418,7 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
                       </button>
                     ))}
                   </div>
-                  {icons.count < remainingIcons.length ? <div ref={icons.sentinel} className="appearance-sentinel"><LoaderCircle size={14} className="spin" /></div> : null}
+                  {icons.count < iconResults.length ? <div ref={icons.sentinel} className="appearance-sentinel"><LoaderCircle size={14} className="spin" /></div> : null}
                 </>
               )}
             </section>
@@ -381,6 +436,28 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
                   </button>
                 ))}
               </div>
+            ) : null}
+            {!query.trim() && recentEmoji.length ? (
+              <section className="appearance-section">
+                <h3>Recently used</h3>
+                <div className="recent-strip">
+                  {recentEmoji.map((value) => {
+                    const char = value.startsWith("emoji:") ? value.slice(6) : value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        className={`appearance-emoji-cell ${selectedEmoji === char ? "selected" : ""}`}
+                        onClick={() => pickRecentEmoji(value)}
+                        title={char}
+                        aria-label={`Recently used emoji ${char}`}
+                      >
+                        {char}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
             ) : null}
             <section className="appearance-section">
               <h3>{query.trim() ? `${emojiResults.length} results` : emojiGroup === "all" ? "All emoji" : emojiGroupLabel(emojiGroup)}</h3>
@@ -433,10 +510,10 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
       </Modal>
 
       {popover?.kind === "color" ? (
-        <ColorPopover state={popover} onClose={() => setPopover(null)} onPick={(value) => { setPopover(null); onPick(value); }} />
+        <ColorPopover state={popover} onClose={() => setPopover(null)} onPick={(value) => { setPopover(null); rememberIcon(value); onPick(value); }} />
       ) : null}
       {popover?.kind === "skin" ? (
-        <SkinPopover state={popover} onClose={() => setPopover(null)} onPick={(value) => { setPopover(null); onPick(value); }} />
+        <SkinPopover state={popover} onClose={() => setPopover(null)} onPick={(value) => { setPopover(null); rememberEmoji(value); onPick(value); }} />
       ) : null}
     </>
   );

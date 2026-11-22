@@ -893,6 +893,11 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   text-transform: uppercase; color: var(--text-faint);
 }
 .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 4px; }
+.recent-strip { display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; overscroll-behavior-inline: contain; }
+.recent-strip::-webkit-scrollbar { display: none; }
+.recent-strip .appearance-icon-cell { flex: 0 0 40px; }
+.recent-strip .appearance-emoji-cell { flex: 0 0 38px; }
+.recent-emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; font-size: 21px; line-height: 1; }
 .appearance-icon-cell {
   height: 40px; padding: 0; display: grid; place-items: center;
   border: 1px solid transparent; border-radius: 7px; background: transparent;
