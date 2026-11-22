@@ -1,5 +1,7 @@
 .task
 .wails
+.agents
+AGENTS.md
 bin
 frontend/dist
 frontend/node_modules
