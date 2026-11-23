@@ -1,3 +1,32 @@
+# Rehearsal: pane tab icons
+
+Gold: the page tree's per-page icon, reused at tab scale. Tabs now render the same `PageIcon` as the tree (`frontend/src/components/TabStrip.tsx`), sized 13px, muted by default and accent on the active tab of the focused pane; icon-less pages and child-less tabs keep the FileText fallback so the icon column never collapses, which keeps titles from shifting between tabs.
+
+States: icon-less page (FileText fallback), lucide page icon, emoji page icon, home tab house, focused vs unfocused pane, pane tabs menu open, two tabs in one pane, dark theme, 390px.
+
+Captured: the real server-mode app (`bin/noteral-server --data-dir /tmp/noteral-tabs-data`), exact 1366×745 at DPR1 plus a DPR2 strip crop, in `/tmp/noteral-tabs-real/`: `00-current.png` (before), `01-pane1-icon.png` (lucide via picker), `02-pane2-emoji.png` (emoji via picker), `03-menu-open.png` (tab menu rows), `04-dark.png`, `05-detail-tabs.png` (DPR2 crop of `x330 y38 w1036 h90`), `06-mobile-390.png`. The earlier harness pass (real TabStrip + real styles.css on a scratch page, seeded emoji/lucide/no-icon/long-title pages) produced `/tmp/noteral-tabs/01-desktop-light.png` … `08-detail-paneB.png`; the scratch page was deleted afterwards.
+
+Gate: real app screen, so the stageshow `film --gate` loop does not apply. Rehearsed with exact-width stills plus scripted interaction checks: the icon picker was driven through the app (search icon → color popover → "Default ink"; emoji tab → "rocket"), and after each pick the tab, page header, page tree, and Home recents were compared in the same DOM.
+
+Frames → findings → fixes:
+- `01-pane1-icon.png` / `02-pane2-emoji.png` — the icon appears on the tab, header, tree, and Home recents in the same frame, so the store → tab wiring is live; no reload needed.
+- `03-menu-open.png` — the pane tabs menu shows the same icon per row as the strip, so the two lists cannot disagree.
+- `05-detail-tabs.png` — at 1:1 the 13px icons sit on the title baseline and the fallback keeps column width identical to a real icon; emoji render slightly larger than lucide glyphs at the same box, matching how the tree already behaves.
+- `04-dark.png` (pixel-sampled: sidebar rgb 26,24,21 · canvas rgb 29,27,24) — muted and accent resolve correctly in dark; the emoji keeps its own colors on the dark surface.
+- `06-mobile-390.png` — with three persisted panes at 390 the tabs shrink to the icon plus a sliver of title; the icon is the surviving affordance and no strip overflows.
+
+Checks: `npx tsc --noEmit` clean; `npx vitest run` 8 files / 57 tests pass; no page errors in any frame.
+
+Assumptions:
+- The tab icon is presentational only (decorative `aria-hidden`), so accessibility does not depend on it; the title remains the accessible name.
+- `pageById` is derived from the store's page list, which is already loaded for the tree; no extra fetch is introduced.
+
+Not checked:
+- Real touch hardware, screen readers, RTL locales, IME.
+- 200% zoom, reduced motion, Windows WebView2 font/AA differences.
+- Very many tabs in one pane beyond the six used in the harness pass.
+
+
 # Rehearsal: Workspaces dialog
 
 Gold: the app's existing warm editorial surfaces — Settings, CoverPicker/IconPicker, and the rail/token system. Kept the serif display type, cream `--bg`/`--bg-raised` layers, restrained accent, 1px borders, compact control heights, and sentence-case copy. Changed the previous single-list workspace overlay into a current-workspace card, a switch list, and a footer create/rename flow.

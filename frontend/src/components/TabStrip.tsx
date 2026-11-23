@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   Columns2,
+  FileText,
   House,
   Maximize2,
   Minimize2,
@@ -22,6 +23,7 @@ import {
 } from "../lib/dragTab";
 import { paneList, type PaneNode } from "../lib/panes";
 import { isHomeTab, useAppStore } from "../store";
+import { PageIcon } from "./PageIcon";
 
 interface TabStripProps {
   pane: PaneNode;
@@ -55,6 +57,7 @@ export function TabStrip({ pane }: TabStripProps) {
   const stripRef = useRef<HTMLDivElement | null>(null);
 
   const panes = useMemo(() => paneList(layout), [layout]);
+  const pageById = useMemo(() => new Map(pages.map((page) => [page.id, page])), [pages]);
   const paneCount = panes.length;
   const paneIndex = Math.max(0, panes.findIndex((item) => item.id === pane.id));
   const isMaximized = maximizedPaneId === pane.id;
@@ -255,7 +258,13 @@ export function TabStrip({ pane }: TabStripProps) {
                 onDragOver={(event) => onTabDragOver(event, index)}
                 onDrop={onTabDrop}
               >
-                {home ? <House size={13} className="tab-home-icon" /> : null}
+                {home ? (
+                  <House size={13} className="tab-home-icon" />
+                ) : (
+                  <span className="tab-icon" aria-hidden="true">
+                    <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<FileText size={13} />} />
+                  </span>
+                )}
                 <span className="tab-title">{titleFor(tabId)}</span>
                 {canClose ? (
                   <button
@@ -409,7 +418,13 @@ export function TabStrip({ pane }: TabStripProps) {
                               selectTab(tabId);
                             }}
                           >
-                            {home ? <House size={13} className="tab-home-icon" /> : null}
+                            {home ? (
+                              <House size={13} className="tab-home-icon" />
+                            ) : (
+                              <span className="tab-icon" aria-hidden="true">
+                                <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<FileText size={13} />} />
+                              </span>
+                            )}
                             <span className="tab-menu-name">{titleFor(tabId)}</span>
                             {active ? <Check size={13} className="menu-check" /> : null}
                           </button>
