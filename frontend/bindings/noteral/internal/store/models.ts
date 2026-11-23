@@ -134,5 +134,6 @@ export interface WorkspaceSnapshot {
     "activeTabId": string;
     "activePageId": string;
     "homeTabs": { [_ in string]?: HomeTabSettings } | null;
+    "layout"?: string;
     "trash": PageMeta[] | null;
 }

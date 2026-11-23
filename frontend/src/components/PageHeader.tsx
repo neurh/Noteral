@@ -4,10 +4,13 @@ import { api, errorMessage } from "../lib/api";
 import { editorBridge } from "../lib/editorBridge";
 import { useAppStore } from "../store";
 
-export function PageHeader() {
+export function PageHeader({ pageId }: { pageId?: string }) {
   const activeId = useAppStore((state) => state.activePageId);
-  const page = useAppStore((state) => state.pages.find((item) => item.id === activeId) ?? null);
-  const favorite = useAppStore((state) => state.favorites.includes(activeId));
+  // A pane can show a page that is not the globally active one; the header
+  // always describes the page its own pane shows.
+  const headerId = pageId ?? activeId;
+  const page = useAppStore((state) => state.pages.find((item) => item.id === headerId) ?? null);
+  const favorite = useAppStore((state) => state.favorites.includes(headerId));
   const history = useAppStore((state) => state.history);
   const historyIndex = useAppStore((state) => state.historyIndex);
   const workspace = useAppStore((state) => state.workspace);
@@ -25,7 +28,7 @@ export function PageHeader() {
 
   useEffect(() => {
     setMenuOpen(false);
-  }, [activeId]);
+  }, [headerId]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -46,15 +49,15 @@ export function PageHeader() {
 
   function focusTitle() {
     setMenuOpen(false);
-    if (!activeId) return;
-    editorBridge.get(activeId)?.focusTitle();
+    if (!headerId) return;
+    editorBridge.get(headerId)?.focusTitle();
   }
 
   async function exportPage(kind: "json" | "markdown") {
     setMenuOpen(false);
-    if (!workspace || !activeId) return;
+    if (!workspace || !headerId) return;
     try {
-      const result = kind === "json" ? await api.exportJson(workspace.id, activeId) : await api.exportMarkdown(workspace.id, activeId);
+      const result = kind === "json" ? await api.exportJson(workspace.id, headerId) : await api.exportMarkdown(workspace.id, headerId);
       if (result) notify(`Exported to ${result.path}`, "success");
     } catch (error) {
       notify(errorMessage(error), "error");

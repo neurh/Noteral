@@ -80,7 +80,7 @@ func (s *Store) Snapshot(workspaceID string) (WorkspaceSnapshot, error) {
 		valid[page.ID] = true
 	}
 	tabs, activeTab := normalizeTabState(ui.Tabs, ui.ActiveTabID, valid)
-	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: tabs, ActiveTabID: activeTab, ActivePageID: activePageForTab(activeTab), HomeTabs: normalizeHomeTabs(tabs, ui.HomeTabs), Trash: trash}, nil
+	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: tabs, ActiveTabID: activeTab, ActivePageID: activePageForTab(activeTab), HomeTabs: normalizeHomeTabs(tabs, ui.HomeTabs), Layout: ui.Layout, Trash: trash}, nil
 }
 
 // listTrash returns trashed pages whose parent is not also trashed, so each
@@ -778,10 +778,11 @@ func normalizeTabState(tabs []string, active string, valid map[string]bool) ([]s
 	return clean, active
 }
 
-// SaveUITabs persists open tabs and the active tab for a workspace. Tabs may be
-// page IDs or reserved Home tab IDs; active is the active tab, not necessarily
-// a page.
-func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string, homeTabs map[string]HomeTabSettings) error {
+// SaveUITabs persists open tabs, the active tab, and the pane layout for a
+// workspace. Tabs may be page IDs or reserved Home tab IDs; active is the
+// active tab, not necessarily a page. layout is opaque JSON owned by the
+// frontend and is stored only when it is well-formed.
+func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string, homeTabs map[string]HomeTabSettings, layout string) error {
 	ws, err := s.workspace(workspaceID)
 	if err != nil {
 		return err
@@ -798,7 +799,10 @@ func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string, hom
 	}
 	rows.Close()
 	clean, active := normalizeTabState(tabs, active, valid)
-	raw, _ := json.Marshal(UISettings{Tabs: clean, ActiveTabID: active, ActivePageID: activePageForTab(active), HomeTabs: normalizeHomeTabs(clean, homeTabs)})
+	if layout != "" && !json.Valid([]byte(layout)) {
+		layout = ""
+	}
+	raw, _ := json.Marshal(UISettings{Tabs: clean, ActiveTabID: active, ActivePageID: activePageForTab(active), HomeTabs: normalizeHomeTabs(clean, homeTabs), Layout: layout})
 	_, err = ws.DB.Exec(`INSERT INTO workspace_settings(key,value) VALUES('ui',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, string(raw))
 	return err
 }

@@ -64,6 +64,7 @@ type WorkspaceSnapshot struct {
 	ActiveTabID  string                     `json:"activeTabId"`
 	ActivePageID string                     `json:"activePageId"`
 	HomeTabs     map[string]HomeTabSettings `json:"homeTabs"`
+	Layout       string                     `json:"layout,omitempty"`
 	Trash        []PageMeta                 `json:"trash"`
 }
 
@@ -75,6 +76,7 @@ type UISettings struct {
 	ActiveTabID  string                     `json:"activeTabId"`
 	ActivePageID string                     `json:"activePageId"`
 	HomeTabs     map[string]HomeTabSettings `json:"homeTabs,omitempty"`
+	Layout       string                     `json:"layout,omitempty"`
 }
 
 // AppSettings is global application preference state.

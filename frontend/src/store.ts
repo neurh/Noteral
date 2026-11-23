@@ -4,6 +4,29 @@ import type { AppSettings, Bootstrap, Info, PageDocument, PageMeta, Workspace, W
 import { editorBridge, type OutlineItem } from "./lib/editorBridge";
 import { applyTheme, resolveTheme, type ResolvedTheme } from "./lib/theme";
 import { defaultHomeTabSettings, normalizeHomeTabSettings, type HomeTabSettings } from "./lib/home";
+import {
+  addTab as addTabToPane,
+  applySplitDelta,
+  createPane,
+  findPane,
+  firstPane,
+  flatTabs,
+  layoutFromTabs,
+  moveTab as moveTabInLayout,
+  paneList,
+  paneOfTab,
+  removeTab as removeTabFromLayout,
+  removePane as removePaneFromLayout,
+  resetSplit as resetSplitLayout,
+  restoreLayout as restoreLayoutFromRaw,
+  serializeLayout,
+  splitPaneWith,
+  splitWithTab,
+  updatePane,
+  type LayoutNode,
+  type PaneDropZone,
+  type SplitSide,
+} from "./lib/panes";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 export type Overlay = "palette" | "library" | "plugins" | "settings" | "workspaces" | null;
@@ -80,6 +103,9 @@ interface AppState {
   recent: PageMeta[];
   tabs: string[];
   homeTabs: Record<string, HomeTabSettings>;
+  layout: LayoutNode;
+  focusedPaneId: string;
+  maximizedPaneId: string;
   trash: PageMeta[];
   activeTabId: string;
   activePageId: string;
@@ -107,8 +133,16 @@ interface AppState {
   refreshWorkspaces: () => Promise<void>;
   selectPage: (pageId: string, options?: { recordHistory?: boolean }) => Promise<void>;
   selectTab: (tabId: string) => void;
-  openHomeTab: (settings?: Partial<HomeTabSettings>) => void;
+  openHomeTab: (settings?: Partial<HomeTabSettings>, paneId?: string) => void;
   updateHomeTab: (tabId: string, patch: Partial<HomeTabSettings>) => void;
+  focusPane: (paneId: string) => void;
+  moveTab: (tabId: string, targetPaneId: string, beforeTabId: string | null) => void;
+  dropTabInPane: (tabId: string, targetPaneId: string, zone: PaneDropZone) => void;
+  splitPane: (paneId: string, side: SplitSide) => void;
+  toggleMaximize: (paneId: string) => void;
+  closePane: (paneId: string) => void;
+  resizeSplit: (splitId: string, index: number, delta: number) => void;
+  resetSplit: (splitId: string) => void;
   goBack: () => void;
   goForward: () => void;
   ensurePageLoaded: (pageId: string) => Promise<LoadedDocument | null>;
@@ -124,7 +158,6 @@ interface AppState {
   duplicatePage: (pageId: string) => Promise<void>;
   movePage: (pageId: string, newParentId: string, beforeId: string) => Promise<void>;
   toggleFavorite: (pageId: string) => Promise<void>;
-  reorderTabs: (from: number, to: number) => void;
   markDirty: (pageId: string, stats: { wordCount: number; blockCount: number; outline: OutlineItem[] }) => void;
   saveNow: (pageId: string) => Promise<boolean>;
   saveDocument: (pageId: string) => Promise<boolean>;
@@ -180,22 +213,72 @@ function withoutHomeTab(settings: Record<string, HomeTabSettings>, tabId: string
   return next;
 }
 
-function tabsWithPage(state: AppState, pageId: string): string[] {
-  if (state.tabs.includes(pageId)) return state.tabs;
-  if (isHomeTab(state.activeTabId)) {
-    return state.tabs.map((tabId) => (tabId === state.activeTabId ? pageId : tabId));
+/** Insert or reveal `pageId` in the pane the user is working in. */
+function openTabInLayout(
+  state: AppState,
+  pageId: string,
+): { layout: LayoutNode; focusedPaneId: string; replacedHomeTab: string } {
+  const existing = paneOfTab(state.layout, pageId);
+  if (existing) {
+    return {
+      layout: updatePane(state.layout, existing.id, (pane) => ({ ...pane, activeTabId: pageId })),
+      focusedPaneId: existing.id,
+      replacedHomeTab: "",
+    };
   }
-  return [...state.tabs, pageId];
+  const focused = findPane(state.layout, state.focusedPaneId) ?? firstPane(state.layout);
+  if (focused && isHomeTab(focused.activeTabId) && focused.tabs.includes(focused.activeTabId)) {
+    const replacedHomeTab = focused.activeTabId;
+    return {
+      layout: updatePane(state.layout, focused.id, (pane) => ({
+        ...pane,
+        tabs: pane.tabs.map((tabId) => (tabId === replacedHomeTab ? pageId : tabId)),
+        activeTabId: pageId,
+      })),
+      focusedPaneId: focused.id,
+      replacedHomeTab,
+    };
+  }
+  const layout = addTabToPane(state.layout, focused?.id ?? "", pageId);
+  const pane = paneOfTab(layout, pageId);
+  return { layout, focusedPaneId: pane?.id ?? "", replacedHomeTab: "" };
 }
 
-function homeTabsAfterPageOpen(state: AppState, pageId: string): Record<string, HomeTabSettings> {
-  if (!isHomeTab(state.activeTabId)) return state.homeTabs;
-  return tabsWithPage(state, pageId).includes(state.activeTabId)
-    ? state.homeTabs
-    : withoutHomeTab(state.homeTabs, state.activeTabId);
+/** Derive the flat tab list, focused pane and active tab from a layout. */
+function layoutPatch(
+  state: AppState,
+  layout: LayoutNode,
+  focusedPaneId?: string,
+  maximizedPaneId?: string,
+): Partial<AppState> {
+  const panes = paneList(layout);
+  if (panes.length === 0) return {};
+  const requestedMax = maximizedPaneId ?? state.maximizedPaneId;
+  const focused =
+    panes.find((pane) => pane.id === focusedPaneId) ??
+    panes.find((pane) => pane.id === state.focusedPaneId) ??
+    panes[0];
+  const tabs = flatTabs(layout);
+  const activeTabId = focused.activeTabId && tabs.includes(focused.activeTabId) ? focused.activeTabId : tabs[0] ?? "";
+  const activePageId = pageIdForTab(activeTabId);
+  const patch: Partial<AppState> = {
+    layout,
+    tabs,
+    focusedPaneId: focused.id,
+    maximizedPaneId: panes.length > 1 && panes.some((pane) => pane.id === requestedMax) ? requestedMax : "",
+    activeTabId,
+    activePageId,
+  };
+  if (activePageId !== state.activePageId) {
+    patch.outline = [];
+    patch.backlinks = [];
+    patch.liveWordCount = 0;
+    patch.liveBlockCount = 0;
+  }
+  return patch;
 }
 
-function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; tabs: string[]; homeTabs: Record<string, HomeTabSettings>; activeTabId: string; active: string; favorites: string[]; recent: PageMeta[]; trash: PageMeta[] } {
+function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; tabs: string[]; homeTabs: Record<string, HomeTabSettings>; activeTabId: string; active: string; favorites: string[]; recent: PageMeta[]; trash: PageMeta[]; layout: LayoutNode; focusedPaneId: string; maximizedPaneId: string } {
   const pages = list(snapshot.pages);
   const known = new Set(pages.map((page) => page.id));
   const seen = new Set<string>();
@@ -217,12 +300,16 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; ta
   for (const tabId of tabs) {
     if (isHomeTab(tabId)) homeTabs[tabId] = normalizeHomeTabSettings(snapshot.homeTabs?.[tabId]);
   }
+  const restored = restoreLayoutFromRaw(snapshot.layout, tabs, activeTabId);
   return {
     pages,
     tabs,
     homeTabs,
-    activeTabId,
-    active: pageIdForTab(activeTabId),
+    activeTabId: restored.activeTabId,
+    active: pageIdForTab(restored.activeTabId),
+    layout: restored.layout,
+    focusedPaneId: restored.focusedPaneId,
+    maximizedPaneId: restored.maximizedPaneId,
     favorites: list(snapshot.favorites).filter((id) => known.has(id)),
     recent: list(snapshot.recent),
     trash: list(snapshot.trash),
@@ -253,6 +340,9 @@ function snapshotPatch(snapshot: WorkspaceSnapshot, state: AppState): Partial<Ap
     recent: normalized.recent,
     tabs: normalized.tabs,
     homeTabs: normalized.homeTabs,
+    layout: normalized.layout,
+    focusedPaneId: normalized.focusedPaneId,
+    maximizedPaneId: normalized.maximizedPaneId,
     activeTabId: normalized.activeTabId,
     activePageId: normalized.active,
     history: aligned.history,
@@ -273,11 +363,10 @@ function activatePagePatch(state: AppState, pageId: string): Partial<AppState> {
   const page = state.pages.find((item) => item.id === pageId);
   if (!page) return {};
   const pushed = pushHistory(state.history, state.historyIndex, pageId);
+  const opened = openTabInLayout(state, pageId);
   return {
-    tabs: tabsWithPage(state, pageId),
-    homeTabs: homeTabsAfterPageOpen(state, pageId),
-    activeTabId: pageId,
-    activePageId: pageId,
+    ...layoutPatch(state, opened.layout, opened.focusedPaneId),
+    homeTabs: opened.replacedHomeTab ? withoutHomeTab(state.homeTabs, opened.replacedHomeTab) : state.homeTabs,
     history: pushed.history,
     historyIndex: pushed.historyIndex,
     recent: [page, ...state.recent.filter((item) => item.id !== pageId)].slice(0, 12),
@@ -361,6 +450,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   recent: [],
   tabs: [],
   homeTabs: {},
+  layout: createPane(),
+  focusedPaneId: "",
+  maximizedPaneId: "",
   trash: [],
   activeTabId: "",
   activePageId: "",
@@ -438,6 +530,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         recent: normalized.recent,
         tabs: normalized.tabs,
         homeTabs: normalized.homeTabs,
+        layout: normalized.layout,
+        focusedPaneId: normalized.focusedPaneId,
+        maximizedPaneId: normalized.maximizedPaneId,
         trash: normalized.trash,
         activeTabId: normalized.activeTabId,
         activePageId: normalized.active,
@@ -493,6 +588,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         recent: normalized.recent,
         tabs: normalized.tabs,
         homeTabs: normalized.homeTabs,
+        layout: normalized.layout,
+        focusedPaneId: normalized.focusedPaneId,
+        maximizedPaneId: normalized.maximizedPaneId,
         trash: normalized.trash,
         activeTabId: normalized.activeTabId,
         activePageId: normalized.active,
@@ -568,19 +666,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectPage: async (pageId, options) => {
     const page = get().pages.find((item) => item.id === pageId);
     if (!page) return;
-    const state = get();
-    const tabs = tabsWithPage(state, pageId);
-    if (tabs !== state.tabs) set({ tabs, homeTabs: homeTabsAfterPageOpen(state, pageId) });
+    const opened = openTabInLayout(get(), pageId);
     set((state) => {
       const next: Partial<AppState> = {
-        activeTabId: pageId,
-        activePageId: pageId,
+        ...layoutPatch(state, opened.layout, opened.focusedPaneId),
         outline: [],
         backlinks: [],
         liveWordCount: 0,
         liveBlockCount: 0,
         recent: [page, ...state.recent.filter((item) => item.id !== pageId)].slice(0, 12),
       };
+      if (opened.replacedHomeTab) next.homeTabs = withoutHomeTab(state.homeTabs, opened.replacedHomeTab);
       if (options?.recordHistory !== false) {
         const pushed = pushHistory(state.history, state.historyIndex, pageId);
         next.history = pushed.history;
@@ -594,30 +690,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectTab: (tabId) => {
-    if (!get().tabs.includes(tabId)) return;
+    const state = get();
+    const pane = paneOfTab(state.layout, tabId);
+    if (!pane) return;
     if (!isHomeTab(tabId)) {
       void get().selectPage(tabId);
       return;
     }
-    set({
-      activeTabId: tabId,
-      activePageId: "",
-      outline: [],
-      backlinks: [],
-      liveWordCount: 0,
-      liveBlockCount: 0,
-    });
-    scheduleTabs(get);
-  },
-
-  openHomeTab: (settings) => {
-    const tabId = createHomeTabId();
-    const homeSettings = normalizeHomeTabSettings(settings ?? defaultHomeTabSettings);
-    set((state) => ({
-      tabs: [...state.tabs, tabId],
-      homeTabs: { ...state.homeTabs, [tabId]: homeSettings },
-      activeTabId: tabId,
-      activePageId: "",
+    set((current) => ({
+      ...layoutPatch(current, updatePane(current.layout, pane.id, (item) => ({ ...item, activeTabId: tabId })), pane.id),
       outline: [],
       backlinks: [],
       liveWordCount: 0,
@@ -626,8 +707,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     scheduleTabs(get);
   },
 
+  openHomeTab: (settings, paneId) => {
+    const tabId = createHomeTabId();
+    const homeSettings = normalizeHomeTabSettings(settings ?? defaultHomeTabSettings);
+    set((state) => {
+      const layout = addTabToPane(state.layout, paneId ?? state.focusedPaneId, tabId);
+      const pane = paneOfTab(layout, tabId);
+      return {
+        ...layoutPatch(state, layout, pane?.id),
+        homeTabs: { ...state.homeTabs, [tabId]: homeSettings },
+        outline: [],
+        backlinks: [],
+        liveWordCount: 0,
+        liveBlockCount: 0,
+      };
+    });
+    scheduleTabs(get);
+  },
+
   updateHomeTab: (tabId, patch) => {
-    if (!isHomeTab(tabId) || !get().tabs.includes(tabId)) return;
+    if (!isHomeTab(tabId) || !paneOfTab(get().layout, tabId)) return;
     set((state) => ({
       homeTabs: {
         ...state.homeTabs,
@@ -676,13 +775,12 @@ export const useAppStore = create<AppState>((set, get) => ({
           updatedAt: loaded.updatedAt,
         };
         const pushed = pushHistory(state.history, state.historyIndex, loaded.id);
+        const opened = openTabInLayout(state, loaded.id);
         return {
           pages: [...state.pages, meta],
           documents: { ...state.documents, [loaded.id]: loaded },
-          tabs: tabsWithPage(state, loaded.id),
-          homeTabs: homeTabsAfterPageOpen(state, loaded.id),
-          activeTabId: loaded.id,
-          activePageId: loaded.id,
+          ...layoutPatch(state, opened.layout, opened.focusedPaneId),
+          ...(opened.replacedHomeTab ? { homeTabs: withoutHomeTab(state.homeTabs, opened.replacedHomeTab) } : {}),
           history: pushed.history,
           historyIndex: pushed.historyIndex,
           outline: [],
@@ -697,30 +795,34 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   closeTab: async (tabId) => {
-    const initialIndex = get().tabs.indexOf(tabId);
-    if (initialIndex < 0) return;
+    const initialPane = paneOfTab(get().layout, tabId);
+    if (!initialPane) return;
     const closingHome = isHomeTab(tabId);
     if (!closingHome) {
       clearTimersFor(tabId);
       const ok = await get().saveNow(tabId);
       if (!ok) return;
     }
-    // Tabs can change while a page save is in flight.
-    const tabs = get().tabs;
-    const index = tabs.indexOf(tabId);
-    if (index < 0) return;
-    if (tabs.length === 1) {
+    // Layout can change while a page save is in flight.
+    const state = get();
+    const pane = paneOfTab(state.layout, tabId);
+    if (!pane) return;
+    const panes = paneList(state.layout);
+    const paneIndex = panes.findIndex((item) => item.id === pane.id);
+    const isLastPane = panes.length === 1;
+    const isLastTabOfPane = pane.tabs.length === 1;
+    const wasActive = state.activeTabId === tabId;
+
+    if (isLastPane && isLastTabOfPane) {
       // Closing the final page leaves a fresh Home tab. A lone Home tab is the
       // resting state, so it stays put.
       if (closingHome) return;
       const home = createHomeTabId();
-      set((state) => {
-        const aligned = alignHistory(state.history.filter((id) => id !== tabId), "");
+      set((current) => {
+        const aligned = alignHistory(current.history.filter((id) => id !== tabId), "");
         return {
-          tabs: [home],
-          homeTabs: { ...state.homeTabs, [home]: { ...defaultHomeTabSettings } },
-          activeTabId: home,
-          activePageId: "",
+          ...layoutPatch(current, layoutFromTabs([home], home), "", ""),
+          homeTabs: { ...withoutHomeTab(current.homeTabs, tabId), [home]: { ...defaultHomeTabSettings } },
           history: aligned.history,
           historyIndex: aligned.historyIndex,
           outline: [],
@@ -732,21 +834,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       scheduleTabs(get);
       return;
     }
-    const nextTabs = tabs.filter((id) => id !== tabId);
-    const currentTab = get().activeTabId;
-    const nextTab = currentTab === tabId ? nextTabs[Math.max(0, index - 1)] ?? nextTabs[0] : currentTab;
+
+    const next = removeTabFromLayout(state.layout, tabId);
+    if (!next) return;
+    const nextPanes = paneList(next);
+    const nextPane =
+      nextPanes.find((item) => item.id === pane.id) ??
+      nextPanes[Math.max(0, Math.min(nextPanes.length - 1, paneIndex - 1))] ??
+      nextPanes[0];
+    const nextTab = nextPane.activeTabId;
     const nextPage = pageIdForTab(nextTab);
-    const activeChanged = nextTab !== currentTab;
-    set((state) => {
-      const aligned = alignHistory(state.history.filter((id) => id !== tabId), nextPage);
+    const activeChanged = wasActive && nextTab !== state.activeTabId;
+    set((current) => {
+      const aligned = alignHistory(current.history.filter((id) => id !== tabId), nextPage);
       return {
-        tabs: nextTabs,
-        homeTabs: withoutHomeTab(state.homeTabs, tabId),
-        activeTabId: nextTab,
-        activePageId: nextPage,
+        ...layoutPatch(current, next, nextPane.id),
+        homeTabs: withoutHomeTab(current.homeTabs, tabId),
         history: aligned.history,
         historyIndex: aligned.historyIndex,
-        ...(activeChanged ? { outline: [], backlinks: [], liveWordCount: 0, liveBlockCount: 0 } : {}),
+        ...(nextTab !== current.activeTabId ? { outline: [], backlinks: [], liveWordCount: 0, liveBlockCount: 0 } : {}),
       };
     });
     if (activeChanged && nextPage) {
@@ -932,13 +1038,129 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  reorderTabs: (from, to) => {
-    if (from === to || from < 0 || to < 0) return;
-    const tabs = [...get().tabs];
-    if (from >= tabs.length || to >= tabs.length) return;
-    const [moved] = tabs.splice(from, 1);
-    tabs.splice(to, 0, moved);
-    set({ tabs });
+  focusPane: (paneId) => {
+    if (get().focusedPaneId === paneId || !findPane(get().layout, paneId)) return;
+    set((state) => layoutPatch(state, state.layout, paneId));
+    scheduleTabs(get);
+  },
+
+  moveTab: (tabId, targetPaneId, beforeTabId) => {
+    const state = get();
+    if (!paneOfTab(state.layout, tabId)) return;
+    const next = moveTabInLayout(state.layout, tabId, targetPaneId, beforeTabId);
+    if (next === state.layout) return;
+    set((current) => layoutPatch(current, next, targetPaneId));
+    scheduleTabs(get);
+  },
+
+  dropTabInPane: (tabId, targetPaneId, zone) => {
+    if (zone === "center") {
+      get().moveTab(tabId, targetPaneId, null);
+      return;
+    }
+    const state = get();
+    if (!paneOfTab(state.layout, tabId)) return;
+    const next = splitWithTab(state.layout, tabId, targetPaneId, zone);
+    if (next === state.layout) return;
+    // Splitting while maximized would put the new pane out of sight.
+    set((current) => layoutPatch(current, next, paneOfTab(next, tabId)?.id, ""));
+    scheduleTabs(get);
+  },
+
+  splitPane: (paneId, side) => {
+    const state = get();
+    if (!findPane(state.layout, paneId)) return;
+    const tabId = createHomeTabId();
+    const homeSettings = normalizeHomeTabSettings(defaultHomeTabSettings);
+    const next = splitPaneWith(state.layout, paneId, side, createPane([tabId], tabId));
+    if (next === state.layout) return;
+    set((current) => ({
+      ...layoutPatch(current, next, paneOfTab(next, tabId)?.id, ""),
+      homeTabs: { ...current.homeTabs, [tabId]: homeSettings },
+      outline: [],
+      backlinks: [],
+      liveWordCount: 0,
+      liveBlockCount: 0,
+    }));
+    scheduleTabs(get);
+  },
+
+  toggleMaximize: (paneId) => {
+    const state = get();
+    if (paneList(state.layout).length < 2 || !findPane(state.layout, paneId)) return;
+    set((current) => ({
+      ...layoutPatch(current, current.layout, paneId),
+      maximizedPaneId: current.maximizedPaneId === paneId ? "" : paneId,
+    }));
+    scheduleTabs(get);
+  },
+
+  closePane: (paneId) => {
+    const state = get();
+    const panes = paneList(state.layout);
+    const pane = panes.find((item) => item.id === paneId);
+    if (!pane) return;
+    const paneIndex = panes.findIndex((item) => item.id === paneId);
+    const closedHomeTabs = pane.tabs.filter((tabId) => isHomeTab(tabId));
+    const closedPageTabs = pane.tabs.filter((tabId) => !isHomeTab(tabId));
+    const stripHomeTabs = (settings: Record<string, HomeTabSettings>) =>
+      closedHomeTabs.reduce((current, tabId) => withoutHomeTab(current, tabId), settings);
+
+    if (panes.length === 1) {
+      // The last pane cannot disappear; it resets to the resting Home tab.
+      if (pane.tabs.length === 1 && isHomeTab(pane.tabs[0])) return;
+      const home = createHomeTabId();
+      const fresh = layoutFromTabs([home], home);
+      set((current) => {
+        const aligned = alignHistory(current.history.filter((id) => !closedPageTabs.includes(id)), "");
+        return {
+          ...layoutPatch(current, fresh, firstPane(fresh)?.id, ""),
+          homeTabs: { ...stripHomeTabs(current.homeTabs), [home]: { ...defaultHomeTabSettings } },
+          history: aligned.history,
+          historyIndex: aligned.historyIndex,
+          outline: [],
+          backlinks: [],
+          liveWordCount: 0,
+          liveBlockCount: 0,
+        };
+      });
+      scheduleTabs(get);
+      return;
+    }
+
+    const next = removePaneFromLayout(state.layout, paneId);
+    if (!next) return;
+    const nextPanes = paneList(next);
+    const fallback = nextPanes[Math.max(0, Math.min(nextPanes.length - 1, paneIndex - 1))] ?? nextPanes[0];
+    const focused = state.focusedPaneId === paneId ? fallback.id : state.focusedPaneId;
+    const maximized = state.maximizedPaneId === paneId ? "" : state.maximizedPaneId;
+    const focusedPane = nextPanes.find((item) => item.id === focused) ?? nextPanes[0];
+    const nextPage = pageIdForTab(focusedPane.activeTabId);
+    const activeChanged = state.activePageId !== nextPage;
+    set((current) => {
+      const aligned = alignHistory(current.history.filter((id) => !closedPageTabs.includes(id)), nextPage);
+      return {
+        ...layoutPatch(current, next, focused, maximized),
+        homeTabs: stripHomeTabs(current.homeTabs),
+        history: aligned.history,
+        historyIndex: aligned.historyIndex,
+      };
+    });
+    if (activeChanged && nextPage) {
+      void get().ensurePageLoaded(nextPage);
+      void get().refreshBacklinks();
+    }
+    scheduleTabs(get);
+  },
+
+  resizeSplit: (splitId, index, delta) => {
+    if (!delta) return;
+    set((current) => ({ layout: applySplitDelta(current.layout, splitId, index, delta) }));
+    scheduleTabs(get);
+  },
+
+  resetSplit: (splitId) => {
+    set((current) => ({ layout: resetSplitLayout(current.layout, splitId) }));
     scheduleTabs(get);
   },
 
@@ -1061,7 +1283,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const workspaceId = get().workspace?.id;
     if (!workspaceId) return;
     try {
-      await api.saveTabs(workspaceId, get().tabs, get().activeTabId, get().homeTabs);
+      await api.saveTabs(
+        workspaceId,
+        get().tabs,
+        get().activeTabId,
+        get().homeTabs,
+        serializeLayout(get().layout, get().focusedPaneId, get().maximizedPaneId),
+      );
     } catch (error) {
       console.warn("Could not save tabs", error);
     }

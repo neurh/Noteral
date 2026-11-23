@@ -130,7 +130,7 @@ func TestHomeTabsPersist(t *testing.T) {
 		"home:two":   {Template: "focus", Background: "dusk"},
 		"home:stale": {Template: "library", Background: "clay"},
 	}
-	if err := st.SaveUITabs("ws_default", []string{"home:one", "pg_welcome", "home:two", "home:one", "pg_missing"}, "home:two", homeTabs); err != nil {
+	if err := st.SaveUITabs("ws_default", []string{"home:one", "pg_welcome", "home:two", "home:one", "pg_missing"}, "home:two", homeTabs, ""); err != nil {
 		t.Fatalf("save tabs: %v", err)
 	}
 	snap, err := st.Snapshot("ws_default")
@@ -150,20 +150,27 @@ func TestHomeTabsPersist(t *testing.T) {
 		t.Fatal("stale home tab settings were persisted")
 	}
 
-	if err := st.SaveUITabs("ws_default", snap.Tabs, "pg_welcome", snap.HomeTabs); err != nil {
+	layout := `{"version":1,"root":{"type":"pane","id":"p1","tabs":["pg_welcome"],"activeTabId":"pg_welcome"},"focusedPaneId":"p1","maximizedPaneId":""}`
+	if err := st.SaveUITabs("ws_default", snap.Tabs, "pg_welcome", snap.HomeTabs, layout); err != nil {
 		t.Fatalf("save page tab: %v", err)
 	}
 	snap, _ = st.Snapshot("ws_default")
 	if snap.ActiveTabID != "pg_welcome" || snap.ActivePageID != "pg_welcome" {
 		t.Fatalf("unexpected active page tab: %q page=%q", snap.ActiveTabID, snap.ActivePageID)
 	}
+	if snap.Layout != layout {
+		t.Fatalf("layout did not round-trip: %q", snap.Layout)
+	}
 
-	if err := st.SaveUITabs("ws_default", nil, "", nil); err != nil {
+	if err := st.SaveUITabs("ws_default", nil, "", nil, "{not json"); err != nil {
 		t.Fatalf("save empty tabs: %v", err)
 	}
 	snap, _ = st.Snapshot("ws_default")
 	if len(snap.Tabs) != 1 || !isHomeTabID(snap.Tabs[0]) || snap.ActiveTabID != snap.Tabs[0] || snap.ActivePageID != "" {
 		t.Fatalf("empty tabs should rest on Home: %#v active=%q page=%q", snap.Tabs, snap.ActiveTabID, snap.ActivePageID)
+	}
+	if snap.Layout != "" {
+		t.Fatalf("invalid layout was persisted: %q", snap.Layout)
 	}
 }
 
@@ -188,7 +195,7 @@ func TestBacklinksFavoritesTabsAndTrash(t *testing.T) {
 	if err != nil || !favorite {
 		t.Fatalf("favorite: %v %v", favorite, err)
 	}
-	if err := st.SaveUITabs("ws_default", []string{"pg_welcome", child.ID, "pg_missing"}, child.ID, nil); err != nil {
+	if err := st.SaveUITabs("ws_default", []string{"pg_welcome", child.ID, "pg_missing"}, child.ID, nil, ""); err != nil {
 		t.Fatalf("save tabs: %v", err)
 	}
 	snap, err := st.Snapshot("ws_default")

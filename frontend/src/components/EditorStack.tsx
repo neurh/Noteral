@@ -1,35 +1,48 @@
 import { LoaderCircle } from "lucide-react";
+import { type PaneNode } from "../lib/panes";
 import { isHomeTab, useAppStore } from "../store";
 import { HomeView } from "./HomeView";
 import { PageView } from "./PageView";
 
-export function EditorStack() {
-  const tabs = useAppStore((state) => state.tabs);
-  const documents = useAppStore((state) => state.documents);
-  const activeTabId = useAppStore((state) => state.activeTabId);
+interface EditorStackProps {
+  pane: PaneNode;
+}
 
-  if (tabs.length === 0) return <HomeView />;
+/**
+ * The stacked editors of one pane. Only the pane's active tab is visible; the
+ * other tabs stay mounted so their editor state (scroll, cursor, bounds) is
+ * preserved while switching.
+ */
+export function EditorStack({ pane }: EditorStackProps) {
+  const documents = useAppStore((state) => state.documents);
 
   return (
     <div className="editor-stack">
-      {tabs.map((tabId) => {
+      {pane.tabs.map((tabId) => {
         if (isHomeTab(tabId)) {
-          return activeTabId === tabId ? <HomeView key={tabId} tabId={tabId} /> : null;
+          return pane.activeTabId === tabId ? <HomeView key={tabId} tabId={tabId} /> : null;
         }
         const page = documents[tabId];
         if (!page) {
+          const active = pane.activeTabId === tabId;
           return (
             <div
               key={tabId}
-              className={`page-pane page-loading ${activeTabId === tabId ? "active" : ""}`}
-              aria-hidden={activeTabId !== tabId}
+              className={`page-pane page-loading${active ? " active" : ""}`}
+              aria-hidden={!active}
             >
               <LoaderCircle size={20} className="spin" />
               <span>Opening page…</span>
             </div>
           );
         }
-        return <PageView key={`${page.id}:${page.loadVersion}`} page={page} active={activeTabId === tabId} />;
+        return (
+          <PageView
+            key={`${page.id}:${page.loadVersion}`}
+            page={page}
+            active={pane.activeTabId === tabId}
+          />
+        );
       })}
     </div>
   );

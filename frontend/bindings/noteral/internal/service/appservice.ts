@@ -201,8 +201,8 @@ export function SaveSettings(settings: store$0.AppSettings): $CancellablePromise
     return $Call.ByID(1783267486, settings);
 }
 
-export function SaveUITabs(workspaceID: string, tabs: string[] | null, activeTab: string, homeTabs: { [_ in string]?: store$0.HomeTabSettings } | null): $CancellablePromise<void> {
-    return $Call.ByID(1256119601, workspaceID, tabs, activeTab, homeTabs);
+export function SaveUITabs(workspaceID: string, tabs: string[] | null, activeTab: string, homeTabs: { [_ in string]?: store$0.HomeTabSettings } | null, layout: string): $CancellablePromise<void> {
+    return $Call.ByID(1256119601, workspaceID, tabs, activeTab, homeTabs, layout);
 }
 
 export function Search(workspaceID: string, query: string, limit: number): $CancellablePromise<store$0.SearchHit[] | null> {

@@ -35,8 +35,8 @@ export const api = {
     AppService.MovePage(workspaceId, pageId, newParentId, beforeId),
   savePage: (workspaceId: string, pageId: string, docJson: string, expectedRevision: number) =>
     AppService.SavePage(workspaceId, pageId, docJson, expectedRevision),
-  saveTabs: (workspaceId: string, tabs: string[], activeTab: string, homeTabs: Record<string, HomeTabSettings>) =>
-    AppService.SaveUITabs(workspaceId, tabs, activeTab, homeTabs),
+  saveTabs: (workspaceId: string, tabs: string[], activeTab: string, homeTabs: Record<string, HomeTabSettings>, layout: string) =>
+    AppService.SaveUITabs(workspaceId, tabs, activeTab, homeTabs, layout),
   toggleFavorite: (workspaceId: string, pageId: string) => AppService.ToggleFavorite(workspaceId, pageId),
   getFavorites: (workspaceId: string) => AppService.GetFavorites(workspaceId),
   getRecent: (workspaceId: string) => AppService.GetRecent(workspaceId),

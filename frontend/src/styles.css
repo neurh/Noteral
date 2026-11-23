@@ -253,13 +253,19 @@ kbd {
 .secondary-button:hover { background: var(--bg-hover); border-color: var(--border-strong); color: var(--text); }
 
 /* Tab strip */
+/* Tab strip */
 .tab-strip {
   display: flex; align-items: center; gap: 2px; height: 100%;
-  min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  min-width: 0;
   --wails-draggable: no-drag;
 }
-.tab-strip::-webkit-scrollbar { display: none; }
+.tab-strip-tabs {
+  display: flex; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+.tab-strip-tabs::-webkit-scrollbar { display: none; }
 .tab {
+  position: relative;
   display: flex; align-items: center; gap: 6px; height: 30px; max-width: 190px; min-width: 92px;
   padding: 0 5px 0 9px; border: 1px solid transparent; border-radius: 6px;
   background: transparent; color: var(--text-muted); font-size: 12.5px;
@@ -339,6 +345,106 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   background: color-mix(in srgb, var(--bg-raised) 42%, var(--bg));
 }
 .main-tabs .tab-strip { flex: 1 1 auto; }
+
+/* Split panes */
+.panes-root {
+  display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; position: relative;
+}
+.pane {
+  display: flex; flex-direction: column; flex: 1 1 auto;
+  min-width: 0; min-height: 0; position: relative; background: var(--bg);
+}
+.pane-split { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.pane-split.is-row { flex-direction: row; }
+.pane-split.is-column { flex-direction: column; }
+.pane-split.is-dragging { user-select: none; }
+.pane-split-cell { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+.pane-splitter {
+  position: relative; z-index: 5; flex: 0 0 1px; background: var(--border);
+}
+.pane-splitter::before { content: ""; position: absolute; }
+.pane-split.is-row > .pane-splitter::before { top: 0; bottom: 0; left: -4px; right: -4px; cursor: col-resize; }
+.pane-split.is-column > .pane-splitter::before { left: 0; right: 0; top: -4px; bottom: -4px; cursor: row-resize; }
+.pane-splitter:hover, .pane-split.is-dragging > .pane-splitter { background: var(--accent); }
+
+/* Each pane carries its own tab bar, shaped like the old window tab bar. */
+.pane-tabs {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  flex: 0 0 var(--panel-head-h); height: var(--panel-head-h);
+  padding: 0 8px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 42%, var(--bg));
+  --wails-draggable: drag; user-select: none;
+  container-type: inline-size; container-name: pane-tabs;
+}
+.pane:not(.is-focused) > .pane-tabs { background: color-mix(in srgb, var(--bg-raised) 18%, var(--bg)); }
+.pane-tabs .tab-strip { flex: 1 1 auto; min-width: 0; }
+.tab-bar-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+
+/* Drag feedback: insertion caret, dragged tab, drop zone for splitting. */
+.tab.dragging { opacity: 0.45; }
+.tab.drop-before::before, .tab.drop-after::after {
+  content: ""; position: absolute; top: 5px; bottom: 5px; width: 2px;
+  background: var(--accent); border-radius: 2px;
+}
+.tab.drop-before::before { left: -2px; }
+.tab.drop-after::after { right: -2px; }
+.pane-body { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; position: relative; }
+.pane-drop-hint { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
+.pane-drop-hint.is-left {
+  right: 50%; background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-left: 2px solid var(--accent);
+}
+.pane-drop-hint.is-right {
+  left: 50%; background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-right: 2px solid var(--accent);
+}
+.pane-drop-hint.is-top {
+  bottom: 50%; background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-top: 2px solid var(--accent);
+}
+.pane-drop-hint.is-bottom {
+  top: 50%; background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-bottom: 2px solid var(--accent);
+}
+.pane-drop-hint.is-center {
+  border: 2px solid var(--accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.pane-drop-center {
+  position: absolute; inset: 0; margin: auto; width: 56px; height: 56px; border-radius: 50%;
+  border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Portaled to <body> and positioned inline by the pane, so it never clips. */
+.tab-bar-menu { max-height: min(60vh, 420px); overflow-y: auto; }
+.tab-bar-menu .menu-actions { display: flex; align-items: center; gap: 2px; padding: 2px 3px 4px; }
+.tab-bar-menu .menu-actions .icon-button { width: 27px; height: 27px; }
+.tab-bar-menu .menu-actions-grow { flex: 1 1 auto; }
+.tab-bar-menu .menu-item-row { display: flex; align-items: center; border-radius: 5px; }
+.tab-bar-menu .menu-item-row > button[role="menuitemradio"] { flex: 1 1 auto; min-width: 0; }
+.tab-bar-menu .menu-item-close {
+  flex: 0 0 auto; width: 24px; height: 24px; margin: 0 2px 0 0; padding: 0; border-radius: 5px;
+  display: inline-grid; place-items: center; color: var(--text-faint); opacity: 0;
+}
+.tab-bar-menu .menu-item-row:hover .menu-item-close,
+.tab-bar-menu .menu-item-close:focus-visible { opacity: 1; }
+.tab-bar-menu .menu-item-close:hover { background: var(--bg-hover); color: var(--danger); }
+.tab-menu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+
+/* Narrow panes drop bar actions that no longer fit, chevron last. */
+@container pane-tabs (max-width: 260px) {
+  .tab-bar-actions button[aria-label="Split down"] { display: none; }
+}
+@container pane-tabs (max-width: 200px) {
+  .tab-bar-actions button[aria-label="Split right"] { display: none; }
+}
+@container pane-tabs (max-width: 165px) {
+  .tab-bar-actions button[aria-label="Maximize pane"],
+  .tab-bar-actions button[aria-label="Restore panes"] { display: none; }
+}
+@container pane-tabs (max-width: 120px) {
+  .tab-strip-tabs .tab-new { display: none; }
+}
 .left-tab, .right-tab {
   height: 26px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted);
   display: grid; place-items: center; padding: 0 8px;

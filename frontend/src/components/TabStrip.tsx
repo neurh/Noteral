@@ -1,122 +1,443 @@
-import { useRef } from "react";
-import { House, Plus, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
+import {
+  Check,
+  ChevronDown,
+  Columns2,
+  House,
+  Maximize2,
+  Minimize2,
+  Plus,
+  Rows2,
+  X,
+} from "lucide-react";
 import { HOME_TEMPLATE_LABELS } from "../lib/home";
+import {
+  beginTabDrag,
+  endTabDrag,
+  hasTabDrag,
+  readTabDrag,
+  writeTabDrag,
+} from "../lib/dragTab";
+import { paneList, type PaneNode } from "../lib/panes";
 import { isHomeTab, useAppStore } from "../store";
 
-export function TabStrip() {
-  const tabs = useAppStore((state) => state.tabs);
+interface TabStripProps {
+  pane: PaneNode;
+}
+
+/**
+ * The tab bar of a single pane. Tabs can be reordered inside the pane, moved
+ * into another pane, or dropped on a pane edge (handled by the pane body) to
+ * create a new split.
+ */
+export function TabStrip({ pane }: TabStripProps) {
   const pages = useAppStore((state) => state.pages);
-  const active = useAppStore((state) => state.activeTabId);
   const homeTabs = useAppStore((state) => state.homeTabs);
+  const layout = useAppStore((state) => state.layout);
+  const maximizedPaneId = useAppStore((state) => state.maximizedPaneId);
   const selectTab = useAppStore((state) => state.selectTab);
   const closeTab = useAppStore((state) => state.closeTab);
-  const reorderTabs = useAppStore((state) => state.reorderTabs);
   const openHomeTab = useAppStore((state) => state.openHomeTab);
-  const titles = new Map(pages.map((page) => [page.id, page.title]));
-  const tabRefs = useRef(new Map<string, HTMLDivElement>());
-  let dragIndex: number | null = null;
+  const moveTab = useAppStore((state) => state.moveTab);
+  const splitPane = useAppStore((state) => state.splitPane);
+  const toggleMaximize = useAppStore((state) => state.toggleMaximize);
+  const closePane = useAppStore((state) => state.closePane);
 
-  function focusTab(index: number) {
-    const next = Math.max(0, Math.min(tabs.length - 1, index));
-    const tabId = tabs[next];
-    if (!tabId) return;
-    selectTab(tabId);
-    requestAnimationFrame(() => tabRefs.current.get(tabId)?.focus());
-  }
+  const [dragging, setDragging] = useState("");
+  const [caret, setCaret] = useState<{ beforeTabId: string | null } | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef(new Map<string, HTMLDivElement>());
+  const stripRef = useRef<HTMLDivElement | null>(null);
+
+  const panes = useMemo(() => paneList(layout), [layout]);
+  const paneCount = panes.length;
+  const paneIndex = Math.max(0, panes.findIndex((item) => item.id === pane.id));
+  const isMaximized = maximizedPaneId === pane.id;
+  const dropAfterLast = caret !== null && caret.beforeTabId === null;
+
+  const toggleMenu = () => {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    // Fixed positioning keeps the menu out of the pane's overflow and lets it
+    // choose the side with room instead of running off the window.
+    const rect = anchor.getBoundingClientRect();
+    const width = 220;
+    const margin = 8;
+    const preferredLeft = rect.right >= width + margin ? rect.right - width : rect.left;
+    setMenuPos({
+      top: Math.min(rect.bottom + 6, window.innerHeight - 96),
+      left: Math.max(margin, Math.min(preferredLeft, window.innerWidth - width - margin)),
+    });
+    setMenuOpen(true);
+  };
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (anchorRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    const onResize = () => setMenuOpen(false);
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [menuOpen]);
+
+  const titleFor = useCallback(
+    (tabId: string) => {
+      if (isHomeTab(tabId)) {
+        const settings = homeTabs[tabId];
+        return (settings ? HOME_TEMPLATE_LABELS[settings.template] : "") || "Home";
+      }
+      return pages.find((page) => page.id === tabId)?.title || "Untitled";
+    },
+    [homeTabs, pages],
+  );
+
+  const focusTab = useCallback(
+    (index: number) => {
+      const tabId = pane.tabs[index];
+      if (!tabId) return;
+      const focus = () => tabRefs.current.get(tabId)?.focus();
+      if (tabRefs.current.has(tabId)) focus();
+      else requestAnimationFrame(focus);
+    },
+    [pane.tabs],
+  );
+
+  const onTabKeyDown = (event: ReactKeyboardEvent, index: number) => {
+    switch (event.key) {
+      case "ArrowLeft":
+        event.preventDefault();
+        focusTab(Math.max(0, index - 1));
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        focusTab(Math.min(pane.tabs.length - 1, index + 1));
+        break;
+      case "Home":
+        event.preventDefault();
+        focusTab(0);
+        break;
+      case "End":
+        event.preventDefault();
+        focusTab(pane.tabs.length - 1);
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        selectTab(pane.tabs[index]);
+        break;
+      default:
+        break;
+    }
+  };
+
+  const onTabDragStart = (event: ReactDragEvent, tabId: string) => {
+    beginTabDrag(tabId);
+    writeTabDrag(event.dataTransfer, tabId);
+    setDragging(tabId);
+  };
+
+  const onTabDragEnd = () => {
+    endTabDrag();
+    setDragging("");
+    setCaret(null);
+  };
+
+  const onTabDragOver = (event: ReactDragEvent, index: number) => {
+    if (!hasTabDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const after = event.clientX > rect.left + rect.width / 2;
+    setCaret({ beforeTabId: after ? pane.tabs[index + 1] ?? null : pane.tabs[index] });
+  };
+
+  const onTabDrop = (event: ReactDragEvent) => {
+    if (!hasTabDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const tabId = readTabDrag(event.dataTransfer);
+    const before = caret?.beforeTabId ?? null;
+    setCaret(null);
+    setDragging("");
+    if (!tabId || tabId === before) return;
+    moveTab(tabId, pane.id, before);
+  };
+
+  // Dropping on the empty part of the strip appends to the end of the pane.
+  const onStripDragOver = (event: ReactDragEvent) => {
+    if (!hasTabDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setCaret({ beforeTabId: null });
+  };
+
+  const onStripDragLeave = (event: ReactDragEvent) => {
+    const next = event.relatedTarget as Node | null;
+    if (next && event.currentTarget.contains(next)) return;
+    setCaret(null);
+  };
 
   return (
-    <div className="tab-strip" role="tablist" aria-label="Open tabs">
-      {tabs.map((tabId, index) => {
-        const home = isHomeTab(tabId);
-        const title = home ? "Home" : titles.get(tabId) ?? "Untitled";
-        const homeTitle = home ? `Home · ${HOME_TEMPLATE_LABELS[homeTabs[tabId]?.template ?? "default"]}` : title;
-        const selected = active === tabId;
-        const canClose = !(home && tabs.length === 1);
-        return (
-          <div
-            key={tabId}
-            ref={(element) => {
-              if (element) tabRefs.current.set(tabId, element);
-              else tabRefs.current.delete(tabId);
-            }}
-            role="tab"
-            aria-selected={selected}
-            tabIndex={selected ? 0 : -1}
-            className={`tab ${home ? "tab-home" : ""} ${selected ? "active" : ""}`}
-            draggable
-            onDragStart={(event) => {
-              dragIndex = index;
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData("text/plain", String(index));
-            }}
-            onDragOver={(event) => {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              const from = dragIndex ?? Number(event.dataTransfer.getData("text/plain"));
-              if (Number.isFinite(from)) reorderTabs(from, index);
-              dragIndex = null;
-            }}
-            onDragEnd={() => {
-              dragIndex = null;
-            }}
-            onMouseDown={(event) => {
-              if (event.button === 1) {
-                event.preventDefault();
-                if (canClose) void closeTab(tabId);
-              }
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                selectTab(tabId);
-              } else if (event.key === "ArrowRight") {
-                event.preventDefault();
-                focusTab(index + 1);
-              } else if (event.key === "ArrowLeft") {
-                event.preventDefault();
-                focusTab(index - 1);
-              } else if (event.key === "Home") {
-                event.preventDefault();
-                focusTab(0);
-              } else if (event.key === "End") {
-                event.preventDefault();
-                focusTab(tabs.length - 1);
-              }
-            }}
-            onClick={() => selectTab(tabId)}
-            title={homeTitle}
-          >
-            {home ? <House size={13} className="tab-home-icon" aria-hidden="true" /> : null}
-            <span className="tab-title">{title}</span>
-            {canClose ? (
-              <button
-                type="button"
-                className="tab-close"
-                aria-label={`Close ${homeTitle}`}
-                title={`Close ${homeTitle}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void closeTab(tabId);
-                }}
-              >
-                <X size={12} />
-              </button>
-            ) : null}
-          </div>
-        );
-      })}
-      <button
-        type="button"
-        className="icon-button tab-new"
-        aria-label="New tab"
-        title="New tab (Ctrl+T)"
-        onClick={() => openHomeTab()}
+    <div className="pane-tabs">
+      <div
+        className="tab-strip"
+        role="tablist"
+        aria-label={paneCount > 1 ? `Tabs in pane ${paneIndex + 1}` : "Tabs"}
+        onDragEnd={onTabDragEnd}
       >
-        <Plus size={15} />
-      </button>
+        <div
+          className="tab-strip-tabs"
+          ref={stripRef}
+          onDragOver={onStripDragOver}
+          onDragLeave={onStripDragLeave}
+          onDrop={onTabDrop}
+        >
+          {pane.tabs.map((tabId, index) => {
+            const selected = pane.activeTabId === tabId;
+            const home = isHomeTab(tabId);
+            const canClose = !(home && paneCount === 1 && pane.tabs.length === 1);
+            const dropBefore = caret !== null && caret.beforeTabId === tabId;
+            const dropAfter = dropAfterLast && index === pane.tabs.length - 1;
+            return (
+              <div
+                key={tabId}
+                ref={(element) => {
+                  if (element) tabRefs.current.set(tabId, element);
+                  else tabRefs.current.delete(tabId);
+                }}
+                role="tab"
+                aria-selected={selected}
+                tabIndex={selected ? 0 : -1}
+                draggable
+                title={home ? "Home" : titleFor(tabId)}
+                className={[
+                  "tab",
+                  home ? "tab-home" : "",
+                  selected ? "active" : "",
+                  dragging === tabId ? "dragging" : "",
+                  dropBefore ? "drop-before" : "",
+                  dropAfter ? "drop-after" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={() => selectTab(tabId)}
+                onAuxClick={(event) => {
+                  if (event.button === 1 && canClose) {
+                    event.preventDefault();
+                    void closeTab(tabId);
+                  }
+                }}
+                onKeyDown={(event) => onTabKeyDown(event, index)}
+                onDragStart={(event) => onTabDragStart(event, tabId)}
+                onDragOver={(event) => onTabDragOver(event, index)}
+                onDrop={onTabDrop}
+              >
+                {home ? <House size={13} className="tab-home-icon" /> : null}
+                <span className="tab-title">{titleFor(tabId)}</span>
+                {canClose ? (
+                  <button
+                    type="button"
+                    className="tab-close"
+                    tabIndex={-1}
+                    aria-label={`Close ${titleFor(tabId)}`}
+                    title="Close tab (Ctrl+W)"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void closeTab(tabId);
+                    }}
+                  >
+                    <X size={13} />
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="icon-button tab-new"
+            title="New tab (Ctrl+T)"
+            aria-label="New tab"
+            onClick={() => openHomeTab(undefined, pane.id)}
+          >
+            <Plus size={15} />
+          </button>
+        </div>
+        <div className="tab-bar-actions">
+          <button
+            type="button"
+            className="icon-button"
+            title="Split right (Ctrl+\\)"
+            aria-label="Split right"
+            onClick={() => splitPane(pane.id, "right")}
+          >
+            <Columns2 size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            title="Split down (Ctrl+Shift+\\)"
+            aria-label="Split down"
+            onClick={() => splitPane(pane.id, "bottom")}
+          >
+            <Rows2 size={15} />
+          </button>
+          {paneCount > 1 ? (
+            <button
+              type="button"
+              className={`icon-button${isMaximized ? " is-on" : ""}`}
+              title={isMaximized ? "Restore panes" : "Maximize pane"}
+              aria-label={isMaximized ? "Restore panes" : "Maximize pane"}
+              aria-pressed={isMaximized}
+              onClick={() => toggleMaximize(pane.id)}
+            >
+              {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+          ) : null}
+          <div className="menu-anchor" ref={anchorRef}>
+            <button
+              type="button"
+              className={`icon-button${menuOpen ? " is-on" : ""}`}
+              title="Tabs in this pane"
+              aria-label="Tabs in this pane"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={toggleMenu}
+            >
+              <ChevronDown size={15} />
+            </button>
+            {menuOpen && menuPos
+              ? createPortal(
+                  <div
+                    className="menu tab-bar-menu"
+                    role="menu"
+                    ref={menuRef}
+                    style={{ position: "fixed", top: menuPos.top, left: menuPos.left, width: 220 }}
+                  >
+                    <div className="menu-actions" role="group" aria-label="Pane actions">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="icon-button"
+                        title="Split right (Ctrl+\\)"
+                        aria-label="Split right"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          splitPane(pane.id, "right");
+                        }}
+                      >
+                        <Columns2 size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="icon-button"
+                        title="Split down (Ctrl+Shift+\\)"
+                        aria-label="Split down"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          splitPane(pane.id, "bottom");
+                        }}
+                      >
+                        <Rows2 size={15} />
+                      </button>
+                      {paneCount > 1 ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={`icon-button${isMaximized ? " is-on" : ""}`}
+                          title={isMaximized ? "Restore panes" : "Maximize pane"}
+                          aria-label={isMaximized ? "Restore panes" : "Maximize pane"}
+                          onClick={() => {
+                            setMenuOpen(false);
+                            toggleMaximize(pane.id);
+                          }}
+                        >
+                          {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                        </button>
+                      ) : null}
+                      <span className="menu-actions-grow" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="icon-button danger"
+                        title="Close pane"
+                        aria-label="Close pane"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          closePane(pane.id);
+                        }}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <div className="menu-separator" />
+                    {pane.tabs.map((tabId) => {
+                      const active = pane.activeTabId === tabId;
+                      const home = isHomeTab(tabId);
+                      const closable = !(home && paneCount === 1 && pane.tabs.length === 1);
+                      return (
+                        <div key={tabId} className="menu-item-row">
+                          <button
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={active}
+                            onClick={() => {
+                              setMenuOpen(false);
+                              selectTab(tabId);
+                            }}
+                          >
+                            {home ? <House size={13} className="tab-home-icon" /> : null}
+                            <span className="tab-menu-name">{titleFor(tabId)}</span>
+                            {active ? <Check size={13} className="menu-check" /> : null}
+                          </button>
+                          {closable ? (
+                            <button
+                              type="button"
+                              className="menu-item-close"
+                              tabIndex={-1}
+                              title="Close tab"
+                              aria-label={`Close ${titleFor(tabId)}`}
+                              onClick={() => {
+                                setMenuOpen(false);
+                                void closeTab(tabId);
+                              }}
+                            >
+                              <X size={13} />
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>,
+                  document.body,
+                )
+              : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

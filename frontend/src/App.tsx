@@ -4,15 +4,13 @@ import { AlertTriangle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api, errorMessage } from "./lib/api";
 import { commandRegistry, type AppCommand } from "./lib/commands";
 import { applyTheme, resolveTheme } from "./lib/theme";
-import { isHomeTab, useAppStore } from "./store";
+import { useAppStore } from "./store";
 import { useAppStore as store } from "./store";
 import { PluginHost } from "./plugins/PluginHost";
 import { TopBar } from "./components/TopBar";
-import { TabStrip } from "./components/TabStrip";
-import { PageHeader } from "./components/PageHeader";
+import { Panes } from "./components/Panes";
 import { Rail } from "./components/Rail";
 import { LeftSidebar } from "./components/LeftSidebar";
-import { EditorStack } from "./components/EditorStack";
 import { RightSidebar } from "./components/RightSidebar";
 import { StatusBar } from "./components/StatusBar";
 import { Toasts } from "./components/Toasts";
@@ -97,6 +95,41 @@ function makeCommands(): AppCommand[] {
       run: () => {
         const state = store.getState();
         if (state.activeTabId) void state.closeTab(state.activeTabId);
+      },
+    },
+    {
+      id: "app.split-right",
+      title: "Split right",
+      category: "View",
+      description: "Open a new pane to the right of the focused pane",
+      keywords: "pane vertical columns",
+      shortcut: "Ctrl/⌘ \\",
+      run: () => {
+        const state = store.getState();
+        state.splitPane(state.focusedPaneId, "right");
+      },
+    },
+    {
+      id: "app.split-down",
+      title: "Split down",
+      category: "View",
+      description: "Open a new pane below the focused pane",
+      keywords: "pane horizontal rows",
+      shortcut: "Ctrl/⌘ ⇧ \\",
+      run: () => {
+        const state = store.getState();
+        state.splitPane(state.focusedPaneId, "bottom");
+      },
+    },
+    {
+      id: "app.maximize-pane",
+      title: "Toggle maximized pane",
+      category: "View",
+      description: "Show the focused pane alone without closing other panes",
+      keywords: "zoom focus full",
+      run: () => {
+        const state = store.getState();
+        state.toggleMaximize(state.focusedPaneId);
       },
     },
     {
@@ -234,9 +267,6 @@ export default function App() {
   const bootError = useAppStore((state) => state.bootError);
   const bootstrap = useAppStore((state) => state.bootstrap);
   const activeTitle = useAppStore((state) => state.documents[state.activePageId]?.title ?? "Noteral");
-  const activeTabId = useAppStore((state) => state.activeTabId);
-  const activePageId = useAppStore((state) => state.activePageId);
-  const showPageHeader = Boolean(activePageId) && !isHomeTab(activeTabId);
   const settings = useAppStore((state) => state.settings);
   const bootstrapApp = useAppStore((state) => state.bootstrapApp);
 
@@ -295,6 +325,9 @@ export default function App() {
         event.preventDefault();
         if (key === "[") state.goBack();
         else state.goForward();
+      } else if (key === "\\" || key === "|") {
+        event.preventDefault();
+        state.splitPane(state.focusedPaneId, event.shiftKey || key === "|" ? "bottom" : "right");
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -389,11 +422,7 @@ export default function App() {
           <LeftSidebar />
         </div>
         <div className="center-column">
-          <div className="main-tabs">
-            <TabStrip />
-          </div>
-          {showPageHeader ? <PageHeader /> : null}
-          <EditorStack />
+          <Panes />
         </div>
         <RightSidebar />
       </div>

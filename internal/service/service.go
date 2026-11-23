@@ -171,8 +171,8 @@ func (s *AppService) SavePage(workspaceID, pageID, docJSON string, expectedRevis
 	return s.store.SavePage(workspaceID, pageID, docJSON, expectedRevision)
 }
 
-func (s *AppService) SaveUITabs(workspaceID string, tabs []string, activeTab string, homeTabs map[string]store.HomeTabSettings) error {
-	return s.store.SaveUITabs(workspaceID, tabs, activeTab, homeTabs)
+func (s *AppService) SaveUITabs(workspaceID string, tabs []string, activeTab string, homeTabs map[string]store.HomeTabSettings, layout string) error {
+	return s.store.SaveUITabs(workspaceID, tabs, activeTab, homeTabs, layout)
 }
 
 func (s *AppService) ToggleFavorite(workspaceID, pageID string) (bool, error) {
