@@ -98,3 +98,39 @@ Not checked:
 - Dark theme stills of the pane chrome and drop hints (they use `color-mix` tokens; one light-theme pass only).
 - Touch drag, pointer-capture resizing on a touchscreen, IME, and screen-reader labels beyond the existing aria attributes.
 - Dragging a pane's last tab while the neighbour is maximized; the store path is unit-tested, not rehearsed visually.
+
+# Rehearsal: rail page-tree button
+
+Gold: the rail's own `rail-button` idiom — 36px hit, 19px lucide glyph at stroke 1.8, `--accent-soft` selected fill plus the 3px `--accent` left bar (styles.css:301-309) — and the sidebar's Page tree tab glyph (`ListTree`, LeftSidebarTabs.tsx). The button is the rail-sized copy of that tab, not a new control style, and follows the VS Code activity-bar model: closed → open on the tree, open on another tab → switch to tree, tree showing → hide. The topbar toggle and Ctrl+B remain plain sidebar toggles.
+
+States: sidebar closed (unselected), click → open on tree (selected), sidebar open on Favorites → rail click switches to tree without closing, tree showing → click hides, Ctrl+B while closed, dark theme, hover, keyboard focus, 390×844 (button hidden), reload persistence.
+
+Captured: exact viewports 1366×745 (the running app's real window size) and 390×844, DPR1 full frames plus DPR2 rail crops in `/tmp/noteral-rail/`: `01-closed-1366.png`, `01-closed-rail-detail.png`, `02-open-tree-1366.png`, `02-open-rail-detail.png`, `03-favorites-1366.png`, `04-tree-switch-1366.png`, `05-closed-again-1366.png`, `06-open-tree-dark-1366.png`, `07-hover-rail-detail.png`, `08-focus-rail-detail.png`, `09-mobile-390.png`, `10-mobile-390-topbar-open.png`, `mobile-verify.png`, `mobile-rail-detail.png`. Harness: server-mode build (`go build -tags server,production,gtk3 -buildvcs=false -o bin/noteral-server .`, `WAILS_SERVER_PORT=8123 ./bin/noteral-server --data-dir /tmp/noteral-rehearsal-data`) shot with `/tmp/pw2/probe-rail.mjs`, `verify-mobile.mjs`, `reload-rail.mjs`, `focus-debug.mjs`.
+
+Gate: not a filmed faux-UI demo, so the stageshow `film --gate` loop does not apply. Rehearsed as a real app screen: exact-size stills per state plus scripted interaction and geometry checks.
+
+Frames → findings → fixes:
+- `09-mobile-390.png` (round 1) — the button tracked `settings.leftOpen`, but at ≤900 `.left-sidebar { display: none; }` (styles.css:1486-1488) left it a dead selected control. It is now hidden in the same media query (`.rail-tree-button { display: none; }`), matching how the inspector toggle hides exactly where the inspector hides. Re-shot at DPR2 (`mobile-verify.png`, `mobile-rail-detail.png`): `btnVisible false`, five visible rail buttons, no layout gap — the rail is a flex column, so the next button keeps the first slot.
+- `02-open-rail-detail.png` — the first item carries the same selected treatment as every other rail button (accent-soft fill, 3px left bar measured `3px rgb(177, 83, 61)`); no new token was needed.
+- `01-closed-1366.png` — with the sidebar closed the rail is 56px and the added button leaves no gap (`leftPanelWidth 58` = 56 rail + 2px seam, same as before the change).
+- No other frame faults; the dark frame (`06-open-tree-dark-1366.png`) stays legible on `--accent-soft`.
+
+Interaction checks: closed → click opens 272px on tab "Page tree" with 3 rows, `title` flips to "Hide page tree", aria-pressed true and selected; Favorites → click keeps the sidebar open (272) and switches to the tree; tree → click hides it (left panel 58); Ctrl+B opens on tree and reads selected, a second click closes. Reload: open+tree persists and closed persists (`leftOpen` goes through `updateSettings`/`scheduleSettings`; `leftTab` is state-only). At 390 the click changes state but nothing visible happens and the control is hidden. Zero page/console errors. `npx tsc --noEmit` clean; `npm test` 8 files / 57 tests pass (including `frontend/src/components/Rail.test.ts`: open from any tab, switch from favorites/recent/trash, hide on tree).
+
+Review: a fresh-eye reviewer returned no blocking findings (static review only — it did not run the app or the suite). Its non-blocking list, and the responses:
+1. `frontend/src/components/Rail.tsx:43-49` — the accessible name flipped between "Show/Hide page tree" while `aria-pressed` also changed, so a voice command no longer resolves after activating (APG recommends a fixed name). Fixed: the name is now the constant "Page tree"; only `title` flips, `aria-pressed` still carries the state, and the name matches the sibling rail buttons' constant labels. Re-verified: name "Page tree" in every state.
+2. `frontend/src/components/Rail.tsx:26-36` — the three-branch decision had no test. Fixed: extracted the pure `nextTreeAction(leftOpen, leftTab)` in `frontend/src/components/Rail.tsx` (used by `toggleTree`) with `frontend/src/components/Rail.test.ts` covering open/switch/hide.
+3. `frontend/src/components/Rail.tsx:43-49` duplicates the "Page tree" label and `ListTree` glyph from `frontend/src/components/LeftSidebarTabs.tsx:4-9`. Accepted: one string plus one glyph is cheaper than coupling the two components; the rehearsal checks the two against each other visually.
+4. Pre-existing and adjacent: at ≤900px `frontend/src/components/TopBar.tsx:25-32` can still set `leftOpen: true` while `styles.css:1487` hides the sidebar (a pressed control with nothing visible). Not introduced by this diff; the new button specifically does not join it (hidden at the same breakpoint). Recorded, not changed.
+The reviewer also verified clean: no stale closures, correct persistence split (`updateSettings` persists `leftOpen`, `setLeftTab` is session-only), `onResize`/Ctrl+B/topbar only touch `leftOpen`, no focus-ring suppression, `display:none` leaves no flex gap, and overlay backdrops keep the rail unclickable behind modals.
+
+Assumptions:
+- The button means the page tree, not the sidebar in general, so while open on another tab it switches to the tree instead of closing, and only the tree state closes it.
+- `leftTab` is not persisted (`setLeftTab` only sets state), so the rail forces "tree" whenever it opens the sidebar; Ctrl+B keeps reopening on the last tab.
+- Hiding the button ≤900px is correct because the sidebar itself cannot show there; the state-level control (`leftOpen`) stays reachable through the topbar toggle and Ctrl+B, which keep their pre-existing mobile behavior.
+
+Not checked:
+- Real Wails/GTK hover and AA rendering; Chromium only.
+- Screen readers and IME — aria-label/aria-pressed were set and read back from the DOM only.
+- Focus-ring pixels: the button inherits the global `button:focus-visible` rule (styles.css:89); headless programmatic focus did not paint it, so it was not judged as a still.
+- 390–900px and 520–900px intermediate widths (same media query, expected identical) and touch input.

@@ -1485,6 +1485,8 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 }
 @media (max-width: 900px) {
   .left-sidebar { display: none; }
+  /* The page-tree rail button has nothing to open where the sidebar cannot show. */
+  .rail-tree-button { display: none; }
   .page-editor { padding-left: 30px; padding-right: 30px; }
   .page-cover-wrap { margin-top: -18px; }
   .page-cover { height: 168px; }
