@@ -27,6 +27,7 @@
   --success-soft: #e5f0e8;
   --warning: #9a6a28;
   --selection: #e8d5c8;
+  --block-selected: color-mix(in srgb, var(--accent) 14%, transparent);
   --shadow-sm: 0 1px 2px rgb(47 38 27 / 6%);
   --shadow-md: 0 8px 28px rgb(47 38 27 / 10%), 0 1px 3px rgb(47 38 27 / 8%);
   --shadow-lg: 0 24px 70px rgb(47 38 27 / 18%), 0 3px 10px rgb(47 38 27 / 8%);
@@ -67,6 +68,7 @@
   --success-soft: #22332a;
   --warning: #d5a867;
   --selection: #4a342b;
+  --block-selected: color-mix(in srgb, var(--accent) 22%, transparent);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 24%);
   --shadow-md: 0 8px 28px rgb(0 0 0 / 34%), 0 1px 3px rgb(0 0 0 / 30%);
   --shadow-lg: 0 24px 70px rgb(0 0 0 / 50%), 0 3px 10px rgb(0 0 0 / 30%);
@@ -665,6 +667,73 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .noteral-editor .bn-side-menu button:hover { background: var(--bg-hover); }
 .noteral-editor .bn-formatting-toolbar, .noteral-editor .bn-link-toolbar, .noteral-editor .bn-suggestion-menu, .noteral-editor .bn-menu, .noteral-editor .bn-panel { z-index: 1200; }
 .noteral-editor .bn-suggestion-menu { border: 1px solid var(--border); box-shadow: var(--shadow-md); }
+
+/* Block selection: whole blocks picked by the marquee or the six-dots handle. */
+.noteral-editor .bn-block-selected > .bn-block { position: relative; }
+.noteral-editor .bn-block-selected > .bn-block::after {
+  content: ""; position: absolute; inset: 0 -6px; z-index: 0; pointer-events: none;
+  border-radius: var(--radius-sm);
+  background: var(--block-selected);
+}
+/* Headings carry their spacing as top padding; keep the highlight on the text. */
+.noteral-editor .bn-block-selected > .bn-block:has(> [data-content-type="heading"])::after { top: 14px; }
+.noteral-editor .bn-block-selected > .bn-block:has(> [data-content-type="heading"][data-level="2"])::after { top: 10px; }
+.noteral-editor .bn-block-selected > .bn-block:has(> [data-content-type="heading"]:is([data-level="3"], [data-level="4"], [data-level="5"], [data-level="6"]))::after { top: 6px; }
+/* A selected block inside a selected block is covered by its parent's highlight. */
+.noteral-editor .bn-block-selected .bn-block-selected > .bn-block::after { display: none; }
+.noteral-editor .has-block-selection { caret-color: transparent; }
+.noteral-editor .has-block-selection ::selection { background: transparent; }
+
+.block-marquee {
+  position: fixed; z-index: 1100; pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-radius: 3px;
+}
+body.is-block-marquee { user-select: none; -webkit-user-select: none; cursor: default; }
+body.is-block-marquee .bn-side-menu { visibility: hidden; }
+
+/* The six-dots menu and its submenus. */
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) {
+  min-width: 232px; padding: 4px;
+  background: var(--bg-raised); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  font-family: var(--font-ui);
+}
+.noteral-editor .handle-color-menu { max-height: min(460px, 70vh); }
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-label {
+  background: transparent; color: var(--text-muted);
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;
+  padding: 6px 8px 4px;
+}
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-item {
+  height: 30px; padding: 0 8px; gap: 2px;
+  background: transparent; color: var(--text);
+  border-radius: var(--radius-sm); font-size: 13px;
+}
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-item:is(:hover, [data-hovered], [aria-selected="true"]) {
+  background: var(--bg-hover); color: var(--text);
+}
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-item[data-disabled] {
+  background: transparent; color: var(--text-faint);
+}
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-itemSection { color: var(--text-soft); }
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-item[data-disabled] .mantine-Menu-itemSection { color: var(--text-faint); }
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-item.is-danger:is(:hover, [data-hovered]) { background: var(--danger-soft); color: var(--danger); }
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-item.is-danger:is(:hover, [data-hovered]) .mantine-Menu-itemSection { color: var(--danger); }
+.noteral-editor .bn-menu-dropdown:is(.bn-drag-handle-menu, .handle-menu-dropdown) .mantine-Menu-divider { margin: 4px 2px; border-color: var(--border); }
+.handle-menu-text { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.handle-menu-keys {
+  font-family: var(--font-ui); font-size: 11.5px; color: var(--text-faint);
+  background: none; border: 0; padding: 0;
+}
+.handle-swatch {
+  display: inline-grid; place-items: center; width: 18px; height: 18px;
+  border-radius: 4px; border: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; line-height: 1;
+}
+.handle-swatch.is-text { background: var(--bg); }
+.handle-swatch.is-background[data-background-color="default"] { background: var(--bg); }
 .page-link {
   /* Baseline alignment comes from the title text, so the chip sits on the line like a word. */
   display: inline-flex; align-items: baseline; gap: 4px; padding: 0 5px 0 4px; margin: 0 1px;

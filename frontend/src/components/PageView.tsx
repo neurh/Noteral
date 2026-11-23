@@ -1,10 +1,11 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type Block, type BlockNoteEditor } from "@blocknote/core";
 import { en as englishDictionary } from "@blocknote/core/locales";
 import {
   BasicTextStyleButton,
   FormattingToolbar,
   FormattingToolbarController,
+  SideMenuController,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   getFormattingToolbarItems,
@@ -30,6 +31,9 @@ import { PageIcon, parsePageIcon } from "./PageIcon";
 import { PagePickerDialog } from "./PagePickerDialog";
 import { FindBar, type FindRequest } from "./FindBar";
 import { rankSlashItems } from "../lib/slashMenu";
+import { blockSelectionExtension } from "../lib/blockActions";
+import { NoteralSideMenu } from "./BlockHandleMenu";
+import { useBlockMarquee } from "./useBlockMarquee";
 
 const IconPickerDialog = lazy(() => import("./IconPickerDialog").then((module) => ({ default: module.IconPickerDialog })));
 const CoverPickerDialog = lazy(() => import("./CoverPickerDialog").then((module) => ({ default: module.CoverPickerDialog })));
@@ -203,6 +207,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       initialContent: initialContent as never,
       animations: false,
       dictionary,
+      extensions: [blockSelectionExtension],
       uploadFile: async (file: File) => {
         if (!workspace) throw new Error("No workspace is open");
         const data = await fileToBase64(file);
@@ -212,6 +217,13 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
     },
     [page.id, page.loadVersion],
   );
+
+  useBlockMarquee({
+    scrollRef,
+    getView: () => editor.prosemirrorView ?? null,
+    isEditable: () => kind === "page" && editor.isEditable,
+    onClickBelow: continueBelow,
+  });
 
   useEffect(() => {
     setTitle(page.title);
@@ -407,10 +419,8 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   }
 
   /** A click in the empty space under the last block continues the page there. */
-  function handleBelowClick(event: ReactMouseEvent<HTMLDivElement>) {
-    if (event.button !== 0 || event.target !== event.currentTarget || kind !== "page" || !editor.isEditable) return;
-    // Act on mousedown and keep the default from moving focus to <body>.
-    event.preventDefault();
+  function continueBelow() {
+    if (kind !== "page" || !editor.isEditable) return;
     const blocks = editor.document;
     const last = blocks[blocks.length - 1];
     if (!last) return;
@@ -651,10 +661,12 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
               theme={theme}
               slashMenu={false}
               formattingToolbar={false}
+              sideMenu={false}
               spellCheck={spellcheck}
               className="noteral-editor"
               onChange={onChange}
             >
+              <SideMenuController sideMenu={NoteralSideMenu} />
               <FormattingToolbarController formattingToolbar={EditorFormattingToolbar} />
               <SuggestionMenuController
                 triggerCharacter="/"
@@ -675,7 +687,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
                 }}
               />
             </BlockNoteView>
-            <div className="page-below" onMouseDown={handleBelowClick} aria-hidden="true" />
+            <div className="page-below" aria-hidden="true" />
             </div>
             ) : null}
           </div>

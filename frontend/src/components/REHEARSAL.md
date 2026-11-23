@@ -277,3 +277,33 @@ Not checked:
 - Real Wails/WebKitGTK rendering of `::highlight()`. If the Highlight API is missing, find still counts, steps and replaces, but it does not paint the matches.
 - IME composition in the title beyond the `isComposing` guard. Screen readers. Touch.
 - The same page open in two panes: the editor bridge still keeps one handle per page id, which is pre-existing behaviour.
+
+# Rehearsal: Block marquee selection and the six-dots menu
+
+Gold: Notion's block selection. Dragging from empty space draws a box, every block the box touches turns into a whole-block selection with a tinted highlight, and the six-dots handle opens a menu that acts on that selection. Implementation: `frontend/src/lib/blockSelection.ts` (a ProseMirror selection over a run of sibling blocks, plus the highlight and key plugin), `frontend/src/lib/blockActions.ts` (delete, duplicate, move, turn into, color, and the BlockNote extension), `frontend/src/components/useBlockMarquee.ts` (the box), and `frontend/src/components/BlockHandleMenu.tsx` (the menu).
+
+States: marquee mid-drag (light), selection after release, handle menu on 4 selected blocks, menu on one unselected paragraph, Turn into submenu, Color submenu, dark theme drag and menu, 390 mobile drag.
+
+Captured in `/tmp/pwm/`: `01-dragging.png`, `02-selected.png`, `03-menu-multi.png`, `04-turn-into.png`, `05-color.png`, `12-after-menu.png`, `20-dark-drag.png`, `21-dark-menu.png`, `20-m390-drag.png`, `21-m390-menu.png`, `30-dark-sel.png`. Server-mode harness: `CGO_ENABLED=0 go build -tags server` into `bin/noteral-server`, `WAILS_SERVER_PORT=8123`, `NOTERAL_DATA_DIR=/tmp/noteral-marquee-data`. Scripts are `/tmp/pwm/marquee.mjs`, `actions2.mjs`, `move.mjs`, `dnd2.mjs` and `themes.mjs`.
+
+Gate: real app screen, so the stageshow `film --gate` loop does not apply. Rehearsed with exact-width stills plus scripted interaction checks.
+
+Frames → findings → fixes:
+- A box that stays in the left gutter selects nothing. The box hit-tests each block's text box, not its row, so it selects only the blocks it touches. For text blocks the vertical bounds come from the first line box, so a box that grazes a heading's top padding does not pick the heading.
+- `01-dragging`: the heading highlight covered its 20px top padding, so the band sat above the text. The highlight now starts lower on H1, H2 and H3.
+- `21-dark-menu`: a 14% accent tint was too faint on the dark page. A `--block-selected` token now sets 14% for light and 22% for dark.
+- The menu's heading shows the block type, or "N blocks". Delete says "Delete N blocks". Move up is disabled on the first block. Turn into is offered only when every target holds text. Text and Background color show the current value checked.
+- Hovering a block used to highlight it: BlockNote mounts the handle menu as soon as the handle shows, so the select-on-open effect ran on hover. It now lives in a child of the dropdown (`SelectWhileOpen`), which exists only while the menu is open. Checked: hovering 3 blocks and the handle selects 0, opening the menu selects 1.
+- Opening the menu on a block outside the selection selects that block, so it's always clear what the menu acts on. Opening it on a block inside a selection keeps the whole selection. Closing it puts focus back in the editor, so Delete, Ctrl+D and the arrow keys still work.
+
+Checks: on the welcome page, scripted in the real app.
+- Marquee: right-margin drag selected 2 bullets. Drag started in text still made a text selection. A drag from below the last block selected it. Clicking below added a paragraph. A margin click put the caret in the row.
+- Keys and menu: Ctrl+D duplicated and kept the copies selected, Delete and then Ctrl+Z restored them, and Ctrl+Shift+↑/↓ and the menu's Move up/down moved the block. Shift+↑/↓ grew and shrank the selection, and a plain ↓ collapsed it to one block. Escape cleared it, and typing a character over the selection did nothing. Turn into → Check List converted 2 blocks at once.
+- Handle drag: dragging the handle of a 2-block selection moved both blocks.
+- `blockSelection.test.ts` (4 tests) covers sibling runs, mixed depths lifting to a shared level, and move + reselect.
+
+Not checked: autoscroll while dragging past the scroller edge. The scripted check started on a page that fits without scrolling, so `scrollTop` stayed 0. Also unchecked: touch, WebKitGTK rendering, and nested blocks inside tables or columns.
+
+Follow-up (databases, Shift+Arrow):
+- The marquee missed database blocks: React node views wrap `.bn-block-content` in a `.react-renderer` div, so the `:scope > .bn-block > .bn-block-content` lookup skipped them. It now accepts both shapes. Checked: a box across the middle of an inline database selects it and highlights the whole embed (`/tmp/pwm/53-db-sel.png`).
+- Shift+↑/↓ from a caret: within a multi-line block the text selection extends line by line as before. At the block's top or bottom line it becomes a block selection of that block plus the neighbour, and further presses grow or shrink it. A text selection spanning two blocks becomes a selection of those blocks. Checked in `/tmp/pwm/shift.mjs`, including growing over a database (`60-shift-up.png`).
