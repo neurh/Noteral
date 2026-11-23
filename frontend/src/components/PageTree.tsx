@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Copy, FilePlus2, FileText, MoreHorizontal, Plus, Star, Trash2, Pencil, Download } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, FileText, Folder, FolderOpen, MoreHorizontal, Plus, Star, Table2, Trash2, Pencil, Download, ArrowUpRight } from "lucide-react";
 import type { PageMeta } from "../lib/api";
 import { api, errorMessage } from "../lib/api";
-import { useAppStore } from "../store";
+import { kindOf, useAppStore } from "../store";
+import { NewItemMenu } from "./NewItemMenu";
 import { PageIcon } from "./PageIcon";
 
 type DropZone = "before" | "after" | "inside";
@@ -15,7 +16,10 @@ interface DropTarget {
 function buildChildren(pages: PageMeta[]): Map<string, PageMeta[]> {
   const map = new Map<string, PageMeta[]>();
   const known = new Set(pages.map((page) => page.id));
+  // Database rows live inside their database view, not in the sidebar.
+  const databases = new Set(pages.filter((page) => kindOf(page) === "database").map((page) => page.id));
   for (const page of pages) {
+    if (databases.has(page.parentId)) continue;
     const parent = page.parentId && known.has(page.parentId) ? page.parentId : "";
     const bucket = map.get(parent) ?? [];
     bucket.push(page);
@@ -31,7 +35,7 @@ export function PageTree() {
   const favorites = useAppStore((state) => state.favorites);
   const workspace = useAppStore((state) => state.workspace);
   const selectPage = useAppStore((state) => state.selectPage);
-  const createPage = useAppStore((state) => state.createPage);
+  const createItem = useAppStore((state) => state.createItem);
   const renamePage = useAppStore((state) => state.renamePage);
   const duplicatePage = useAppStore((state) => state.duplicatePage);
   const trashPage = useAppStore((state) => state.trashPage);
@@ -44,6 +48,7 @@ export function PageTree() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [newMenu, setNewMenu] = useState<{ anchor: HTMLElement; parentId: string } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -155,14 +160,23 @@ export function PageTree() {
 
   function renderRow(page: PageMeta, depth: number) {
     const kids = children.get(page.id) ?? [];
+    const kind = kindOf(page);
     const isOpen = expanded.has(page.id);
+    const icon =
+      kind === "folder" ? (
+        isOpen && kids.length ? <FolderOpen size={14} /> : <Folder size={14} />
+      ) : kind === "database" ? (
+        <Table2 size={14} />
+      ) : (
+        <FileText size={14} />
+      );
     const active = page.id === activePageId;
     const favorite = favorites.includes(page.id);
     const drop = dropTarget?.id === page.id ? dropTarget.zone : null;
     return (
       <div key={page.id} className="tree-branch">
         <div
-          className={`tree-row ${active ? "active" : ""} ${drop ? `drop-${drop}` : ""} ${dragging === page.id ? "dragging" : ""}`}
+          className={`tree-row kind-${kind} ${active ? "active" : ""} ${drop ? `drop-${drop}` : ""} ${dragging === page.id ? "dragging" : ""}`}
           style={{ paddingLeft: 8 + depth * 14 }}
           draggable={editing !== page.id}
           onDragStart={(event) => {
@@ -229,11 +243,16 @@ export function PageTree() {
             <button
               type="button"
               className="tree-page"
-              onClick={() => void selectPage(page.id)}
+              onClick={() => {
+                // Folders are containers: a click opens or closes them in place.
+                if (kind === "folder") toggle(page.id);
+                else void selectPage(page.id);
+              }}
               onDoubleClick={() => beginRename(page)}
+              aria-expanded={kind === "folder" ? isOpen : undefined}
               title={page.title}
             >
-              <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={<FileText size={14} />} /></span>
+              <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={icon} /></span>
               <span className="tree-title">{page.title}</span>
               {favorite ? <Star size={11} className="tree-star" aria-label="Favorite" /> : null}
             </button>
@@ -242,11 +261,12 @@ export function PageTree() {
             <button
               type="button"
               className="icon-button tiny"
-              aria-label={`Add child page under ${page.title}`}
-              title="Add child page"
+              aria-label={kind === "database" ? `Add a page to ${page.title}` : `Add inside ${page.title}`}
+              title={kind === "database" ? "New page in database" : "Add a page, folder or database inside"}
               onClick={(event) => {
                 event.stopPropagation();
-                void createPage(page.id);
+                if (kind === "database") void createItem("page", page.id);
+                else setNewMenu({ anchor: event.currentTarget, parentId: page.id });
               }}
             >
               <Plus size={13} />
@@ -271,7 +291,9 @@ export function PageTree() {
               <button type="button" role="menuitem" onClick={() => { setMenuFor(null); void toggleFavorite(page.id); }}>
                 <Star size={14} /> {favorite ? "Remove favorite" : "Add favorite"}
               </button>
-              <button type="button" role="menuitem" onClick={() => void createPage(page.id)}><FilePlus2 size={14} /> New child page</button>
+              {kind === "folder" ? (
+                <button type="button" role="menuitem" onClick={() => { setMenuFor(null); void selectPage(page.id); }}><ArrowUpRight size={14} /> Open folder</button>
+              ) : null}
               <button type="button" role="menuitem" onClick={() => { setMenuFor(null); void duplicatePage(page.id); }}><Copy size={14} /> Duplicate</button>
               <div className="menu-separator" />
               <button type="button" role="menuitem" onClick={() => void exportPage(page, "markdown")}><Download size={14} /> Export Markdown</button>
@@ -314,7 +336,15 @@ export function PageTree() {
       >
         <div className="sidebar-section-heading">
           <span>Pages</span>
-          <button type="button" className="icon-button tiny" aria-label="New page" title="New page" onClick={() => void createPage()}>
+          <button
+            type="button"
+            className="icon-button tiny"
+            aria-label="New page, folder or database"
+            aria-haspopup="menu"
+            aria-expanded={newMenu?.parentId === ""}
+            title="New page, folder or database"
+            onClick={(event) => setNewMenu({ anchor: event.currentTarget, parentId: "" })}
+          >
             <Plus size={14} />
           </button>
         </div>
@@ -322,12 +352,28 @@ export function PageTree() {
           <div className="empty-hint">
             <FileText size={18} />
             <p>No pages yet.</p>
-            <button type="button" className="text-button" onClick={() => void createPage()}>Create a page</button>
+            <button type="button" className="text-button" onClick={(event) => setNewMenu({ anchor: event.currentTarget, parentId: "" })}>Create a page</button>
           </div>
         ) : (
           <div className="tree-scroll">{roots.map((page) => renderRow(page, 0))}</div>
         )}
       </div>
+      {newMenu ? (
+        <NewItemMenu
+          anchor={newMenu.anchor}
+          parentId={newMenu.parentId}
+          onClose={() => setNewMenu(null)}
+          onCreated={(id, kind) => {
+            const parent = newMenu.parentId;
+            if (parent) setExpanded((current) => new Set(current).add(parent));
+            // Folders do not open a tab, so name them right where they appear.
+            if (kind === "folder") {
+              setEditing(id);
+              setDraft("New folder");
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

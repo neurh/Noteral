@@ -227,3 +227,14 @@ Not checked:
 - Whether some other surface should show the current workspace name from within the sidebar.
 - Real Wails/GTK rendering, screen readers (the removed buttons took their aria labels with them), and touch input.
 - 880–900px widths and 200% zoom.
+
+## Databases, folders and the "+" menu
+
+Stills in `/tmp/noteral-db-shots` (server-mode build, 1366×820, 390×844 and dark).
+
+- **New menu**: the header "+", the empty-tree "Create a page" button and the row "+" all open Page / Folder / Database. The row "+" on a database adds a row directly. New folders open in rename mode inside the tree.
+- **Table**: the gutter (check box and drag handle) hangs outside the text column, so names line up with the title. The footer only shows calculations on hover until one is set. The selection bar floats over the header row.
+- **Board / Calendar / Gallery / List**: each view keeps its own filters, sorts, calculations and hidden properties. The calendar compacts at narrow container widths: smaller day numbers and no per-day "+".
+- **Inline block**: `/database` creates a child database and embeds it. `/linked database` embeds an existing one. The `.bn-block-content[data-content-type=database]` element is forced to `display:block; width:100%`, because `.db` is an inline-size container and otherwise collapses to 0 width.
+- **Popover focus bug (fixed)**: popovers start at `left:0; top:0; opacity:0` instead of `visibility:hidden` or -9999px. Editors focus with `preventScroll`, and popovers re-place themselves on scroll instead of closing. Before this fix, clicking a partly visible cell scrolled the table, which closed the cell editor and lost the typed value.
+- **Functional probe** (`/tmp/pw2/dbfunc.mjs`): passed drag card to Done, add a Number property, type values, Sum calculation, sort by date, select and delete a row, then reload. Values persisted, with no page errors.

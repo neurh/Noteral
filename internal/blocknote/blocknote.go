@@ -124,6 +124,11 @@ func Analyze(raw string) (Analysis, error) {
 					links[id] = struct{}{}
 				}
 			}
+			if typ == "database" {
+				if id, ok := props["databaseId"].(string); ok && id != "" {
+					links[id] = struct{}{}
+				}
+			}
 		}
 		if typ != "divider" && typ != "pageBreak" {
 			if content, ok := block["content"]; ok {

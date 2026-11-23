@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   Feather,
   FilePlus2,
-  FileText,
   House,
   LayoutGrid,
   Library,
@@ -15,6 +14,7 @@ import { relativeTime } from "../../lib/format";
 import { HOME_BACKGROUND_LABELS, HOME_TEMPLATE_LABELS, type HomeBackground, type HomeTemplate } from "../../lib/home";
 import { useAppStore } from "../../store";
 import { PageIcon } from "../PageIcon";
+import { KindIcon } from "../KindIcon";
 
 export const homeTemplateMeta: Array<{ id: HomeTemplate; label: string; description: string; icon: LucideIcon }> = [
   { id: "default", label: HOME_TEMPLATE_LABELS.default, description: "A calm place to start", icon: House },
@@ -51,7 +51,7 @@ export function HomeRow({ page, showTime = true }: { page: PageMeta; showTime?: 
   return (
     <button type="button" className="home-row" onClick={() => void selectPage(page.id)} title={page.title}>
       <span className="tree-icon" aria-hidden="true">
-        <PageIcon value={page.icon} size={15} fallback={<FileText size={15} />} />
+        <PageIcon value={page.icon} size={15} fallback={<KindIcon page={page} size={15} />} />
       </span>
       <span className="home-row-title">{page.title}</span>
       {showTime ? <span className="home-row-time">{relativeTime(page.updatedAt)}</span> : null}
@@ -265,7 +265,7 @@ export function GalleryHome() {
           {shown.slice(0, 12).map((page, index) => (
             <button key={page.id} type="button" className="home-card" onClick={() => void selectPage(page.id)} title={page.title}>
               <span className={`home-card-icon tone-${index % 5}`} aria-hidden="true">
-                <PageIcon value={page.icon} size={18} fallback={<FileText size={18} />} />
+                <PageIcon value={page.icon} size={18} fallback={<KindIcon page={page} size={18} />} />
               </span>
               <span className="home-card-title">{page.title}</span>
               <span className="home-card-meta">

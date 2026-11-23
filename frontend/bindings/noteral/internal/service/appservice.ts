@@ -34,6 +34,13 @@ export function Bootstrap(): $CancellablePromise<$models.Bootstrap> {
     return $Call.ByID(1042870756);
 }
 
+/**
+ * CreateItem creates a page, folder or database. Title and data may be empty.
+ */
+export function CreateItem(workspaceID: string, parentID: string, kind: string, title: string, data: string): $CancellablePromise<store$0.PageDocument> {
+    return $Call.ByID(1128001961, workspaceID, parentID, kind, title, data);
+}
+
 export function CreatePage(workspaceID: string, parentID: string): $CancellablePromise<store$0.PageDocument> {
     return $Call.ByID(2684228377, workspaceID, parentID);
 }
@@ -218,6 +225,13 @@ export function SetApp(app: application$0.App | null): $CancellablePromise<void>
 
 export function SetPageAppearance(workspaceID: string, pageID: string, icon: string, cover: string): $CancellablePromise<store$0.PageMeta> {
     return $Call.ByID(2588795471, workspaceID, pageID, icon, cover);
+}
+
+/**
+ * SetPageData stores a database schema or a database row's property values.
+ */
+export function SetPageData(workspaceID: string, pageID: string, data: string): $CancellablePromise<store$0.PageMeta> {
+    return $Call.ByID(1164206069, workspaceID, pageID, data);
 }
 
 export function ToggleFavorite(workspaceID: string, pageID: string): $CancellablePromise<boolean> {

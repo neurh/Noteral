@@ -103,6 +103,16 @@ func (s *AppService) CreatePage(workspaceID, parentID string) (store.PageDocumen
 	return s.store.CreatePage(workspaceID, parentID)
 }
 
+// CreateItem creates a page, folder or database. Title and data may be empty.
+func (s *AppService) CreateItem(workspaceID, parentID, kind, title, data string) (store.PageDocument, error) {
+	return s.store.CreateItem(workspaceID, parentID, kind, title, data)
+}
+
+// SetPageData stores a database schema or a database row's property values.
+func (s *AppService) SetPageData(workspaceID, pageID, data string) (store.PageMeta, error) {
+	return s.store.SetPageData(workspaceID, pageID, data)
+}
+
 func (s *AppService) RenamePage(workspaceID, pageID, title string) (store.PageMeta, error) {
 	return s.store.RenamePage(workspaceID, pageID, title)
 }

@@ -3,13 +3,18 @@ import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type Blo
 import { SuggestionMenuController, getDefaultReactSlashMenuItems, useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { FileSymlink, ImagePlus, Move, RefreshCw, SmilePlus, X } from "lucide-react";
+import { FileSymlink, ImagePlus, Move, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
 import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
 import { commandRegistry } from "../lib/commands";
 import { editorBridge, type OutlineItem } from "../lib/editorBridge";
-import { useAppStore, type LoadedDocument } from "../store";
+import { kindOf, useAppStore, type LoadedDocument } from "../store";
+import { defaultSchema, serializeSchema } from "../lib/database";
+import { databaseBlockSpec } from "./database/DatabaseBlock";
+import { DatabaseView } from "./database/DatabaseView";
+import { RowProperties } from "./database/RowProperties";
+import { FolderView } from "./FolderView";
 import { pageLinkSpec } from "./PageLink";
 import { PageIcon, parsePageIcon } from "./PageIcon";
 import { PagePickerDialog } from "./PagePickerDialog";
@@ -20,7 +25,7 @@ const preloadIconPicker = () => { void import("./IconPickerDialog"); };
 const preloadCoverPicker = () => { void import("./CoverPickerDialog"); };
 
 const schema = BlockNoteSchema.create({
-  blockSpecs: defaultBlockSpecs,
+  blockSpecs: { ...defaultBlockSpecs, database: databaseBlockSpec() },
   inlineContentSpecs: { ...defaultInlineContentSpecs, pageLink: pageLinkSpec },
 });
 
@@ -133,6 +138,11 @@ export function PageView({ page, active }: PageViewProps) {
   const canRepositionCover = isPositionableCover(page.cover);
   const cover = coverStyle(withCoverPosition(page.cover, coverOffset.x, coverOffset.y));
   const icon = parsePageIcon(page.icon) ? page.icon : "";
+  const kind = page.kind;
+  const parentId = pages.find((item) => item.id === page.id)?.parentId ?? page.parentId;
+  const parentIsDatabase = kindOf(pages.find((item) => item.id === parentId)) === "database";
+  const createItem = useAppStore((state) => state.createItem);
+  const [databasePickerOpen, setDatabasePickerOpen] = useState(false);
 
   useEffect(() => {
     // The pickers are split out of the initial bundle. Warm them once the page
@@ -234,7 +244,7 @@ export function PageView({ page, active }: PageViewProps) {
   }, [editor, page.id, titleFor]);
 
   useEffect(() => {
-    if (active) {
+    if (active && kind === "page") {
       const timer = setTimeout(() => {
         if (!editorBridge.has(page.id)) return;
         // Do not steal focus from the title field or an open dialog.
@@ -244,7 +254,7 @@ export function PageView({ page, active }: PageViewProps) {
       }, 30);
       return () => clearTimeout(timer);
     }
-  }, [active, editor, page.id]);
+  }, [active, editor, page.id, kind]);
 
   function commitTitle() {
     const clean = title.trim() || "Untitled";
@@ -321,15 +331,55 @@ export function PageView({ page, active }: PageViewProps) {
         icon: <FileSymlink size={16} />,
         onItemClick: () => setPickerOpen(true),
       },
+      {
+        title: "Database",
+        subtext: "Table, board, calendar and more, inside this page",
+        group: "Noteral",
+        aliases: ["database", "table", "board", "kanban", "gallery", "calendar", "list", "db"],
+        icon: <Table2 size={16} />,
+        onItemClick: () => {
+          const cursor = editor.getTextCursorPosition().block;
+          void createItem("database", page.id, { open: false, data: serializeSchema(defaultSchema()) }).then((meta) => {
+            if (meta) insertDatabaseBlock(meta.id, cursor.id);
+          });
+        },
+      },
+      {
+        title: "Linked database",
+        subtext: "Show an existing database here",
+        group: "Noteral",
+        aliases: ["linked", "database", "view", "embed"],
+        icon: <Table2 size={16} />,
+        onItemClick: () => setDatabasePickerOpen(true),
+      },
     ],
-    [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editor, page.id],
   );
+
+  function insertDatabaseBlock(databaseId: string, nearBlockId?: string) {
+    const block = { type: "database", props: { databaseId } } as never;
+    const target = (nearBlockId && editor.getBlock(nearBlockId)) || editor.getTextCursorPosition().block;
+    const text = inlineText(target.content, (id) => titleFor.get(id));
+    if (target.type === "paragraph" && !text.trim()) {
+      editor.replaceBlocks([target], [block]);
+    } else {
+      editor.insertBlocks([block], target, "after");
+    }
+    // Keep a writable line after the database so typing can continue below it.
+    const inserted = editor.document.find((item) => item.type === ("database" as never) && (item.props as { databaseId?: string }).databaseId === databaseId);
+    if (inserted) {
+      const index = editor.document.indexOf(inserted);
+      const next = editor.document[index + 1];
+      if (!next) editor.insertBlocks([{ type: "paragraph" } as never], inserted, "after");
+    }
+  }
 
   return (
     <div className={`page-pane ${active ? "active" : ""}`} aria-hidden={!active}>
       <div className="page-scroll">
         <div className="page-document">
-          <div className={`page-editor ${cover ? "has-cover" : ""} ${icon ? "has-icon" : ""}`}>
+          <div className={`page-editor kind-${kind} ${cover ? "has-cover" : ""} ${icon ? "has-icon" : ""}`}>
             <div className="page-head">
               {cover ? (
                 <div className="page-cover-wrap">
@@ -418,10 +468,12 @@ export function PageView({ page, active }: PageViewProps) {
                       (event.currentTarget as HTMLInputElement).blur();
                     }
                   }}
-                  aria-label="Page title"
+                  aria-label={kind === "database" ? "Database name" : kind === "folder" ? "Folder name" : "Page title"}
+                  placeholder="Untitled"
                   spellCheck={false}
                 />
               </div>
+              {parentIsDatabase && kind === "page" ? <RowProperties databaseId={parentId} rowId={page.id} /> : null}
             </div>
             {page.error ? (
               <div className="save-error" role="alert">
@@ -437,6 +489,9 @@ export function PageView({ page, active }: PageViewProps) {
                 </button>
               </div>
             ) : null}
+            {kind === "database" ? <DatabaseView databaseId={page.id} /> : null}
+            {kind === "folder" ? <FolderView folderId={page.id} /> : null}
+            {kind === "page" ? (
             <BlockNoteView
               editor={editor}
               theme={theme}
@@ -468,6 +523,7 @@ export function PageView({ page, active }: PageViewProps) {
                 }}
               />
             </BlockNoteView>
+            ) : null}
           </div>
         </div>
       </div>
@@ -502,6 +558,14 @@ export function PageView({ page, active }: PageViewProps) {
           />
         </Suspense>
       ) : null}
+      <PagePickerDialog
+        open={databasePickerOpen}
+        title="Link a database"
+        emptyText="No databases yet. Use /Database to create one."
+        filter={(item) => kindOf(item) === "database"}
+        onClose={() => setDatabasePickerOpen(false)}
+        onPick={(databaseId) => insertDatabaseBlock(databaseId)}
+      />
       <PagePickerDialog
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}

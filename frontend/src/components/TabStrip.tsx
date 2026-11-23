@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   Columns2,
-  FileText,
   House,
   Maximize2,
   Minimize2,
@@ -24,6 +23,7 @@ import {
 import { paneList, type PaneNode } from "../lib/panes";
 import { isHomeTab, useAppStore } from "../store";
 import { PageIcon } from "./PageIcon";
+import { KindIcon } from "./KindIcon";
 
 interface TabStripProps {
   pane: PaneNode;
@@ -262,7 +262,7 @@ export function TabStrip({ pane }: TabStripProps) {
                   <House size={13} className="tab-home-icon" />
                 ) : (
                   <span className="tab-icon" aria-hidden="true">
-                    <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<FileText size={13} />} />
+                    <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<KindIcon page={pageById.get(tabId)} size={13} />} />
                   </span>
                 )}
                 <span className="tab-title">{titleFor(tabId)}</span>
@@ -422,7 +422,7 @@ export function TabStrip({ pane }: TabStripProps) {
                               <House size={13} className="tab-home-icon" />
                             ) : (
                               <span className="tab-icon" aria-hidden="true">
-                                <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<FileText size={13} />} />
+                                <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<KindIcon page={pageById.get(tabId)} size={13} />} />
                               </span>
                             )}
                             <span className="tab-menu-name">{titleFor(tabId)}</span>

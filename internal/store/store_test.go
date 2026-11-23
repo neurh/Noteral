@@ -440,7 +440,7 @@ func TestWorkspaceMigrationAddsCover(t *testing.T) {
 		t.Fatalf("migrate workspace: %v", err)
 	}
 	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 2 {
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("schema version = %d, %v", version, err)
 	}
 	if _, err := db.Exec(`INSERT INTO pages(id,cover) VALUES('pg_test','image:alpine-dawn')`); err != nil {

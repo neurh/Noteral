@@ -113,6 +113,15 @@ func renderBlock(block map[string]any, depth int, opts RenderOptions) string {
 		body = renderTable(content, opts)
 	case "divider", "pageBreak":
 		body = "---"
+	case "database":
+		id, _ := props["databaseId"].(string)
+		title := "Untitled database"
+		if opts.ResolvePageTitle != nil && id != "" {
+			if t := opts.ResolvePageTitle(id); strings.TrimSpace(t) != "" {
+				title = t
+			}
+		}
+		body = "[" + escapeInline(title) + "](noteral-page://" + escapeURL(id) + ")"
 	default:
 		body = renderInline(content, opts)
 	}

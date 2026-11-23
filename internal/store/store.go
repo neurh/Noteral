@@ -16,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,80}$`)
 
@@ -132,7 +132,7 @@ func (s *Store) migrateApp() error {
 				key TEXT PRIMARY KEY,
 				value TEXT NOT NULL
 			)`,
-			`PRAGMA user_version = 2`,
+			`PRAGMA user_version = 3`,
 		}
 		for _, stmt := range stmts {
 			if _, err := tx.Exec(stmt); err != nil {
@@ -499,7 +499,9 @@ func migrateWorkspace(db *sql.DB) error {
 				revision INTEGER NOT NULL DEFAULT 1,
 				created_at TEXT NOT NULL,
 				updated_at TEXT NOT NULL,
-				deleted_at TEXT
+				deleted_at TEXT,
+				kind TEXT NOT NULL DEFAULT 'page',
+				data TEXT NOT NULL DEFAULT ''
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id, position)`,
 			`CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at)`,
@@ -540,7 +542,7 @@ func migrateWorkspace(db *sql.DB) error {
 				INSERT INTO pages_fts(pages_fts,rowid,title,text_content) VALUES('delete',old.seq,old.title,old.text_content);
 				INSERT INTO pages_fts(rowid,title,text_content) VALUES(new.seq,new.title,new.text_content);
 			END`,
-			`PRAGMA user_version = 2`,
+			`PRAGMA user_version = 3`,
 		}
 		for _, stmt := range stmts {
 			if _, err := tx.Exec(stmt); err != nil {
@@ -550,6 +552,7 @@ func migrateWorkspace(db *sql.DB) error {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
+		return nil
 	}
 	if version == 1 {
 		tx, err := db.Begin()
@@ -562,6 +565,26 @@ func migrateWorkspace(db *sql.DB) error {
 		}
 		if _, err := tx.Exec(`PRAGMA user_version = 2`); err != nil {
 			return fmt.Errorf("upgrade workspace schema: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		version = 2
+	}
+	if version == 2 {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, stmt := range []string{
+			`ALTER TABLE pages ADD COLUMN kind TEXT NOT NULL DEFAULT 'page'`,
+			`ALTER TABLE pages ADD COLUMN data TEXT NOT NULL DEFAULT ''`,
+			`PRAGMA user_version = 3`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("upgrade workspace schema to 3: %w", err)
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return err

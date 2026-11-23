@@ -1,8 +1,9 @@
-import { FileText, Star } from "lucide-react";
+import { Star } from "lucide-react";
 import type { PageMeta } from "../lib/api";
 import { relativeTime } from "../lib/format";
 import { useAppStore } from "../store";
 import { PageIcon } from "./PageIcon";
+import { KindIcon } from "./KindIcon";
 
 interface PageListProps {
   pages: PageMeta[];
@@ -23,7 +24,7 @@ export function PageList({ pages, empty }: PageListProps) {
       {pages.map((page) => (
         <div key={page.id} className={`page-list-row ${active === page.id ? "active" : ""}`} role="listitem">
           <button type="button" className="page-list-main" onClick={() => void selectPage(page.id)} title={page.title}>
-            <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={<FileText size={14} />} /></span>
+            <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={<KindIcon page={page} size={14} />} /></span>
             <span className="page-list-copy">
               <span className="page-list-title">{page.title}</span>
               <span className="page-list-time">{relativeTime(page.updatedAt)}</span>

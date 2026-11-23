@@ -10,8 +10,18 @@ type Workspace struct {
 	PageCount    int    `json:"pageCount"`
 }
 
+// Page kinds. A folder is a body-less container in the page tree; a database
+// stores its schema and views in Data and its rows are its child pages, each
+// carrying its property values in Data.
+const (
+	KindPage     = "page"
+	KindFolder   = "folder"
+	KindDatabase = "database"
+)
+
 // PageMeta is the lightweight sidebar/tab representation of a page. Bodies are
-// deliberately not included here.
+// deliberately not included here. Data is small structured JSON: a database's
+// schema, or a database row's property values; it is empty for plain pages.
 type PageMeta struct {
 	ID        string  `json:"id"`
 	ParentID  string  `json:"parentId"`
@@ -21,14 +31,16 @@ type PageMeta struct {
 	Position  float64 `json:"position"`
 	UpdatedAt string  `json:"updatedAt"`
 	DeletedAt string  `json:"deletedAt,omitempty"`
+	Kind      string  `json:"kind"`
+	Data      string  `json:"data"`
+	CreatedAt string  `json:"createdAt"`
 }
 
 // PageDocument is a full page body loaded on demand.
 type PageDocument struct {
 	PageMeta
-	DocJSON   string `json:"docJson"`
-	Revision  int64  `json:"revision"`
-	CreatedAt string `json:"createdAt"`
+	DocJSON  string `json:"docJson"`
+	Revision int64  `json:"revision"`
 }
 
 // SaveResult confirms a committed save.

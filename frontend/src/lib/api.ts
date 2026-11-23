@@ -23,6 +23,9 @@ export const api = {
   openWorkspace: (id: string) => AppService.OpenWorkspace(id),
   openPage: (workspaceId: string, pageId: string) => AppService.OpenPage(workspaceId, pageId),
   createPage: (workspaceId: string, parentId: string) => AppService.CreatePage(workspaceId, parentId),
+  createItem: (workspaceId: string, parentId: string, kind: string, title: string, data: string) =>
+    AppService.CreateItem(workspaceId, parentId, kind, title, data),
+  setPageData: (workspaceId: string, pageId: string, data: string) => AppService.SetPageData(workspaceId, pageId, data),
   renamePage: (workspaceId: string, pageId: string, title: string) => AppService.RenamePage(workspaceId, pageId, title),
   setPageAppearance: (workspaceId: string, pageId: string, icon: string, cover: string) =>
     AppService.SetPageAppearance(workspaceId, pageId, icon, cover),

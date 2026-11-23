@@ -14,6 +14,19 @@ import (
 
 const maxDocBytes = 32 << 20
 const maxAppearanceBytes = 64 << 10
+const maxDataBytes = 4 << 20
+
+// metaColumns is the column list scanned by metaDest, in order.
+const metaColumns = "id,parent_id,title,icon,cover,position,updated_at,kind,data,created_at"
+const metaColumnsP = "p.id,p.parent_id,p.title,p.icon,p.cover,p.position,p.updated_at,p.kind,p.data,p.created_at"
+
+func metaDest(p *PageMeta) []any {
+	return []any{&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Cover, &p.Position, &p.UpdatedAt, &p.Kind, &p.Data, &p.CreatedAt}
+}
+
+func validKind(kind string) bool {
+	return kind == KindPage || kind == KindFolder || kind == KindDatabase
+}
 
 // PageMetaByID returns a single page's metadata.
 func (s *Store) PageMetaByID(workspaceID, pageID string) (PageMeta, error) {
@@ -26,8 +39,8 @@ func (s *Store) PageMetaByID(workspaceID, pageID string) (PageMeta, error) {
 
 func pageMetaByID(db *sql.DB, pageID string) (PageMeta, error) {
 	var p PageMeta
-	err := db.QueryRow(`SELECT id,parent_id,title,icon,cover,position,updated_at FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).
-		Scan(&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Cover, &p.Position, &p.UpdatedAt)
+	err := db.QueryRow(`SELECT `+metaColumns+` FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).
+		Scan(metaDest(&p)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PageMeta{}, fmt.Errorf("page not found")
 	}
@@ -44,7 +57,7 @@ func (s *Store) ListPages(workspaceID string) ([]PageMeta, error) {
 }
 
 func listPages(db *sql.DB) ([]PageMeta, error) {
-	rows, err := db.Query(`SELECT id,parent_id,title,icon,cover,position,updated_at FROM pages WHERE deleted_at IS NULL ORDER BY position ASC, title COLLATE NOCASE ASC`)
+	rows, err := db.Query(`SELECT `+metaColumns+` FROM pages WHERE deleted_at IS NULL ORDER BY position ASC, title COLLATE NOCASE ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +65,7 @@ func listPages(db *sql.DB) ([]PageMeta, error) {
 	var out []PageMeta
 	for rows.Next() {
 		var p PageMeta
-		if err := rows.Scan(&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Cover, &p.Position, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(metaDest(&p)...); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -86,7 +99,7 @@ func (s *Store) Snapshot(workspaceID string) (WorkspaceSnapshot, error) {
 // listTrash returns trashed pages whose parent is not also trashed, so each
 // deleted subtree appears once in the trash instead of page by page.
 func listTrash(db *sql.DB) ([]PageMeta, error) {
-	rows, err := db.Query(`SELECT p.id,p.parent_id,p.title,p.icon,p.cover,p.position,p.updated_at,p.deleted_at
+	rows, err := db.Query(`SELECT `+metaColumnsP+`,p.deleted_at
 		FROM pages p
 		WHERE p.deleted_at IS NOT NULL
 		  AND NOT EXISTS (SELECT 1 FROM pages parent WHERE parent.id=p.parent_id AND parent.deleted_at IS NOT NULL)
@@ -98,7 +111,7 @@ func listTrash(db *sql.DB) ([]PageMeta, error) {
 	var out []PageMeta
 	for rows.Next() {
 		var p PageMeta
-		if err := rows.Scan(&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Cover, &p.Position, &p.UpdatedAt, &p.DeletedAt); err != nil {
+		if err := rows.Scan(append(metaDest(&p), &p.DeletedAt)...); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -135,8 +148,8 @@ func (s *Store) LoadPageForExport(workspaceID, pageID string) (PageDocument, err
 
 func loadPage(db *sql.DB, pageID string, hydrate bool, workspaceID string) (PageDocument, error) {
 	var d PageDocument
-	err := db.QueryRow(`SELECT id,parent_id,title,icon,cover,position,updated_at,doc_json,revision,created_at FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).
-		Scan(&d.ID, &d.ParentID, &d.Title, &d.Icon, &d.Cover, &d.Position, &d.UpdatedAt, &d.DocJSON, &d.Revision, &d.CreatedAt)
+	err := db.QueryRow(`SELECT `+metaColumns+`,doc_json,revision FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).
+		Scan(append(metaDest(&d.PageMeta), &d.DocJSON, &d.Revision)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PageDocument{}, fmt.Errorf("page not found")
 	}
@@ -249,6 +262,21 @@ func (s *Store) SetPageAppearance(workspaceID, pageID, icon, cover string) (Page
 
 // CreatePage creates an empty child page and returns its body.
 func (s *Store) CreatePage(workspaceID, parentID string) (PageDocument, error) {
+	return s.CreateItem(workspaceID, parentID, KindPage, "", "")
+}
+
+// CreateItem creates a page, folder or database under parentID. An empty title
+// uses the kind's default; data seeds a database schema or row values.
+func (s *Store) CreateItem(workspaceID, parentID, kind, title, data string) (PageDocument, error) {
+	if kind == "" {
+		kind = KindPage
+	}
+	if !validKind(kind) {
+		return PageDocument{}, fmt.Errorf("unknown page kind %q", kind)
+	}
+	if err := checkData(data); err != nil {
+		return PageDocument{}, err
+	}
 	ws, err := s.workspace(workspaceID)
 	if err != nil {
 		return PageDocument{}, err
@@ -258,18 +286,61 @@ func (s *Store) CreatePage(workspaceID, parentID string) (PageDocument, error) {
 			return PageDocument{}, fmt.Errorf("parent page not found")
 		}
 	}
+	if strings.TrimSpace(title) == "" {
+		switch kind {
+		case KindFolder:
+			title = "New folder"
+		default:
+			title = "Untitled"
+		}
+	}
+	title = cleanTitle(title)
 	now := nowString()
 	id := "pg_" + randomHex(8)
 	var maxPos float64
 	_ = ws.DB.QueryRow(`SELECT COALESCE(MAX(position),0) FROM pages WHERE parent_id=? AND deleted_at IS NULL`, parentID).Scan(&maxPos)
 	doc := emptyDocument()
-	_, err = ws.DB.Exec(`INSERT INTO pages(id,parent_id,title,icon,cover,position,doc_json,text_content,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		id, parentID, "Untitled", "", "", maxPos+1024, doc, "", 1, now, now)
+	_, err = ws.DB.Exec(`INSERT INTO pages(id,parent_id,title,icon,cover,position,doc_json,text_content,revision,created_at,updated_at,kind,data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, parentID, title, "", "", maxPos+1024, doc, "", 1, now, now, kind, data)
 	if err != nil {
 		return PageDocument{}, err
 	}
-	_, _ = ws.DB.Exec(`INSERT INTO recent(page_id,opened_at) VALUES(?,?) ON CONFLICT(page_id) DO UPDATE SET opened_at=excluded.opened_at`, id, now)
-	return PageDocument{PageMeta: PageMeta{ID: id, ParentID: parentID, Title: "Untitled", Cover: "", Position: maxPos + 1024, UpdatedAt: now}, DocJSON: hydrateAssetURLs(doc, workspaceID), Revision: 1, CreatedAt: now}, nil
+	if kind != KindFolder {
+		_, _ = ws.DB.Exec(`INSERT INTO recent(page_id,opened_at) VALUES(?,?) ON CONFLICT(page_id) DO UPDATE SET opened_at=excluded.opened_at`, id, now)
+	}
+	meta := PageMeta{ID: id, ParentID: parentID, Title: title, Position: maxPos + 1024, UpdatedAt: now, Kind: kind, Data: data, CreatedAt: now}
+	return PageDocument{PageMeta: meta, DocJSON: hydrateAssetURLs(doc, workspaceID), Revision: 1}, nil
+}
+
+func checkData(data string) error {
+	if len(data) > maxDataBytes {
+		return fmt.Errorf("structured page data is too large")
+	}
+	if data != "" && !json.Valid([]byte(data)) {
+		return fmt.Errorf("structured page data is not valid JSON")
+	}
+	return nil
+}
+
+// SetPageData replaces a page's structured data (a database schema or a row's
+// property values). The document body and its revision are untouched, so a
+// property edit cannot conflict with an open editor.
+func (s *Store) SetPageData(workspaceID, pageID, data string) (PageMeta, error) {
+	if err := checkData(data); err != nil {
+		return PageMeta{}, err
+	}
+	ws, err := s.workspace(workspaceID)
+	if err != nil {
+		return PageMeta{}, err
+	}
+	res, err := ws.DB.Exec(`UPDATE pages SET data=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, data, nowString(), pageID)
+	if err != nil {
+		return PageMeta{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return PageMeta{}, fmt.Errorf("page not found")
+	}
+	return pageMetaByID(ws.DB, pageID)
 }
 
 // TrashPage soft-deletes a page and its live descendants under one timestamp,
@@ -460,10 +531,10 @@ func (s *Store) DuplicatePage(workspaceID, pageID string) (string, error) {
 		return "", err
 	}
 	defer tx.Rollback()
-	var parentID, title, icon, cover, docJSON, textContent string
+	var parentID, title, icon, cover, docJSON, textContent, kind, data string
 	var position float64
-	if err := tx.QueryRow(`SELECT parent_id,title,icon,cover,position,doc_json,text_content FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).
-		Scan(&parentID, &title, &icon, &cover, &position, &docJSON, &textContent); err != nil {
+	if err := tx.QueryRow(`SELECT parent_id,title,icon,cover,position,doc_json,text_content,kind,data FROM pages WHERE id=? AND deleted_at IS NULL`, pageID).
+		Scan(&parentID, &title, &icon, &cover, &position, &docJSON, &textContent, &kind, &data); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", fmt.Errorf("page not found")
 		}
@@ -479,14 +550,18 @@ func (s *Store) DuplicatePage(workspaceID, pageID string) (string, error) {
 	}
 	newID := "pg_" + randomHex(8)
 	now := nowString()
-	if _, err := tx.Exec(`INSERT INTO pages(id,parent_id,title,icon,cover,position,doc_json,text_content,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		newID, parentID, cleanTitle("Copy of "+title), icon, cover, newPosition, docJSON, textContent, 1, now, now); err != nil {
+	if _, err := tx.Exec(`INSERT INTO pages(id,parent_id,title,icon,cover,position,doc_json,text_content,revision,created_at,updated_at,kind,data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		newID, parentID, cleanTitle("Copy of "+title), icon, cover, newPosition, docJSON, textContent, 1, now, now, kind, data); err != nil {
 		return "", err
 	}
 	if err := indexLinks(tx, newID, docJSON, now); err != nil {
 		return "", err
 	}
-	if err := cloneChildren(tx, pageID, newID, now); err != nil {
+	idMap := map[string]string{pageID: newID}
+	if err := cloneChildren(tx, pageID, newID, now, idMap); err != nil {
+		return "", err
+	}
+	if err := remapDatabaseBlocks(tx, idMap); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
@@ -635,7 +710,7 @@ func listFavorites(db *sql.DB) ([]string, error) {
 }
 
 func listRecent(db *sql.DB) ([]PageMeta, error) {
-	rows, err := db.Query(`SELECT p.id,p.parent_id,p.title,p.icon,p.cover,p.position,p.updated_at FROM recent r JOIN pages p ON p.id=r.page_id WHERE p.deleted_at IS NULL ORDER BY r.opened_at DESC LIMIT 12`)
+	rows, err := db.Query(`SELECT `+metaColumnsP+` FROM recent r JOIN pages p ON p.id=r.page_id WHERE p.deleted_at IS NULL ORDER BY r.opened_at DESC LIMIT 12`)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +718,7 @@ func listRecent(db *sql.DB) ([]PageMeta, error) {
 	var out []PageMeta
 	for rows.Next() {
 		var p PageMeta
-		if err := rows.Scan(&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Cover, &p.Position, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(metaDest(&p)...); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -675,7 +750,7 @@ func (s *Store) GetBacklinks(workspaceID, pageID string) ([]PageMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := ws.DB.Query(`SELECT p.id,p.parent_id,p.title,p.icon,p.cover,p.position,p.updated_at
+	rows, err := ws.DB.Query(`SELECT `+metaColumnsP+`
 		FROM page_links l JOIN pages p ON p.id=l.source_page_id
 		WHERE l.target_page_id=? AND p.deleted_at IS NULL AND p.id<>?
 		ORDER BY p.updated_at DESC LIMIT 100`, pageID, pageID)
@@ -686,7 +761,7 @@ func (s *Store) GetBacklinks(workspaceID, pageID string) ([]PageMeta, error) {
 	var out []PageMeta
 	for rows.Next() {
 		var p PageMeta
-		if err := rows.Scan(&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Cover, &p.Position, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(metaDest(&p)...); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -968,19 +1043,19 @@ func indexLinks(tx *sql.Tx, pageID, docJSON, now string) error {
 	return nil
 }
 
-func cloneChildren(tx *sql.Tx, sourceParentID, newParentID, now string) error {
+func cloneChildren(tx *sql.Tx, sourceParentID, newParentID, now string, idMap map[string]string) error {
 	type childPage struct {
-		id, title, icon, cover, docJSON, textContent string
-		position                                     float64
+		id, title, icon, cover, docJSON, textContent, kind, data string
+		position                                                 float64
 	}
-	rows, err := tx.Query(`SELECT id,title,icon,cover,position,doc_json,text_content FROM pages WHERE parent_id=? AND deleted_at IS NULL ORDER BY position,title COLLATE NOCASE`, sourceParentID)
+	rows, err := tx.Query(`SELECT id,title,icon,cover,position,doc_json,text_content,kind,data FROM pages WHERE parent_id=? AND deleted_at IS NULL ORDER BY position,title COLLATE NOCASE`, sourceParentID)
 	if err != nil {
 		return err
 	}
 	var children []childPage
 	for rows.Next() {
 		var c childPage
-		if err := rows.Scan(&c.id, &c.title, &c.icon, &c.cover, &c.position, &c.docJSON, &c.textContent); err != nil {
+		if err := rows.Scan(&c.id, &c.title, &c.icon, &c.cover, &c.position, &c.docJSON, &c.textContent, &c.kind, &c.data); err != nil {
 			rows.Close()
 			return err
 		}
@@ -992,15 +1067,43 @@ func cloneChildren(tx *sql.Tx, sourceParentID, newParentID, now string) error {
 	}
 	for _, c := range children {
 		newID := "pg_" + randomHex(8)
-		if _, err := tx.Exec(`INSERT INTO pages(id,parent_id,title,icon,cover,position,doc_json,text_content,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			newID, newParentID, c.title, c.icon, c.cover, c.position, c.docJSON, c.textContent, 1, now, now); err != nil {
+		if _, err := tx.Exec(`INSERT INTO pages(id,parent_id,title,icon,cover,position,doc_json,text_content,revision,created_at,updated_at,kind,data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			newID, newParentID, c.title, c.icon, c.cover, c.position, c.docJSON, c.textContent, 1, now, now, c.kind, c.data); err != nil {
 			return err
 		}
 		if err := indexLinks(tx, newID, c.docJSON, now); err != nil {
 			return err
 		}
-		if err := cloneChildren(tx, c.id, newID, now); err != nil {
+		idMap[c.id] = newID
+		if err := cloneChildren(tx, c.id, newID, now, idMap); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// remapDatabaseBlocks points inline database blocks in a duplicated subtree at
+// the duplicated databases instead of the originals.
+func remapDatabaseBlocks(tx *sql.Tx, idMap map[string]string) error {
+	if len(idMap) < 2 {
+		return nil
+	}
+	for _, newID := range idMap {
+		var doc string
+		if err := tx.QueryRow(`SELECT doc_json FROM pages WHERE id=?`, newID).Scan(&doc); err != nil {
+			return err
+		}
+		if !strings.Contains(doc, "databaseId") {
+			continue
+		}
+		next := doc
+		for oldID, mapped := range idMap {
+			next = strings.ReplaceAll(next, `"databaseId":"`+oldID+`"`, `"databaseId":"`+mapped+`"`)
+		}
+		if next != doc {
+			if _, err := tx.Exec(`UPDATE pages SET doc_json=? WHERE id=?`, next, newID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -1033,6 +1136,13 @@ func (s *Store) BuildMarkdown(workspaceID, pageID string, assetURL func(string) 
 	if err != nil {
 		return "", 0, err
 	}
+	if doc.Kind == KindDatabase {
+		rows, err := s.PageChildren(workspaceID, pageID)
+		if err != nil {
+			return "", 0, err
+		}
+		return databaseMarkdown(doc.Title, doc.Data, rows), doc.Revision, nil
+	}
 	titles, err := s.PageTitles(workspaceID)
 	if err != nil {
 		return "", 0, err
@@ -1059,7 +1169,7 @@ func (s *Store) PageChildren(workspaceID, pageID string) ([]PageMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := ws.DB.Query(`SELECT id,parent_id,title,icon,cover,position,updated_at FROM pages WHERE parent_id=? AND deleted_at IS NULL ORDER BY position`, pageID)
+	rows, err := ws.DB.Query(`SELECT `+metaColumns+` FROM pages WHERE parent_id=? AND deleted_at IS NULL ORDER BY position`, pageID)
 	if err != nil {
 		return nil, err
 	}
@@ -1067,7 +1177,7 @@ func (s *Store) PageChildren(workspaceID, pageID string) ([]PageMeta, error) {
 	var out []PageMeta
 	for rows.Next() {
 		var p PageMeta
-		if err := rows.Scan(&p.ID, &p.ParentID, &p.Title, &p.Icon, &p.Cover, &p.Position, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(metaDest(&p)...); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

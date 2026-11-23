@@ -33,8 +33,20 @@ export type Overlay = "palette" | "library" | "plugins" | "settings" | "workspac
 export type LeftTab = "tree" | "favorites" | "recent" | "trash";
 export type RightTab = "outline" | "backlinks" | "info";
 
+export type ItemKind = "page" | "folder" | "database";
+
+export function kindOf(page: { kind?: string } | undefined | null): ItemKind {
+  return page?.kind === "folder" || page?.kind === "database" ? page.kind : "page";
+}
+
+// Structured-data writes are serialized per page so a slow early write can
+// never land after a later one.
+const dataQueues = new Map<string, Promise<unknown>>();
+const dataVersions = new Map<string, number>();
+
 export interface LoadedDocument {
   id: string;
+  kind: ItemKind;
   workspaceId: string;
   parentId: string;
   title: string;
@@ -148,14 +160,22 @@ interface AppState {
   ensurePageLoaded: (pageId: string) => Promise<LoadedDocument | null>;
   reloadPage: (pageId: string) => Promise<void>;
   createPage: (parentId?: string) => Promise<void>;
+  /** Creates a page, folder or database. Pages and databases open in a tab unless `open` is false. */
+  createItem: (
+    kind: ItemKind,
+    parentId?: string,
+    options?: { open?: boolean; title?: string; data?: string },
+  ) => Promise<PageMeta | null>;
+  /** Replaces a page's structured data (database schema or row values). Optimistic. */
+  setPageData: (pageId: string, data: string) => Promise<void>;
   closeTab: (pageId: string) => Promise<void>;
   renamePage: (pageId: string, title: string) => Promise<void>;
   setPageAppearance: (pageId: string, icon: string, cover: string) => Promise<void>;
-  trashPage: (pageId: string) => Promise<void>;
+  trashPage: (pageId: string, options?: { quiet?: boolean }) => Promise<void>;
   restorePage: (pageId: string) => Promise<void>;
   deletePagePermanently: (pageId: string) => Promise<void>;
   emptyTrash: () => Promise<void>;
-  duplicatePage: (pageId: string) => Promise<void>;
+  duplicatePage: (pageId: string, options?: { open?: boolean }) => Promise<void>;
   movePage: (pageId: string, newParentId: string, beforeId: string) => Promise<void>;
   toggleFavorite: (pageId: string) => Promise<void>;
   markDirty: (pageId: string, stats: { wordCount: number; blockCount: number; outline: OutlineItem[] }) => void;
@@ -376,6 +396,7 @@ function activatePagePatch(state: AppState, pageId: string): Partial<AppState> {
 function parseDocument(doc: PageDocument, workspaceId: string): LoadedDocument {
   return {
     id: doc.id,
+    kind: kindOf(doc),
     workspaceId,
     parentId: doc.parentId ?? "",
     title: doc.title,
@@ -755,25 +776,41 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   createPage: async (parentId = "") => {
+    await get().createItem("page", parentId);
+  },
+
+  createItem: async (kind, parentId = "", options = {}) => {
+    const open = options.open ?? kind !== "folder";
     try {
       const active = get().activePageId;
-      if (active) await get().saveNow(active);
+      if (open && active) await get().saveNow(active);
       const workspaceId = get().workspace?.id;
-      if (!workspaceId) return;
-      const doc = await api.createPage(workspaceId, parentId);
+      if (!workspaceId) return null;
+      const doc = await api.createItem(workspaceId, parentId, kind, options.title ?? "", options.data ?? "");
+      if (get().workspace?.id !== workspaceId) return null;
       const loaded = parseDocument(doc, workspaceId);
       editVersions.set(loaded.id, 0);
       savedVersions.set(loaded.id, 0);
+      const meta: PageMeta = {
+        id: loaded.id,
+        parentId: loaded.parentId,
+        title: loaded.title,
+        icon: loaded.icon,
+        cover: loaded.cover,
+        position: doc.position,
+        updatedAt: loaded.updatedAt,
+        createdAt: loaded.createdAt,
+        kind: doc.kind,
+        data: doc.data,
+      };
+      if (!open) {
+        set((state) => ({
+          pages: [...state.pages, meta],
+          documents: { ...state.documents, [loaded.id]: loaded },
+        }));
+        return meta;
+      }
       set((state) => {
-        const meta: PageMeta = {
-          id: loaded.id,
-          parentId: loaded.parentId,
-          title: loaded.title,
-          icon: loaded.icon,
-          cover: loaded.cover,
-          position: Math.max(0, ...state.pages.map((page) => page.position)) + 1024,
-          updatedAt: loaded.updatedAt,
-        };
         const pushed = pushHistory(state.history, state.historyIndex, loaded.id);
         const opened = openTabInLayout(state, loaded.id);
         return {
@@ -789,9 +826,42 @@ export const useAppStore = create<AppState>((set, get) => ({
         };
       });
       scheduleTabs(get);
+      return meta;
     } catch (error) {
       get().notify(errorMessage(error), "error");
+      return null;
     }
+  },
+
+  setPageData: async (pageId, data) => {
+    const workspaceId = get().workspace?.id;
+    const previous = get().pages.find((item) => item.id === pageId);
+    if (!workspaceId || !previous || previous.data === data) return;
+    const version = (dataVersions.get(pageId) ?? 0) + 1;
+    dataVersions.set(pageId, version);
+    const apply = (value: string, updatedAt?: string) => {
+      set((state) => ({
+        pages: state.pages.map((item) =>
+          item.id === pageId ? { ...item, data: value, ...(updatedAt ? { updatedAt } : {}) } : item,
+        ),
+      }));
+    };
+    apply(data, new Date().toISOString());
+    const run = async () => {
+      try {
+        const meta = await api.setPageData(workspaceId, pageId, data);
+        if (get().workspace?.id !== workspaceId) return;
+        // Only the newest write may settle the timestamp.
+        if (dataVersions.get(pageId) === version) apply(meta.data, meta.updatedAt);
+      } catch (error) {
+        if (dataVersions.get(pageId) === version) apply(previous.data, previous.updatedAt);
+        get().notify(errorMessage(error), "error");
+      }
+    };
+    const queued = (dataQueues.get(pageId) ?? Promise.resolve()).then(run, run);
+    dataQueues.set(pageId, queued);
+    await queued;
+    if (dataQueues.get(pageId) === queued) dataQueues.delete(pageId);
   },
 
   closeTab: async (tabId) => {
@@ -930,7 +1000,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  trashPage: async (pageId) => {
+  trashPage: async (pageId, options) => {
     const workspaceId = get().workspace?.id;
     if (!workspaceId) return;
     try {
@@ -943,7 +1013,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         void get().refreshBacklinks();
       }
       scheduleTabs(get);
-      get().notify("Page moved to trash.", "info");
+      if (!options?.quiet) get().notify("Page moved to trash.", "info");
     } catch (error) {
       get().notify(errorMessage(error), "error");
     }
@@ -995,7 +1065,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  duplicatePage: async (pageId) => {
+  duplicatePage: async (pageId, options) => {
     const workspaceId = get().workspace?.id;
     if (!workspaceId) return;
     try {
@@ -1003,6 +1073,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = await api.duplicatePage(workspaceId, pageId);
       if (get().workspace?.id !== workspaceId) return;
       set(snapshotPatch(result.snapshot, get()));
+      if (options?.open === false) return;
       set(activatePagePatch(get(), result.pageId));
       await get().ensurePageLoaded(result.pageId);
       void get().refreshBacklinks();
@@ -1019,7 +1090,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const pages = await api.movePage(workspaceId, pageId, newParentId, beforeId);
       if (get().workspace?.id !== workspaceId) return;
-      set({ pages: list(pages) });
+      set((state) => {
+        // Structured-data writes still in flight win over the server's copy.
+        const local = new Map(state.pages.map((page) => [page.id, page]));
+        return {
+          pages: list(pages).map((page) => (dataQueues.has(page.id) ? { ...page, data: local.get(page.id)?.data ?? page.data } : page)),
+        };
+      });
     } catch (error) {
       get().notify(errorMessage(error), "error");
     }

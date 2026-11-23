@@ -69,14 +69,17 @@ export interface PageDocument {
     "position": number;
     "updatedAt": string;
     "deletedAt"?: string;
+    "kind": string;
+    "data": string;
+    "createdAt": string;
     "docJson": string;
     "revision": number;
-    "createdAt": string;
 }
 
 /**
  * PageMeta is the lightweight sidebar/tab representation of a page. Bodies are
- * deliberately not included here.
+ * deliberately not included here. Data is small structured JSON: a database's
+ * schema, or a database row's property values; it is empty for plain pages.
  */
 export interface PageMeta {
     "id": string;
@@ -87,6 +90,9 @@ export interface PageMeta {
     "position": number;
     "updatedAt": string;
     "deletedAt"?: string;
+    "kind": string;
+    "data": string;
+    "createdAt": string;
 }
 
 /**
