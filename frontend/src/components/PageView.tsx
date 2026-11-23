@@ -1,9 +1,18 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type Block } from "@blocknote/core";
-import { SuggestionMenuController, getDefaultReactSlashMenuItems, useCreateBlockNote } from "@blocknote/react";
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type Block, type BlockNoteEditor } from "@blocknote/core";
+import { en as englishDictionary } from "@blocknote/core/locales";
+import {
+  BasicTextStyleButton,
+  FormattingToolbar,
+  FormattingToolbarController,
+  SuggestionMenuController,
+  getDefaultReactSlashMenuItems,
+  getFormattingToolbarItems,
+  useCreateBlockNote,
+} from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { FileSymlink, ImagePlus, Move, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
+import { FileSymlink, ImagePlus, Link2, Move, Puzzle, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
 import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
@@ -19,6 +28,8 @@ import { FolderView } from "./FolderView";
 import { pageLinkSpec } from "./PageLink";
 import { PageIcon, parsePageIcon } from "./PageIcon";
 import { PagePickerDialog } from "./PagePickerDialog";
+import { FindBar, type FindRequest } from "./FindBar";
+import { rankSlashItems } from "../lib/slashMenu";
 
 const IconPickerDialog = lazy(() => import("./IconPickerDialog").then((module) => ({ default: module.IconPickerDialog })));
 const CoverPickerDialog = lazy(() => import("./CoverPickerDialog").then((module) => ({ default: module.CoverPickerDialog })));
@@ -29,6 +40,46 @@ const schema = BlockNoteSchema.create({
   blockSpecs: { ...defaultBlockSpecs, database: databaseBlockSpec() },
   inlineContentSpecs: { ...defaultInlineContentSpecs, pageLink: pageLinkSpec },
 });
+
+type EditorView = BlockNoteEditor["prosemirrorView"];
+
+const dictionary = {
+  ...englishDictionary,
+  placeholders: {
+    ...englishDictionary.placeholders,
+    default: "Type '/' for commands",
+    emptyDocument: "Start writing, or type '/' for commands",
+  },
+};
+
+/**
+ * BlockNote's toolbar, with inline code beside the other text styles and the
+ * link button next to them rather than at the far end.
+ */
+function EditorFormattingToolbar() {
+  const items = getFormattingToolbarItems();
+  const link = items.find((item) => item.key === "createLinkButton");
+  const ordered = items.flatMap((item) => {
+    if (item.key === "createLinkButton") return [];
+    if (item.key === "strikeStyleButton") {
+      return [item, <BasicTextStyleButton key="codeStyleButton" basicTextStyle="code" />, ...(link ? [link] : [])];
+    }
+    return [item];
+  });
+  return <FormattingToolbar>{ordered}</FormattingToolbar>;
+}
+
+/** True when the caret sits on the first visual line of the document's first block. */
+function caretAtDocumentTop(view: EditorView): boolean {
+  const { selection } = view.state;
+  if (!selection.empty) return false;
+  const { $from } = selection;
+  // doc > blockGroup > blockContainer > content: every ancestor must be a first child.
+  for (let depth = 0; depth < $from.depth; depth += 1) {
+    if ($from.index(depth) !== 0) return false;
+  }
+  return view.endOfTextblock("up");
+}
 
 function inlineText(content: unknown, titleFor?: (id: string) => string | undefined): string {
   if (typeof content === "string") return content;
@@ -105,7 +156,9 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   const [coverDragging, setCoverDragging] = useState(false);
   const [title, setTitle] = useState(page.title);
   const ready = useRef(false);
-  const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleInputRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [find, setFind] = useState<FindRequest | null>(null);
   const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const coverOffsetRef = useRef(coverOffset);
   const coverDragRef = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number; width: number; height: number } | null>(null);
@@ -149,6 +202,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       schema,
       initialContent: initialContent as never,
       animations: false,
+      dictionary,
       uploadFile: async (file: File) => {
         if (!workspace) throw new Error("No workspace is open");
         const data = await fileToBase64(file);
@@ -213,8 +267,27 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       },
       openPagePicker: () => setPickerOpen(true),
       scrollToBlock: (blockId: string) => {
-        const target = [...document.querySelectorAll<HTMLElement>("[data-id]")].find((element) => element.dataset.id === blockId);
-        target?.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Scope to this editor: the same page can be open in two panes, and
+        // block ids are only unique within one document.
+        const root = editor.domElement;
+        const target = root
+          ? [...root.querySelectorAll<HTMLElement>(".bn-block-outer[data-id]")].find((element) => element.dataset.id === blockId)
+          : undefined;
+        if (!target) return;
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        const block = editor.getBlock(blockId);
+        if (block && editor.isEditable) {
+          try {
+            editor.setTextCursorPosition(block, "end");
+          } catch {
+            // Blocks without inline content cannot hold a caret; scrolling is enough.
+          }
+        }
+      },
+      openFind: kind !== "page" ? undefined : (replace = false) => {
+        const selected = editor.prosemirrorState.selection;
+        const text = selected.empty ? "" : editor.prosemirrorState.doc.textBetween(selected.from, selected.to, " ");
+        setFind({ nonce: Date.now(), query: text.includes("\n") || text.length > 200 ? "" : text, replace });
       },
       focus: () => editor.focus(),
       focusTitle: () => {
@@ -226,7 +299,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       },
     };
     return editorBridge.register(page.id, handle);
-  }, [editor, page.id]);
+  }, [editor, page.id, kind]);
 
   useEffect(() => {
     if (active && kind === "page") {
@@ -235,6 +308,16 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
         // Do not steal focus from the title field or an open dialog.
         const current = document.activeElement;
         if (current && (current.tagName === "INPUT" || current.tagName === "TEXTAREA")) return;
+        // A fresh, blank page starts by naming it; anything else resumes writing.
+        const blocks = editor.document;
+        const blank = blocks.length <= 1 && (!blocks[0] || (blocks[0].type === "paragraph" && !inlineText(blocks[0].content).trim()));
+        const untitled = !page.title.trim() || page.title === "Untitled";
+        const field = titleInputRef.current;
+        if (blank && untitled && field) {
+          field.focus();
+          field.select();
+          return;
+        }
         editor.focus();
       }, 30);
       return () => clearTimeout(timer);
@@ -242,9 +325,103 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   }, [active, editor, page.id, kind]);
 
   function commitTitle() {
-    const clean = title.trim() || "Untitled";
+    const clean = title.replace(/\s+/g, " ").trim() || "Untitled";
     setTitle(clean);
     if (clean !== page.title) void renamePage(page.id, clean);
+  }
+
+  // The title wraps like a heading instead of clipping, so it is a textarea
+  // that grows with its content.
+  useLayoutEffect(() => {
+    const field = titleInputRef.current;
+    if (!field) return;
+    const fit = () => {
+      field.style.height = "auto";
+      field.style.height = `${field.scrollHeight}px`;
+    };
+    fit();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    observer?.observe(field.parentElement ?? field);
+    return () => observer?.disconnect();
+  }, [title, kind]);
+
+  /** Moves the caret from the title into the first line of the page body. */
+  function enterBody() {
+    if (kind !== "page" || !editor.isEditable) return false;
+    const first = editor.document[0];
+    if (!first) return false;
+    if (Array.isArray(first.content)) {
+      editor.setTextCursorPosition(first, "start");
+    } else {
+      // A database or image first: give the writer a line above it.
+      const [inserted] = editor.insertBlocks([{ type: "paragraph" } as never], first, "before");
+      if (inserted) editor.setTextCursorPosition(inserted, "start");
+    }
+    editor.focus();
+    return true;
+  }
+
+  function handleTitleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.nativeEvent.isComposing) return;
+    const field = event.currentTarget;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitTitle();
+      if (!enterBody()) field.blur();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setTitle(page.title);
+      requestAnimationFrame(() => field.blur());
+    } else if (event.key === "ArrowDown" && !event.shiftKey) {
+      // Leave the title only from its last line, as a heading would.
+      const atEnd = field.selectionStart === field.value.length && field.selectionEnd === field.value.length;
+      if (atEnd && enterBody()) {
+        event.preventDefault();
+        commitTitle();
+      }
+    } else if (event.key === "Tab" && !event.shiftKey && kind === "page") {
+      if (enterBody()) {
+        event.preventDefault();
+        commitTitle();
+      }
+    }
+  }
+
+  function focusTitleEnd() {
+    const field = titleInputRef.current;
+    if (!field) return;
+    field.focus();
+    const end = field.value.length;
+    field.setSelectionRange(end, end);
+  }
+
+  function handleEditorKeyDownCapture(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowUp" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
+    if (!(event.target as HTMLElement).closest(".ProseMirror")) return;
+    // ArrowUp on the first line climbs into the title, as in a single document.
+    if (caretAtDocumentTop(editor.prosemirrorView)) {
+      event.preventDefault();
+      event.stopPropagation();
+      focusTitleEnd();
+    }
+  }
+
+  /** A click in the empty space under the last block continues the page there. */
+  function handleBelowClick(event: ReactMouseEvent<HTMLDivElement>) {
+    if (event.button !== 0 || event.target !== event.currentTarget || kind !== "page" || !editor.isEditable) return;
+    // Act on mousedown and keep the default from moving focus to <body>.
+    event.preventDefault();
+    const blocks = editor.document;
+    const last = blocks[blocks.length - 1];
+    if (!last) return;
+    const lastIsEmptyText = last.type === "paragraph" && !inlineText(last.content, titleOf).trim();
+    if (lastIsEmptyText) {
+      editor.setTextCursorPosition(last, "end");
+    } else {
+      const [inserted] = editor.insertBlocks([{ type: "paragraph" } as never], last, "after");
+      if (inserted) editor.setTextCursorPosition(inserted, "start");
+    }
+    editor.focus();
   }
 
   function persistCoverPosition() {
@@ -328,8 +505,8 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
         title: "Linked database",
         subtext: "Show an existing database here",
         group: "Noteral",
-        aliases: ["linked", "database", "view", "embed"],
-        icon: <Table2 size={16} />,
+        aliases: ["linked", "database", "view", "embed", "existing"],
+        icon: <Link2 size={16} />,
         onItemClick: () => setDatabasePickerOpen(true),
       },
     ],
@@ -357,7 +534,10 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
 
   return (
     <div className={`page-pane ${active ? "active" : ""}`} aria-hidden={!active}>
-      <div className="page-scroll">
+      {find && kind === "page" ? (
+        <FindBar editor={editor} request={find} scrollRef={scrollRef} onClose={() => setFind(null)} />
+      ) : null}
+      <div className="page-scroll" ref={scrollRef}>
         <div className="page-document">
           <div className={`page-editor kind-${kind} ${cover ? "has-cover" : ""} ${icon ? "has-icon" : ""}`}>
             <div className="page-head">
@@ -433,21 +613,14 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
                 </div>
               ) : null}
               <div className="page-title-row">
-                <input
+                <textarea
                   ref={titleInputRef}
                   className="page-title-input"
                   value={title}
-                  onChange={(event) => setTitle(event.target.value)}
+                  rows={1}
+                  onChange={(event) => setTitle(event.target.value.replace(/[\r\n]+/g, " "))}
                   onBlur={commitTitle}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      (event.currentTarget as HTMLInputElement).blur();
-                    } else if (event.key === "Escape") {
-                      setTitle(page.title);
-                      (event.currentTarget as HTMLInputElement).blur();
-                    }
-                  }}
+                  onKeyDown={handleTitleKeyDown}
                   aria-label={kind === "database" ? "Database name" : kind === "folder" ? "Folder name" : "Page title"}
                   placeholder="Untitled"
                   spellCheck={false}
@@ -472,14 +645,17 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
             {kind === "database" ? <DatabaseView databaseId={page.id} /> : null}
             {kind === "folder" ? <FolderView folderId={page.id} /> : null}
             {kind === "page" ? (
+            <div className="page-body" onKeyDownCapture={handleEditorKeyDownCapture}>
             <BlockNoteView
               editor={editor}
               theme={theme}
               slashMenu={false}
+              formattingToolbar={false}
               spellCheck={spellcheck}
               className="noteral-editor"
               onChange={onChange}
             >
+              <FormattingToolbarController formattingToolbar={EditorFormattingToolbar} />
               <SuggestionMenuController
                 triggerCharacter="/"
                 getItems={async (query: string) => {
@@ -492,17 +668,15 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
                       subtext: command.description ?? "Plugin command",
                       group: "Plugins",
                       aliases: command.keywords ? command.keywords.split(/\s+/) : [],
-                      icon: <FileSymlink size={16} />,
+                      icon: <Puzzle size={16} />,
                       onItemClick: () => void command.run(),
                     }));
-                  const all = [...defaults, ...customItems, ...pluginItems];
-                  const needle = query.trim().toLowerCase();
-                  return needle
-                    ? all.filter((item) => `${item.title} ${(item.aliases ?? []).join(" ")}`.toLowerCase().includes(needle))
-                    : all;
+                  return rankSlashItems([...defaults, ...customItems, ...pluginItems], query);
                 }}
               />
             </BlockNoteView>
+            <div className="page-below" onMouseDown={handleBelowClick} aria-hidden="true" />
+            </div>
             ) : null}
           </div>
         </div>

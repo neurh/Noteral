@@ -19,6 +19,7 @@ import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { LibraryDialog } from "./components/LibraryDialog";
 import { PluginManager } from "./components/PluginManager";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { editorBridge } from "./lib/editorBridge";
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -297,6 +298,18 @@ export default function App() {
         return;
       }
       if (!mod) return;
+      if (key === "k" && event.defaultPrevented) {
+        // The editor already used Ctrl/Cmd+K to add a link to the selection.
+        return;
+      }
+      if ((key === "f" || key === "h") && !event.shiftKey && !event.altKey) {
+        const handle = state.activePageId ? editorBridge.get(state.activePageId) : undefined;
+        if (handle?.openFind) {
+          event.preventDefault();
+          handle.openFind(key === "h");
+        }
+        return;
+      }
       if (key === "k" || key === "p") {
         event.preventDefault();
         state.setOverlay("palette");

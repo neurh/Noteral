@@ -20,6 +20,8 @@ export interface EditorHandle {
   scrollToBlock: (blockId: string) => void;
   focus: () => void;
   focusTitle: () => void;
+  /** Open the page's find bar (with the Replace row when `replace` is set). */
+  openFind?: (replace?: boolean) => void;
 }
 
 const handles = new Map<string, EditorHandle>();

@@ -238,3 +238,42 @@ Stills in `/tmp/noteral-db-shots` (server-mode build, 1366×820, 390×844 and da
 - **Inline block**: `/database` creates a child database and embeds it. `/linked database` embeds an existing one. The `.bn-block-content[data-content-type=database]` element is forced to `display:block; width:100%`, because `.db` is an inline-size container and otherwise collapses to 0 width.
 - **Popover focus bug (fixed)**: popovers start at `left:0; top:0; opacity:0` instead of `visibility:hidden` or -9999px. Editors focus with `preventScroll`, and popovers re-place themselves on scroll instead of closing. Before this fix, clicking a partly visible cell scrolled the table, which closed the cell editor and lost the typed value.
 - **Functional probe** (`/tmp/pw2/dbfunc.mjs`): passed drag card to Done, add a Number property, type values, Sum calculation, sort by date, select and delete a row, then reload. Values persisted, with no page errors.
+
+# Rehearsal: page editor pass
+
+Gold: the page reads like one document. The title wraps like a heading and always outranks body headings. The keyboard moves between title and body, and finding text never needs the browser. Everything uses the existing warm tokens (`--bg-sunken`, `--border`, `--accent`, `--font-reading`, `--font-mono`). Nothing new was invented.
+
+States: welcome page, typed rich content (H1–H3, inline code, code block), slash menu open and filtered, selection toolbar, Ctrl+K on a selection, find bar (find, next, replace, replace all, undo), long title, inline page link, new page (Ctrl+N), dark, 390.
+
+Captured: real server-mode build (`bin/noteral-server`, fresh `--data-dir`), 1366×745 and 390×844 at DPR1. Before frames are in `/tmp/noteral-ed/before/` (script `/tmp/ed-base.mjs`). After frames are in `/tmp/noteral-ed/after/`: `02-typed`, `03-slash`, `04-slash-filter`, `05-toolbar`, `07-longtitle`, `08-dark`, `09-390`, `09b-390-find`, `10-find`, `11-replace`, `12-link`, `13-inline-link`, `14-dark-code`. The scripted checks are in `/tmp/ed-after.mjs`, `/tmp/ed-link.mjs` and `/tmp/ed-save.mjs`.
+
+Gate: this is a real app screen, not a filmed faux-UI demo, so `film --gate` does not apply. It was rehearsed as exact-size stills plus scripted interaction checks.
+
+Frames → findings → fixes:
+- Before `07-longtitle`/`09-390`: the title was a single-line `<input>` and long titles were cut off with an ellipsis. It is now an auto-growing `<textarea>`. Newlines are stripped and whitespace collapses on commit. After: 3 lines, 137px at 1366 and 5 lines at 390.
+- Pressing Enter in the title used to drop focus on `<body>`. Now Enter, Tab, and ArrowDown at the end of the title put the caret at the start of the first block. If that block has no text (a database or an image), a paragraph is inserted above it first. ArrowUp on the first line of the body climbs back into the title. Escape reverts the title.
+- Heading scale: before, body H1 was larger than the 40px title and H2 rendered at weight 700. Now H1 is 30px, H2 24px and H3 19.5px, all at weight 600. The weight is set on the `h*` tags themselves because BlockNote's long selector sets 700.
+- Code block: before it was a black `#161616` slab with 24px padding. Now it uses `--bg-sunken`, a `--border` hairline and 14×16 padding, in both themes (`14-dark-code`). Inline code uses mono and `--accent-deep`, and loses its chip style inside code blocks.
+- Ctrl+K on a selection opened the command palette on top of BlockNote's link popover. The app now ignores Ctrl+K when the editor has already handled it (`defaultPrevented`).
+- Page link chip: it showed two icons (FileText plus a CSS `↗`) and had a UA button border. It sat on its own baseline, which made its line about 57px tall. It now shows the target page's own icon, falling back to the kind icon. It has no border, aligns to the text baseline (a two-line paragraph is 63px) and truncates long titles.
+- Slash menu: plugin commands now use a puzzle icon, and Linked database uses a link icon instead of repeating the table icon. Filtering ranks results: exact title, then title prefix, then word start, then alias, then substring (`lib/slashMenu.ts`, tested). With no query the menu keeps its groups.
+- Formatting toolbar: added inline code after strike, and moved the link button next to the text styles.
+- Find in page (new, `FindBar.tsx` + `lib/findInDoc.ts`, tested): Ctrl+F opens it, Ctrl+H opens it with the Replace row, and selected text seeds the query. Enter and Shift+Enter step through matches, with a count ("2 of 2"). Match case is a toggle. Replace and Replace all (Ctrl+Enter) each apply as one transaction, so one undo restores them. Matches are painted with the CSS Custom Highlight API, which adds no document marks and no dirty state. Escape closes the bar and selects the current match.
+- Clicking the empty area below the last block now continues writing there. It reuses a trailing empty paragraph or appends one. This runs on mousedown so focus never lands on `<body>`.
+- Outline jump (`scrollToBlock`) used to query `[data-id]` across the whole document, so it could hit the same page open in another pane. It is now scoped to this editor's DOM and places the caret in the block.
+- New page (Ctrl+N): the caret used to land in the body, so the name got typed as body text. A blank "Untitled" page now focuses and selects its title (`13-inline-link`: the title is "Reading list").
+- Store bug: re-selecting the page that is already in front (a self-link, its own sidebar row) cleared the outline and word count to 0 until the next tab switch (`08-dark` first pass). `selectPage` now resets these only when the page actually changes.
+- Placeholders are shorter: "Type '/' for commands", and an empty document shows "Start writing, or type '/' for commands".
+- `10-find`: the find field had a doubled focus ring from the global `input:focus-visible` rule. Fixed.
+
+Checks: `npx tsc --noEmit` clean. `npx vitest run` passes: 12 files, 84 tests, including the new `findInDoc` (6) and `slashMenu` (3) tests. `npm run build` OK. `/tmp/ed-after.mjs` checks: title Enter goes to the body, ArrowUp at the top goes to the title, ArrowDown goes back to the body. Clicking below the content adds a block (14 → 15) and keeps editor focus. Typed headings measure 30/24/19.5px. Ctrl+K on a selection does not open the palette. Find counts are correct; Replace all changes the document and undo restores it. No horizontal scroll at 390. Autosave and reload keep an inline page link plus the text after it (`/tmp/ed-save.mjs`). The only console error is the existing 404 favicon/resource.
+
+Assumptions:
+- Ctrl+H is free in the desktop app (WebKitGTK has no history shortcut), so it opens Replace, as in code editors.
+- No code-language selector: BlockNote's `supportedLanguages` throws for unknown languages in stored documents, and syntax highlighting would need a new dependency.
+- Ctrl+F is global when a page is active, including from sidebar fields, because the shell has no native find.
+
+Not checked:
+- Real Wails/WebKitGTK rendering of `::highlight()`. If the Highlight API is missing, find still counts, steps and replaces, but it does not paint the matches.
+- IME composition in the title beyond the `isComposing` guard. Screen readers. Touch.
+- The same page open in two panes: the editor bridge still keeps one handle per page id, which is pre-existing behaviour.

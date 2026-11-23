@@ -537,7 +537,10 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .page-pane.active { display: flex; }
 .page-document { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; background: var(--bg); }
 .page-scroll { flex: 1; overflow: auto; scroll-behavior: smooth; }
-.page-editor { width: min(100%, var(--page-width, 780px)); margin: 0 auto; padding: 42px 52px 140px; }
+.page-editor { width: min(100%, var(--page-width, 780px)); margin: 0 auto; padding: 42px 52px 24px; }
+.page-editor:not(.kind-page) { padding-bottom: 140px; }
+/* Empty space under the last block: clicking it continues writing there. */
+.page-below { min-height: max(120px, 30vh); cursor: text; }
 .page-head { position: relative; }
 .page-cover-wrap { position: relative; margin: -28px 0 50px; }
 .page-cover {
@@ -606,11 +609,12 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   transition: background-color 120ms ease;
 }
 .page-appearance-icon:hover { background: var(--bg-hover); }
-.page-title-row { position: relative; display: flex; align-items: center; margin: 0 0 20px; }
+.page-title-row { position: relative; display: flex; align-items: flex-start; margin: 0 0 20px; }
 .page-title-input {
-  width: 100%; min-width: 0; border: 0; outline: none; background: transparent;
-  font-family: var(--font-reading); font-size: 40px; font-weight: 560; line-height: 1.12;
-  letter-spacing: -0.018em; color: var(--text); padding: 0; margin: 0; text-overflow: ellipsis;
+  display: block; width: 100%; min-width: 0; border: 0; outline: none; background: transparent;
+  font-family: var(--font-reading); font-size: 40px; font-weight: 560; line-height: 1.14;
+  letter-spacing: -0.018em; color: var(--text); padding: 0; margin: 0;
+  resize: none; overflow: hidden; overflow-wrap: anywhere; field-sizing: content;
 }
 .page-title-input:focus, .page-title-input:focus-visible { outline: none; box-shadow: none; }
 .page-title-input::placeholder { color: var(--text-faint); }
@@ -624,33 +628,90 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .noteral-editor .bn-container { background: transparent; }
 .noteral-editor .bn-editor { padding: 0 !important; background: transparent; font-size: 15.5px; line-height: 1.72; color: var(--text); }
 .noteral-editor .bn-block-content { font-family: var(--font-ui); overflow-wrap: anywhere; }
-.noteral-editor .bn-block-content[data-content-type="heading"] { font-family: var(--font-reading); font-weight: 580; letter-spacing: -0.01em; }
+/* Headings stay below the 40px page title: H1 30px, H2 24px, H3 19.5px at the 15.5px base. */
+.noteral-editor [data-content-type="heading"] { --level: 1.94em; padding-top: 20px; }
+.noteral-editor [data-content-type="heading"][data-level="2"] { --level: 1.55em; padding-top: 16px; }
+.noteral-editor [data-content-type="heading"][data-level="3"] { --level: 1.26em; padding-top: 12px; }
+.noteral-editor [data-content-type="heading"][data-level="4"],
+.noteral-editor [data-content-type="heading"][data-level="5"],
+.noteral-editor [data-content-type="heading"][data-level="6"] { --level: 1.1em; padding-top: 10px; }
+.noteral-editor .bn-block-content[data-content-type="heading"] { font-family: var(--font-reading); font-weight: 600; letter-spacing: -0.012em; line-height: 1.3; }
+/* BlockNote sets weight 700 with a long selector; weight on the h tags themselves wins without !important. */
+.noteral-editor .bn-block-content[data-content-type="heading"] :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: 600; margin: 0; }
 .noteral-editor .bn-block-content[data-content-type="paragraph"] { font-family: var(--font-reading); font-size: var(--editor-font-size, 17px); line-height: var(--editor-line-height, 1.68); }
 .noteral-editor .bn-block-content[data-content-type="bulletListItem"],
 .noteral-editor .bn-block-content[data-content-type="numberedListItem"],
 .noteral-editor .bn-block-content[data-content-type="checkListItem"] { font-family: var(--font-reading); font-size: calc(var(--editor-font-size, 17px) - 0.5px); line-height: calc(var(--editor-line-height, 1.68) - 0.06); }
-.noteral-editor .bn-block-content[data-content-type="codeBlock"] { font-family: var(--font-mono); font-size: 13px; }
+.noteral-editor .bn-block-content[data-content-type="codeBlock"] {
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.6;
+  background: var(--bg-sunken); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-md);
+  margin: 4px 0;
+}
+.noteral-editor .bn-block-content[data-content-type="codeBlock"] > pre { padding: 14px 16px; --bn-suggestion-surface: var(--bg-sunken); }
+.noteral-editor .bn-block-content[data-content-type="codeBlock"] code { font-family: inherit; }
 .noteral-editor .bn-block-content[data-content-type="quote"] { font-family: var(--font-reading); font-size: calc(var(--editor-font-size, 17px) + 1px); font-style: italic; }
 [data-editor-font="sans"] .noteral-editor .bn-block-content[data-content-type="paragraph"],
 [data-editor-font="sans"] .noteral-editor .bn-block-content[data-content-type="bulletListItem"],
 [data-editor-font="sans"] .noteral-editor .bn-block-content[data-content-type="numberedListItem"],
 [data-editor-font="sans"] .noteral-editor .bn-block-content[data-content-type="checkListItem"],
 [data-editor-font="sans"] .noteral-editor .bn-block-content[data-content-type="quote"] { font-family: var(--font-ui); }
-.noteral-editor .bn-inline-content code { background: var(--bg-sunken); padding: 1px 4px; border-radius: 4px; font-size: 0.86em; }
+.noteral-editor .bn-inline-content code {
+  background: var(--bg-sunken); color: var(--accent-deep); padding: 1px 5px; border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  font-family: var(--font-mono); font-size: 0.84em;
+}
+.noteral-editor .bn-block-content[data-content-type="codeBlock"] .bn-inline-content code { background: none; border: 0; padding: 0; color: inherit; font-size: inherit; }
 .noteral-editor .bn-side-menu { color: var(--text-faint); }
 .noteral-editor .bn-side-menu button:hover { background: var(--bg-hover); }
 .noteral-editor .bn-formatting-toolbar, .noteral-editor .bn-link-toolbar, .noteral-editor .bn-suggestion-menu, .noteral-editor .bn-menu, .noteral-editor .bn-panel { z-index: 1200; }
 .noteral-editor .bn-suggestion-menu { border: 1px solid var(--border); box-shadow: var(--shadow-md); }
 .page-link {
-  display: inline-flex; align-items: center; gap: 3px; padding: 0 4px; margin: 0 1px;
-  border-radius: 4px; background: var(--accent-softer); color: var(--accent-deep);
+  /* Baseline alignment comes from the title text, so the chip sits on the line like a word. */
+  display: inline-flex; align-items: baseline; gap: 4px; padding: 0 5px 0 4px; margin: 0 1px;
+  vertical-align: baseline; line-height: 1.45; max-width: 100%;
+  border: 0; border-radius: 4px; background: var(--accent-softer); color: var(--accent-deep);
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   cursor: pointer; font-family: var(--font-ui); font-size: 0.92em; font-weight: 520;
 }
 .page-link:hover { background: var(--accent-soft); }
 .page-link:focus-visible { outline: none; box-shadow: var(--focus); }
 .page-link.missing { color: var(--text-faint); background: var(--bg-hover); border-bottom-style: dashed; }
-.page-link::before { content: "↗"; font-size: 0.8em; opacity: 0.65; }
+.page-link-icon { flex: none; align-self: center; display: inline-grid; place-items: center; opacity: 0.85; }
+.page-link-icon .page-icon { line-height: 1; }
+.page-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Find in page */
+.find-bar {
+  position: absolute; top: 10px; right: 18px; z-index: 30;
+  display: flex; flex-direction: column; gap: 4px; padding: 5px;
+  width: min(372px, calc(100% - 24px));
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-raised); box-shadow: var(--shadow-md);
+}
+.find-row { display: flex; align-items: center; gap: 2px; }
+.find-toggle svg { transition: transform 120ms ease; }
+.find-toggle.open svg { transform: rotate(90deg); }
+.find-gutter { flex: none; width: 21px; }
+.find-field {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 27px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+  margin-right: 2px;
+}
+.find-field:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 0 0 3px var(--accent-softer); }
+.find-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; padding: 0; }
+.find-input:focus, .find-input:focus-visible { outline: none; box-shadow: none; }
+.find-input::placeholder { color: var(--text-faint); }
+.find-count { flex: none; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.find-count.empty { color: var(--danger, var(--accent)); }
+.find-action {
+  flex: none; height: 25px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text-soft); font-size: 11.5px;
+}
+.find-action:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.find-action:disabled { opacity: 0.45; }
+.find-bar .icon-button:disabled { opacity: 0.4; pointer-events: none; }
+::highlight(noteral-find) { background-color: color-mix(in srgb, var(--warning) 26%, transparent); }
+::highlight(noteral-find-current) { background-color: color-mix(in srgb, var(--accent) 42%, transparent); color: var(--text); }
 
 /* Empty / splash / fatal */
 /* Home tab */
@@ -1477,8 +1538,10 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   .palette-item-subtitle { display: none; }
 }
 @media (max-width: 660px) {
-  .page-title-input { font-size: 33px; }
-  .page-editor { padding: 20px 28px 100px; }
+  .page-title-input { font-size: 31px; }
+  .page-editor { padding: 20px 22px 16px; }
+  .page-editor:not(.kind-page) { padding-bottom: 100px; }
+  .find-bar { right: 12px; top: 8px; }
   .page-cover-wrap { margin: -8px 0 32px; }
   .page-cover { height: 142px; border-radius: 10px; }
   .page-cover-badge { left: 18px; width: 48px; height: 48px; bottom: -24px; }

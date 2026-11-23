@@ -1,6 +1,8 @@
 import { createReactInlineContentSpec } from "@blocknote/react";
-import { FileText, Link2Off } from "lucide-react";
+import { Link2Off } from "lucide-react";
 import { useAppStore } from "../store";
+import { KindIcon } from "./KindIcon";
+import { PageIcon } from "./PageIcon";
 
 export function PageLinkChip({ pageId }: { pageId: string }) {
   const page = useAppStore((state) => state.pages.find((item) => item.id === pageId));
@@ -8,7 +10,8 @@ export function PageLinkChip({ pageId }: { pageId: string }) {
   if (!page) {
     return (
       <span className="page-link missing" contentEditable={false} title="This page no longer exists">
-        <Link2Off size={12} /> Missing page
+        <span className="page-link-icon"><Link2Off size={12} /></span>
+        <span className="page-link-title">Missing page</span>
       </span>
     );
   }
@@ -24,8 +27,10 @@ export function PageLinkChip({ pageId }: { pageId: string }) {
         void selectPage(page.id);
       }}
     >
-      <FileText size={12} />
-      {page.title}
+      <span className="page-link-icon">
+        <PageIcon value={page.icon} size={13} fallback={<KindIcon page={page} size={12} />} />
+      </span>
+      <span className="page-link-title">{page.title || "Untitled"}</span>
     </button>
   );
 }

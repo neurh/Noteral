@@ -692,13 +692,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const page = get().pages.find((item) => item.id === pageId);
     if (!page) return;
     const opened = openTabInLayout(get(), pageId);
+    // Re-selecting the page already in front (a self-link, its sidebar row)
+    // must keep its outline and counts: the editor will not publish them again.
+    const switching = get().activePageId !== pageId;
     set((state) => {
       const next: Partial<AppState> = {
         ...layoutPatch(state, opened.layout, opened.focusedPaneId),
-        outline: [],
-        backlinks: [],
-        liveWordCount: 0,
-        liveBlockCount: 0,
+        ...(switching ? { outline: [], backlinks: [], liveWordCount: 0, liveBlockCount: 0 } : {}),
         recent: [page, ...state.recent.filter((item) => item.id !== pageId)].slice(0, 12),
       };
       if (opened.replacedHomeTab) next.homeTabs = withoutHomeTab(state.homeTabs, opened.replacedHomeTab);
