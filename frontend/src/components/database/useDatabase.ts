@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../store";
 import type { PageMeta } from "../../lib/api";
 import {
@@ -35,7 +36,8 @@ function latestSchema(databaseId: string): DatabaseSchema {
 
 export function useDatabase(databaseId: string): DatabaseApi {
   const meta = useAppStore((state) => state.pages.find((page) => page.id === databaseId));
-  const pages = useAppStore((state) => state.pages);
+  // Only this database's rows: saving an unrelated page must not re-render it.
+  const children = useAppStore(useShallow((state) => state.pages.filter((page) => page.parentId === databaseId)));
   const setPageData = useAppStore((state) => state.setPageData);
   const createItem = useAppStore((state) => state.createItem);
   const renamePage = useAppStore((state) => state.renamePage);
@@ -45,7 +47,7 @@ export function useDatabase(databaseId: string): DatabaseApi {
   const selectPage = useAppStore((state) => state.selectPage);
 
   const schema = useMemo(() => parseSchema(meta?.data), [meta?.data]);
-  const rows = useMemo(() => rowsOf(pages, databaseId), [pages, databaseId]);
+  const rows = useMemo(() => rowsOf(children, databaseId), [children, databaseId]);
 
   const updateSchema = useCallback(
     (change: (schema: DatabaseSchema) => DatabaseSchema | void) => {

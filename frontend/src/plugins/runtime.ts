@@ -220,6 +220,11 @@ class PluginRuntimeManager {
     this.capabilities?.notify; // keep host capability intentionally unused for commands
   }
 
+  hasReadyFrames(): boolean {
+    for (const frame of this.frames.values()) if (frame.ready) return true;
+    return false;
+  }
+
   publishDocument(snapshot: PluginSnapshot | null) {
     if (!snapshot) return;
     for (const frame of this.frames.values()) {

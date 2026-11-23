@@ -295,11 +295,21 @@ export function serializeRowValues(values: RowValues): string {
   return JSON.stringify({ values: clean });
 }
 
+const rowCache = new WeakMap<PageMeta, DatabaseRow>();
+
+/** Rows of a database. A row object is reused while its page meta is unchanged. */
 export function rowsOf(pages: PageMeta[], databaseId: string): DatabaseRow[] {
   return pages
     .filter((page) => page.parentId === databaseId)
     .sort((a, b) => a.position - b.position || a.title.localeCompare(b.title))
-    .map((meta) => ({ id: meta.id, meta, values: parseRowValues(meta.data) }));
+    .map((meta) => {
+      let row = rowCache.get(meta);
+      if (!row) {
+        row = { id: meta.id, meta, values: parseRowValues(meta.data) };
+        rowCache.set(meta, row);
+      }
+      return row;
+    });
 }
 
 /** Ordered property ids of a view, title first unless the view moved it. */

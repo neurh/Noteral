@@ -94,7 +94,11 @@ export function PluginHost() {
   }, [plugins, pluginRevision]);
 
   useEffect(() => {
-    pluginRuntime.publishDocument(pluginRuntime.snapshotForEditor());
+    // Building a snapshot reads the whole page, so wait until typing pauses
+    // and skip it entirely when no plugin is listening.
+    if (!pluginRuntime.hasReadyFrames()) return;
+    const timer = setTimeout(() => pluginRuntime.publishDocument(pluginRuntime.snapshotForEditor()), 400);
+    return () => clearTimeout(timer);
   }, [activePageId, liveWordCount, liveBlockCount, activeTitle]);
 
   useEffect(() => {

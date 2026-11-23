@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api, errorMessage, list } from "./lib/api";
 import type { AppSettings, Bootstrap, Info, PageDocument, PageMeta, Workspace, WorkspaceSnapshot } from "./lib/api";
 import { editorBridge, type OutlineItem } from "./lib/editorBridge";
+import { sameOutline } from "./lib/docStats";
 import { applyTheme, resolveTheme, type ResolvedTheme } from "./lib/theme";
 import { defaultHomeTabSettings, normalizeHomeTabSettings, type HomeTabSettings } from "./lib/home";
 import {
@@ -178,7 +179,8 @@ interface AppState {
   duplicatePage: (pageId: string, options?: { open?: boolean }) => Promise<void>;
   movePage: (pageId: string, newParentId: string, beforeId: string) => Promise<void>;
   toggleFavorite: (pageId: string) => Promise<void>;
-  markDirty: (pageId: string, stats: { wordCount: number; blockCount: number; outline: OutlineItem[] }) => void;
+  /** Records an edit. Cheap on purpose: it runs on every keystroke. */
+  markDirty: (pageId: string) => void;
   saveNow: (pageId: string) => Promise<boolean>;
   saveDocument: (pageId: string) => Promise<boolean>;
   saveAll: () => Promise<boolean>;
@@ -201,6 +203,8 @@ interface AppState {
 let tabTimer: ReturnType<typeof setTimeout> | null = null;
 let settingsTimer: ReturnType<typeof setTimeout> | null = null;
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** The last JSON written for each page, so unchanged documents are not re-saved. */
+const savedJson = new Map<string, { loadVersion: number; json: string }>();
 const saveChains = new Map<string, Promise<boolean>>();
 const editVersions = new Map<string, number>();
 const savedVersions = new Map<string, number>();
@@ -1241,25 +1245,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     scheduleTabs(get);
   },
 
-  markDirty: (pageId, stats) => {
+  markDirty: (pageId) => {
     const doc = get().documents[pageId];
     if (!doc) return;
-    const nextVersion = (editVersions.get(pageId) ?? 0) + 1;
-    editVersions.set(pageId, nextVersion);
-    const active = get().activePageId === pageId;
-    if (active) {
-      set({ liveWordCount: stats.wordCount, liveBlockCount: stats.blockCount, outline: stats.outline });
-    }
+    editVersions.set(pageId, (editVersions.get(pageId) ?? 0) + 1);
     if (doc.error) {
-      set((state) => ({ documents: { ...state.documents, [pageId]: { ...doc, saveState: "error" } } }));
+      if (doc.saveState !== "error") {
+        set((state) => ({ documents: { ...state.documents, [pageId]: { ...doc, saveState: "error" } } }));
+      }
       return;
     }
-    set((state) => ({
-      documents: {
-        ...state.documents,
-        [pageId]: { ...state.documents[pageId], saveState: "dirty", wordCount: stats.wordCount, blockCount: stats.blockCount },
-      },
-    }));
+    // Only the first keystroke after a save changes the document record, so
+    // typing does not re-render everything that reads `documents`.
+    if (doc.saveState !== "dirty") {
+      set((state) => ({
+        documents: { ...state.documents, [pageId]: { ...state.documents[pageId], saveState: "dirty" } },
+      }));
+    }
     scheduleSave(get, pageId, get().settings.autosaveDelay);
   },
 
@@ -1290,6 +1292,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().notify(errorMessage(error), "error");
       return false;
     }
+    const saved = savedJson.get(pageId);
+    const baseline = saved && saved.loadVersion === doc.loadVersion ? saved.json : doc.docJson;
+    if (json === baseline) {
+      // Undo back to the saved text, or an edit that changed nothing: no write.
+      savedVersions.set(pageId, version);
+      if (doc.saveState === "dirty" && (editVersions.get(pageId) ?? 0) === version) {
+        set((current) => {
+          const live = current.documents[pageId];
+          return live ? { documents: { ...current.documents, [pageId]: { ...live, saveState: "saved" } } } : current;
+        });
+      }
+      return true;
+    }
     set((current) => ({
       documents: {
         ...current.documents,
@@ -1300,6 +1315,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = await api.savePage(workspaceId, pageId, json, doc.revision);
       if (get().workspace?.id !== workspaceId) return true;
       savedVersions.set(pageId, version);
+      savedJson.set(pageId, { loadVersion: doc.loadVersion, json });
       const hasNewerEdits = (editVersions.get(pageId) ?? 0) > version;
       set((current) => {
         const live = current.documents[pageId];
@@ -1404,11 +1420,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setOutline: (pageId, outline) => {
-    if (get().activePageId === pageId) set({ outline });
+    const state = get();
+    if (state.activePageId === pageId && !sameOutline(state.outline, outline)) set({ outline });
   },
 
   setLiveStats: (pageId, wordCount, blockCount) => {
-    if (get().activePageId === pageId) set({ liveWordCount: wordCount, liveBlockCount: blockCount });
+    const state = get();
+    if (state.activePageId !== pageId) return;
+    if (state.liveWordCount === wordCount && state.liveBlockCount === blockCount) return;
+    set({ liveWordCount: wordCount, liveBlockCount: blockCount });
   },
 
   updateSettings: (patch, persist = true) => {

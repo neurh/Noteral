@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type Block } from "@blocknote/core";
 import { SuggestionMenuController, getDefaultReactSlashMenuItems, useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -8,7 +8,8 @@ import { api } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
 import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
 import { commandRegistry } from "../lib/commands";
-import { editorBridge, type OutlineItem } from "../lib/editorBridge";
+import { editorBridge } from "../lib/editorBridge";
+import { statsOfDoc, type DocNode } from "../lib/docStats";
 import { kindOf, useAppStore, type LoadedDocument } from "../store";
 import { defaultSchema, serializeSchema } from "../lib/database";
 import { databaseBlockSpec } from "./database/DatabaseBlock";
@@ -52,34 +53,6 @@ function clampCoverPosition(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
-function countWords(text: string): number {
-  const cjk = text.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0;
-  const latin = text.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, " ").match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-  return cjk + latin;
-}
-
-function documentStats(blocks: unknown[], titles: Map<string, string>): { wordCount: number; blockCount: number; text: string; outline: OutlineItem[] } {
-  const outline: OutlineItem[] = [];
-  let blockCount = 0;
-  const chunks: string[] = [];
-  const walk = (items: unknown[]) => {
-    for (const raw of items) {
-      const block = raw as Block;
-      blockCount += 1;
-      const text = inlineText(block.content, (id) => titles.get(id));
-      if (text) chunks.push(text);
-      if (block.type === "heading" && text) {
-        outline.push({ id: block.id, text, level: Number((block.props as { level?: number }).level ?? 1) });
-      }
-      const children = (block as unknown as { children?: Block[] }).children;
-      if (Array.isArray(children) && children.length) walk(children);
-    }
-  };
-  walk(blocks);
-  const text = chunks.join("\n");
-  return { wordCount: countWords(text), blockCount, text, outline };
-}
-
 function parseDocument(raw: string): Block[] {
   try {
     const value = JSON.parse(raw);
@@ -109,9 +82,13 @@ interface PageViewProps {
   active: boolean;
 }
 
-export function PageView({ page, active }: PageViewProps) {
+/** Title of any page, read on demand so editors do not re-render on every save. */
+function titleOf(pageId: string): string | undefined {
+  return useAppStore.getState().pages.find((item) => item.id === pageId)?.title;
+}
+
+export const PageView = memo(function PageView({ page, active }: PageViewProps) {
   const workspace = useAppStore((state) => state.workspace);
-  const pages = useAppStore((state) => state.pages);
   const theme = useAppStore((state) => state.resolvedTheme);
   const spellcheck = useAppStore((state) => state.settings.spellcheck);
   const markDirty = useAppStore((state) => state.markDirty);
@@ -129,18 +106,16 @@ export function PageView({ page, active }: PageViewProps) {
   const [title, setTitle] = useState(page.title);
   const ready = useRef(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
-  const initialJson = useRef(page.docJson);
-  const lastJson = useRef(page.docJson);
+  const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const coverOffsetRef = useRef(coverOffset);
   const coverDragRef = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number; width: number; height: number } | null>(null);
-  const titleFor = useMemo(() => new Map(pages.map((item) => [item.id, item.title])), [pages]);
   const initialContent = useMemo(() => parseDocument(page.docJson), [page.id, page.loadVersion]);
   const canRepositionCover = isPositionableCover(page.cover);
   const cover = coverStyle(withCoverPosition(page.cover, coverOffset.x, coverOffset.y));
   const icon = parsePageIcon(page.icon) ? page.icon : "";
   const kind = page.kind;
-  const parentId = pages.find((item) => item.id === page.id)?.parentId ?? page.parentId;
-  const parentIsDatabase = kindOf(pages.find((item) => item.id === parentId)) === "database";
+  const parentId = useAppStore((state) => state.pages.find((item) => item.id === page.id)?.parentId ?? page.parentId);
+  const parentIsDatabase = useAppStore((state) => kindOf(state.pages.find((item) => item.id === parentId)) === "database");
   const createItem = useAppStore((state) => state.createItem);
   const [databasePickerOpen, setDatabasePickerOpen] = useState(false);
 
@@ -190,31 +165,41 @@ export function PageView({ page, active }: PageViewProps) {
 
   useEffect(() => {
     ready.current = false;
-    initialJson.current = page.docJson;
-    lastJson.current = page.docJson;
     const timer = setTimeout(() => {
       ready.current = true;
     }, 120);
     return () => clearTimeout(timer);
   }, [page.id, page.loadVersion, page.docJson]);
 
-  useEffect(() => {
-    const stats = documentStats(editor.document, titleFor);
+  const publishStats = useCallback(() => {
+    if (statsTimer.current) {
+      clearTimeout(statsTimer.current);
+      statsTimer.current = null;
+    }
+    const stats = statsOfDoc(editor.prosemirrorState.doc as unknown as DocNode, titleOf);
     setOutline(page.id, stats.outline);
     setLiveStats(page.id, stats.wordCount, stats.blockCount);
+  }, [editor, page.id, setOutline, setLiveStats]);
+
+  useEffect(() => {
     // `active` matters: the store only accepts stats for the active page, and
     // switching tabs must refresh the shared status bar/inspector immediately.
-  }, [active, editor, page.id, titleFor, setOutline, setLiveStats]);
+    publishStats();
+  }, [active, publishStats]);
+
+  useEffect(() => () => {
+    if (statsTimer.current) clearTimeout(statsTimer.current);
+  }, []);
 
   useEffect(() => {
     const handle = {
       getJSON: () => JSON.stringify(editor.document),
-      getStats: () => documentStats(editor.document, titleFor),
+      getStats: () => statsOfDoc(editor.prosemirrorState.doc as unknown as DocNode, titleOf, true),
       insertBlocks: async (blocks: unknown[]) => {
         const converted = blocks.map(toPluginBlock);
         if (!converted.length) return;
         const cursor = editor.getTextCursorPosition().block;
-        const currentText = inlineText(cursor.content, (id) => titleFor.get(id));
+        const currentText = inlineText(cursor.content, titleOf);
         if (cursor.type === "paragraph" && !currentText.trim()) {
           editor.replaceBlocks([cursor], converted as never);
         } else {
@@ -241,7 +226,7 @@ export function PageView({ page, active }: PageViewProps) {
       },
     };
     return editorBridge.register(page.id, handle);
-  }, [editor, page.id, titleFor]);
+  }, [editor, page.id]);
 
   useEffect(() => {
     if (active && kind === "page") {
@@ -307,18 +292,13 @@ export function PageView({ page, active }: PageViewProps) {
     persistCoverPosition();
   }
 
-  async function onChange() {
+  function onChange() {
     if (!ready.current) return;
-    let json: string;
-    try {
-      json = JSON.stringify(editor.document);
-    } catch {
-      return;
-    }
-    if (json === lastJson.current || json === initialJson.current) return;
-    lastJson.current = json;
-    const stats = documentStats(editor.document, titleFor);
-    markDirty(page.id, stats);
+    // Keystrokes only flag the page; serialising happens once per autosave and
+    // the status bar/outline catch up a moment after typing pauses.
+    markDirty(page.id);
+    if (statsTimer.current) clearTimeout(statsTimer.current);
+    statsTimer.current = setTimeout(publishStats, active ? 250 : 1000);
   }
 
   const customItems = useMemo(
@@ -360,7 +340,7 @@ export function PageView({ page, active }: PageViewProps) {
   function insertDatabaseBlock(databaseId: string, nearBlockId?: string) {
     const block = { type: "database", props: { databaseId } } as never;
     const target = (nearBlockId && editor.getBlock(nearBlockId)) || editor.getTextCursorPosition().block;
-    const text = inlineText(target.content, (id) => titleFor.get(id));
+    const text = inlineText(target.content, titleOf);
     if (target.type === "paragraph" && !text.trim()) {
       editor.replaceBlocks([target], [block]);
     } else {
@@ -498,7 +478,7 @@ export function PageView({ page, active }: PageViewProps) {
               slashMenu={false}
               spellCheck={spellcheck}
               className="noteral-editor"
-              onChange={() => void onChange()}
+              onChange={onChange}
             >
               <SuggestionMenuController
                 triggerCharacter="/"
@@ -558,22 +538,22 @@ export function PageView({ page, active }: PageViewProps) {
           />
         </Suspense>
       ) : null}
-      <PagePickerDialog
+      {databasePickerOpen ? <PagePickerDialog
         open={databasePickerOpen}
         title="Link a database"
         emptyText="No databases yet. Use /Database to create one."
         filter={(item) => kindOf(item) === "database"}
         onClose={() => setDatabasePickerOpen(false)}
         onPick={(databaseId) => insertDatabaseBlock(databaseId)}
-      />
-      <PagePickerDialog
+      /> : null}
+      {pickerOpen ? <PagePickerDialog
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onPick={(pageId) => {
           const handle = editorBridge.get(page.id);
           if (handle) void handle.insertPageLink(pageId);
         }}
-      />
+      /> : null}
     </div>
   );
-}
+});
