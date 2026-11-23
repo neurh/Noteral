@@ -134,3 +134,38 @@ Not checked:
 - Screen readers and IME — aria-label/aria-pressed were set and read back from the DOM only.
 - Focus-ring pixels: the button inherits the global `button:focus-visible` rule (styles.css:89); headless programmatic focus did not paint it, so it was not judged as a still.
 - 390–900px and 520–900px intermediate widths (same media query, expected identical) and touch input.
+
+# Rehearsal: sidebar without the workspace row
+
+Gold: unchanged — the same warm sidebar should now read tabs → section header → list on every tab, with the PAGES header carrying the role the workspace card used to have. New page keeps its entry points (the tree header's own `+` at `frontend/src/components/PageTree.tsx:317`, the Home tab's New page button, and the palette's "New page"); workspaces keep the rail's bottom Workspaces button and the dialog it opens.
+
+States: tree (with rows), favorites (empty), recent, trash, page created from the tree header, workspaces overlay opened from the rail, dark theme, 390 mobile.
+
+Captured: exact viewports 1366×745 and 390×844, DPR1 full frames plus a DPR2 sidebar-top crop in `/tmp/noteral-sidebar/`: `01-tree-1366.png`, `02-favorites-1366.png`, `03-recent-1366.png`, `04-trash-1366.png`, `05-workspaces-overlay.png`, `06-tree-dark-1366.png`, `07-sidebar-top-detail.png`, `08-mobile-390.png`. Same server-mode harness (rebuilt `bin/noteral-server`, `WAILS_SERVER_PORT=8123`, `/tmp/noteral-rehearsal-data`), script `/tmp/pw2/probe-sidebar-top.mjs`.
+
+Gate: not a filmed faux-UI demo, so the stageshow `film --gate` loop does not apply. Rehearsed as a real app screen: exact-size stills per state plus scripted interaction and geometry checks.
+
+Frames → findings → fixes:
+- `07-sidebar-top-detail.png` — the tabs row now meets the PAGES header directly, with no leftover slot from the removed row (its `padding: 8px 8px 4px` went with `.workspace-switcher`); the header keeps its own inset and the list rows stay aligned with earlier frames (`contentTop 94` in the tree).
+- `01-tree-1366.png` — the `4` at the tab row's right edge is the pre-existing `.left-tab-count` page counter, not the removed workspace avatar (the sidebar DOM now reports `switcher: 0, avatar: 0`).
+- `02-favorites-1366.png`, `04-trash-1366.png` — empty states start directly under the tabs with their own padding; no orphan gap or missing separator.
+- `05-workspaces-overlay.png` — Workspaces stays reachable: the rail's bottom Layers button opens the dialog (`.workspaces-body` present) and Escape closes it.
+- `06-tree-dark-1366.png` — headers and rows keep their dark-theme contrast; nothing had depended on the removed card (the rail focus ring in the frame is probe focus, not styling).
+- No other frame faults; 390 keeps the sidebar hidden as before.
+
+Interaction checks: all four tabs switch; the tree header `+` still creates a page (rows 3 → 4 and the count badge updates); the rail Workspaces button opens the overlay and Escape closes it; zero page/console errors. `npx tsc --noEmit` clean (removed the now-unused `ChevronDown`, `Plus`, `workspace`, `createPage`, `setOverlay`); `npm test` 8 files / 57 tests pass. Deleted dead CSS: `.workspace-switcher`, `.workspace-button` and its hover/descendant rules, the base `.workspace-name`, and `.workspace-button` from the shared transition list; `.workspace-avatar` stays because WorkspaceDialog uses it.
+
+Review: a fresh-eye reviewer returned no blocking findings (static review; it did not run the app or tests). Its non-blocking list, and the responses:
+1. Favorites/Recent might start tight under the tab strip because `.page-list { padding: 3px 6px 18px }` lost the gap the switcher supplied. Checked at 1:1 and 2× (`/tmp/noteral-sidebar/10-recent-zoom.png`, `09-favorites-top-detail.png`): the first list row sits ~9px below the tab strip and the empty state carries its own ~26px inset, so the rhythm reads intentional — no change.
+2. The removal drops the in-sidebar "New page" `+` from favorites/recent/trash, leaving only the palette/Ctrl+N there. Accepted: the user asked for that `+` to go; the tree's PAGES `+`, the palette's "New page" (`App.tsx:59-66`), Ctrl/⌘N (`App.tsx:310-313`) and the Home button cover page creation.
+The reviewer also confirmed clean: no leftover references to the removed classes, no dead imports/selectors, workspaces still reachable (rail button + palette "Switch workspace" `App.tsx:177-184`), `.left-tab-count` is the page counter, a11y intact, and no double padding or scroll regression.
+
+Assumptions:
+- "remove this section" means the whole workspace row, which rendered on every tab, not only on the tree tab; it is gone everywhere.
+- The removed `+` was a second New page entry point; the tree's PAGES `+`, the Home button and the palette still cover it.
+- Workspace switching now lives only on the rail's Workspaces button (plus the dialog); no other tab has a workspace affordance, by design.
+
+Not checked:
+- Whether some other surface should show the current workspace name from within the sidebar.
+- Real Wails/GTK rendering, screen readers (the removed buttons took their aria labels with them), and touch input.
+- 880–900px widths and 200% zoom.

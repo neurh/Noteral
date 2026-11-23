@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { ChevronDown, Plus } from "lucide-react";
 import { useAppStore } from "../store";
 import { PageTree } from "./PageTree";
 import { PageList } from "./PageList";
@@ -10,12 +9,9 @@ export function LeftSidebar() {
   const open = useAppStore((state) => state.settings.leftOpen);
   const width = useAppStore((state) => state.settings.leftWidth);
   const tab = useAppStore((state) => state.leftTab);
-  const workspace = useAppStore((state) => state.workspace);
   const favorites = useAppStore((state) => state.favorites);
   const recent = useAppStore((state) => state.recent);
   const pages = useAppStore((state) => state.pages);
-  const createPage = useAppStore((state) => state.createPage);
-  const setOverlay = useAppStore((state) => state.setOverlay);
   const updateSettings = useAppStore((state) => state.updateSettings);
   const persistSettings = useAppStore((state) => state.persistSettingsNow);
   const resizing = useRef<{ x: number; width: number } | null>(null);
@@ -47,22 +43,6 @@ export function LeftSidebar() {
   return (
     <aside className="left-sidebar" ref={asideRef} style={{ width }} aria-label="Sidebar">
       <LeftSidebarTabs />
-      <div className="workspace-switcher">
-        <button
-          type="button"
-          className="workspace-button"
-          onClick={() => setOverlay("workspaces")}
-          aria-label={`Workspace: ${workspace?.name ?? "None"}. Switch workspace`}
-          title="Switch workspace"
-        >
-          <span className="workspace-avatar" aria-hidden="true">{(workspace?.name ?? "W").slice(0, 1).toUpperCase()}</span>
-          <span className="workspace-name">{workspace?.name ?? "Workspace"}</span>
-          <ChevronDown size={13} />
-        </button>
-        <button type="button" className="icon-button" aria-label="New page" title="New page" onClick={() => void createPage()}>
-          <Plus size={16} />
-        </button>
-      </div>
       <div className="left-content">
         {tab === "tree" ? <PageTree /> : null}
         {tab === "favorites" ? <PageList pages={favoritePages} empty="Star pages you want close at hand." /> : null}

@@ -969,21 +969,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .library-footnote { color: var(--text-faint); font-size: 10.5px; margin: 10px 2px 0; }
 
 /* Workspaces */
-.workspace-switcher { display: flex; align-items: center; gap: 4px; width: 100%; padding: 8px 8px 4px; }
-.workspace-button {
-  flex: 1; min-width: 0; height: 38px; padding: 3px 6px 3px 4px;
-  display: flex; align-items: center; gap: 8px;
-  border: 1px solid var(--border); border-radius: 9px;
-  background: var(--bg-raised); color: var(--text); text-align: left;
-  box-shadow: var(--shadow-sm);
-}
-.workspace-button:hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--bg-raised) 70%, var(--bg-hover)); }
-.workspace-button .workspace-avatar { width: 28px; height: 28px; border-radius: 7px; font-size: 15px; }
-.workspace-button .workspace-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 560; }
-.workspace-button > svg { flex: 0 0 auto; color: var(--text-faint); }
-.workspace-button:hover > svg { color: var(--text-soft); }
 .workspace-avatar { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-deep); font-family: var(--font-reading); font-size: 16px; flex: 0 0 auto; }
-.workspace-name { border: 0; background: transparent; padding: 0; text-align: left; font-size: 13px; font-weight: 550; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Workspace manager dialog */
 .workspaces-body { padding: 16px 18px 20px; }
@@ -1562,7 +1548,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* Shared interaction polish */
 .rail-button, .left-tab, .right-tab, .tree-row, .page-list-row, .tab, .icon-button, .page-header-title,
 .text-button, .secondary-button, .primary-button, .picker-item, .settings-nav-item,
-.segmented button, .workspace-button {
+.segmented button {
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
