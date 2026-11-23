@@ -1,3 +1,32 @@
+# Rehearsal: Favorites/Recent list rows
+
+Gold: the Trash list rows — a flat row with a 14px page icon, a left-aligned title over a muted relative time, and the trailing action at the row's right edge (`frontend/src/components/TrashView.tsx`). Favorites and Recent are the same `.page-list-row`, but `frontend/src/components/PageList.tsx:25` puts the row body in a `<button className="page-list-main">` while Trash uses a `<div>`, and the button had no reset, so the UA chrome (2px outset border, `buttonface` background, centered text, `1px 6px` padding) boxed and centered every row.
+
+States: recent (favorite and non-favorite rows, active row), hover on a row, favorites (2 rows), trash (reference), dark theme (recent + trash), 390 mobile.
+
+Captured: exact 1366×745 DPR1 full frames, DPR2 row crops and a 390×844 frame in `/tmp/noteral-rows/before/` (broken) and `/tmp/noteral-rows/after/` (fixed): `01-recent-1366.png`, `02-recent-hover-1366.png`, `03-favorites-1366.png`, `04-trash-1366.png`, `05-recent-dark-1366.png`, `06-trash-dark-1366.png`, `07-mobile-390.png`, `08-favorites-detail.png`, `09-trash-detail.png`, `10-recent-zoom.png` (2× nearest crop of the recent list). Same server-mode harness as the earlier sidebar rehearsal (rebuilt `bin/noteral-server`, `WAILS_SERVER_PORT=8123`, `/tmp/noteral-rehearsal-data`), scripts `/tmp/pw2/rows-seed.mjs`, `rows-shots.mjs`, `rows-measure.mjs`, `rows-check.mjs`, `rows-restore.mjs`.
+
+Gate: real app screen, not a faux-UI demo, so the stageshow `film --gate` loop does not apply. Rehearsed with exact-width stills plus scripted geometry and contrast checks, as in the earlier sections.
+
+Frames → findings → fixes:
+- `before/10-recent-zoom.png` — the rows rendered as boxed, centered buttons: computed on the live DOM, `border 2px outset`, `background rgb(239, 239, 239)`, `text-align center`, `padding 1px 6px`, against Trash's `0px none` / transparent / `left` / `0px`. Fix: `.page-list-main` reset (`frontend/src/styles.css:515`: `border: 0; background: transparent; padding: 0; text-align: left;`), the same property set the tree's `.tree-page` buttons already use (`frontend/src/styles.css:478`); `color: inherit` and `cursor: pointer` come from the global button rules (`frontend/src/styles.css:88,91`).
+- `after/01-recent-1366.png`, `03-favorites-1366.png`, `08-favorites-detail.png` — rows now read as trash rows; measured geometry is identical across all three lists: row 259×39, icon x 6 (14px), title x 26 (dy 5, h 15), time x 26 (dy 21), trailing action right edge inset 2px.
+- `after/02-recent-hover-1366.png` — hover highlights the row and brings its star to full strength, mirroring `.trash-action`.
+- `after/05-recent-dark-1366.png`, `06-trash-dark-1366.png`, `07-mobile-390.png` — no fault; 390 keeps the sidebar in its rail.
+- Contrast fix (reviewer finding): an always-visible star at the trash-action opacity (0.55 `--text-muted`) composites to 1.73:1 light / 2.17:1 dark, under the 3:1 WCAG 1.4.11 floor for UI components — and no opacity of `--text-muted` reaches 3:1 on the light active row (2.99 even at opacity 1). `.favorite-toggle` now uses `--text-soft` at `opacity: 0.7`, measured on the final frames at 3.06:1 (light active row, the worst case) / 3.25:1 (light base row) / 4.08:1 (dark active row) / 4.86:1 (dark base row); `.favorite-toggle.on` stays `--warning` at 4.07:1. `.trash-action` keeps its pre-existing 0.55 (1.78 light / 2.30 dark) — untouched, since Trash is the reference look.
+- `.trash-row { padding-right: 2px; }` removed as redundant — `frontend/src/styles.css:511` now carries the 2px right inset for every `.page-list-row` (only consumers are `PageList.tsx` and `TrashView.tsx`). Re-shot frames were pixel-diffed against the previous run: identical everywhere except the trash row's relative-time text, which ticked from “3 minutes” to “4 minutes”.
+
+Interaction checks: all four tabs switch; a star click toggles the page's favorite state (favorite rows 2 → 3 → 2, restored after the check); `:focus-visible` brings the star to full opacity; zero page/console errors. `npm run build` (tsc) clean; `npx vitest run` 8 files / 57 tests pass.
+
+Assumptions:
+- “Same list as Trash” means the row chrome and geometry, not that Favorites/Recent gain Trash's second action; the star stays the row's only action and remains clickable in both tabs.
+- The idle star is slightly stronger than a trash action (0.7 `--text-soft` vs 0.55 `--text-muted`) because that is what keeps it at ≥3:1 on the active row; the amber `.on` state still carries the favorite signal.
+
+Not checked:
+- Real Wails/GTK rendering, screen readers, touch input, 200% zoom, RTL, longer titles.
+- Contrast of `.trash-action` (pre-existing 0.55 `--text-muted`, under 3:1) — left as it was, since the user pointed at Trash as the target look.
+
+
 # Rehearsal: pane tab icons
 
 Gold: the page tree's per-page icon, reused at tab scale. Tabs now render the same `PageIcon` as the tree (`frontend/src/components/TabStrip.tsx`), sized 13px, muted by default and accent on the active tab of the focused pane; icon-less pages and child-less tabs keep the FileText fallback so the icon column never collapses, which keeps titles from shifting between tabs.
