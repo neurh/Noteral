@@ -1,5 +1,7 @@
 package store
 
+import "encoding/json"
+
 // Workspace is a top-level notebook.
 type Workspace struct {
 	ID           string `json:"id"`
@@ -59,10 +61,38 @@ type SearchHit struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// HomeGradient is a user-picked two-stop gradient background.
+type HomeGradient struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Angle int    `json:"angle"`
+	Kind  string `json:"kind"`
+}
+
+// HomeASCII tunes animated ASCII backgrounds.
+type HomeASCII struct {
+	Speed   float64  `json:"speed"`
+	Ink     string   `json:"ink,omitempty"`
+	Density string   `json:"density,omitempty"`
+	Still   bool     `json:"still,omitempty"`
+	Veil    *float64 `json:"veil,omitempty"`
+	// Cursor is false when the wallpaper should ignore hover and clicks.
+	Cursor *bool `json:"cursor,omitempty"`
+}
+
 // HomeTabSettings customizes a single Home tab.
 type HomeTabSettings struct {
-	Template   string `json:"template"`
-	Background string `json:"background"`
+	Template   string        `json:"template"`
+	Background string        `json:"background"`
+	Color      string        `json:"color,omitempty"`
+	Gradient   *HomeGradient `json:"gradient,omitempty"`
+	ASCII      *HomeASCII    `json:"ascii,omitempty"`
+	// Custom is the widget layout of the "custom" view. The frontend owns its
+	// shape; the store only checks that it is a bounded JSON object.
+	Custom json.RawMessage `json:"custom,omitempty"`
+	// View is the id of the workspace custom view this tab shows when
+	// Template is "custom".
+	View string `json:"view,omitempty"`
 }
 
 // WorkspaceSnapshot is everything needed to render a workspace shell without
@@ -77,6 +107,8 @@ type WorkspaceSnapshot struct {
 	ActivePageID string                     `json:"activePageId"`
 	HomeTabs     map[string]HomeTabSettings `json:"homeTabs"`
 	Layout       string                     `json:"layout,omitempty"`
+	HomeViews    json.RawMessage            `json:"homeViews,omitempty"`
+	HomePrefs    json.RawMessage            `json:"homePrefs,omitempty"`
 	Trash        []PageMeta                 `json:"trash"`
 }
 
@@ -89,6 +121,13 @@ type UISettings struct {
 	ActivePageID string                     `json:"activePageId"`
 	HomeTabs     map[string]HomeTabSettings `json:"homeTabs,omitempty"`
 	Layout       string                     `json:"layout,omitempty"`
+	// HomeViews is the workspace's saved custom Home views, owned by the
+	// frontend.
+	HomeViews json.RawMessage `json:"homeViews,omitempty"`
+	// HomePrefs is a frontend-owned JSON object with workspace Home
+	// preferences: the default view for new Home tabs and each view's
+	// background.
+	HomePrefs json.RawMessage `json:"homePrefs,omitempty"`
 }
 
 // AppSettings is global application preference state.

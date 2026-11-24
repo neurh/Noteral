@@ -4,7 +4,7 @@ import type { AppSettings, Bootstrap, Info, PageDocument, PageMeta, Workspace, W
 import { editorBridge, type OutlineItem } from "./lib/editorBridge";
 import { sameOutline } from "./lib/docStats";
 import { applyTheme, resolveTheme, type ResolvedTheme } from "./lib/theme";
-import { defaultHomeTabSettings, normalizeHomeTabSettings, type HomeTabSettings } from "./lib/home";
+import { DEFAULT_HOME_BACKGROUND, HOME_TEMPLATES, backgroundForView, defaultCustomLayout, defaultTabSettings, homeViewKey, makeCustomView, normalizeHomeBackground, normalizeHomePrefs, type HomeBackgroundSettings, type HomePrefs, type HomeTemplate, normalizeCustomLayout, normalizeCustomView, normalizeCustomViews, normalizeHomeTabSettings, nextViewName, type HomeCustomLayout, type HomeCustomView, type HomeTabSettings } from "./lib/home";
 import {
   addTab as addTabToPane,
   applySplitDelta,
@@ -116,6 +116,10 @@ interface AppState {
   recent: PageMeta[];
   tabs: string[];
   homeTabs: Record<string, HomeTabSettings>;
+  /** Saved custom Home views, shared by every Home tab in the workspace. */
+  homeViews: HomeCustomView[];
+  /** Default view for new Home tabs and each view's background. */
+  homePrefs: HomePrefs;
   layout: LayoutNode;
   focusedPaneId: string;
   maximizedPaneId: string;
@@ -148,6 +152,16 @@ interface AppState {
   selectTab: (tabId: string) => void;
   openHomeTab: (settings?: Partial<HomeTabSettings>, paneId?: string) => void;
   updateHomeTab: (tabId: string, patch: Partial<HomeTabSettings>) => void;
+  /** Adds a custom view (a copy of `layout`, or the default) and returns its id. */
+  createHomeView: (layout?: HomeCustomLayout, name?: string) => string;
+  updateHomeView: (viewId: string, patch: Partial<HomeCustomView>) => void;
+  duplicateHomeView: (viewId: string) => string | undefined;
+  /** Deletes a view; Home tabs that showed it fall back to the Desk view. */
+  removeHomeView: (viewId: string) => void;
+  /** Change the background of a view (template id or custom view id). */
+  setHomeBackground: (viewKey: string, patch: Partial<HomeBackgroundSettings>) => void;
+  /** Pick the view new Home tabs open with; undefined resets to Desk. */
+  setDefaultHomeView: (viewKey: string | undefined) => void;
   focusPane: (paneId: string) => void;
   moveTab: (tabId: string, targetPaneId: string, beforeTabId: string | null) => void;
   dropTabInPane: (tabId: string, targetPaneId: string, zone: PaneDropZone) => void;
@@ -302,7 +316,12 @@ function layoutPatch(
   return patch;
 }
 
-function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; tabs: string[]; homeTabs: Record<string, HomeTabSettings>; activeTabId: string; active: string; favorites: string[]; recent: PageMeta[]; trash: PageMeta[]; layout: LayoutNode; focusedPaneId: string; maximizedPaneId: string } {
+/** Settings a fresh Home tab starts with: the workspace's default view. */
+function newHomeTabSettings(state: Pick<AppState, "homePrefs" | "homeViews">): HomeTabSettings {
+  return defaultTabSettings(state.homePrefs, state.homeViews.map((view) => view.id));
+}
+
+function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; tabs: string[]; homeTabs: Record<string, HomeTabSettings>; homeViews: HomeCustomView[]; homePrefs: HomePrefs; activeTabId: string; active: string; favorites: string[]; recent: PageMeta[]; trash: PageMeta[]; layout: LayoutNode; focusedPaneId: string; maximizedPaneId: string } {
   const pages = list(snapshot.pages);
   const known = new Set(pages.map((page) => page.id));
   const seen = new Set<string>();
@@ -321,14 +340,40 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; ta
     tabs = [activeTabId];
   }
   const homeTabs: Record<string, HomeTabSettings> = {};
+  const homeViews = normalizeCustomViews(snapshot.homeViews);
+  const homePrefs = normalizeHomePrefs(snapshot.homePrefs);
+  const hadPrefs = Boolean(snapshot.homePrefs);
   for (const tabId of tabs) {
-    if (isHomeTab(tabId)) homeTabs[tabId] = normalizeHomeTabSettings(snapshot.homeTabs?.[tabId]);
+    if (!isHomeTab(tabId)) continue;
+    const settings = normalizeHomeTabSettings(snapshot.homeTabs?.[tabId]);
+    // Before views were shared, each tab kept its own layout: turn it into a view.
+    if (settings.custom && !homeViews.some((view) => view.id === settings.view) && homeViews.length < 16) {
+      const migrated = makeCustomView(nextViewName(homeViews), settings.custom);
+      homeViews.push(migrated);
+      if (settings.template === "custom") settings.view = migrated.id;
+    }
+    delete settings.custom;
+    if (settings.template === "custom" && !homeViews.some((view) => view.id === settings.view)) {
+      if (!homeViews.length) homeViews.push(makeCustomView(nextViewName(homeViews)));
+      settings.view = homeViews[0].id;
+    }
+    // Backgrounds used to belong to tabs; the first tab showing a view hands its background to that view.
+    const key = homeViewKey(settings);
+    if (!hadPrefs && !homePrefs.backgrounds[key] && settings.background !== DEFAULT_HOME_BACKGROUND.background) {
+      homePrefs.backgrounds[key] = normalizeHomeBackground(settings);
+    }
+    homeTabs[tabId] = { template: settings.template, background: DEFAULT_HOME_BACKGROUND.background, ...(settings.view ? { view: settings.view } : {}) };
+  }
+  for (const key of Object.keys(homePrefs.backgrounds)) {
+    if (!HOME_TEMPLATES.includes(key as HomeTemplate) && !homeViews.some((view) => view.id === key)) delete homePrefs.backgrounds[key];
   }
   const restored = restoreLayoutFromRaw(snapshot.layout, tabs, activeTabId);
   return {
     pages,
     tabs,
     homeTabs,
+    homeViews,
+    homePrefs,
     activeTabId: restored.activeTabId,
     active: pageIdForTab(restored.activeTabId),
     layout: restored.layout,
@@ -364,6 +409,8 @@ function snapshotPatch(snapshot: WorkspaceSnapshot, state: AppState): Partial<Ap
     recent: normalized.recent,
     tabs: normalized.tabs,
     homeTabs: normalized.homeTabs,
+    homeViews: normalized.homeViews,
+    homePrefs: normalized.homePrefs,
     layout: normalized.layout,
     focusedPaneId: normalized.focusedPaneId,
     maximizedPaneId: normalized.maximizedPaneId,
@@ -475,6 +522,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   recent: [],
   tabs: [],
   homeTabs: {},
+  homeViews: [],
+  homePrefs: { backgrounds: {} },
   layout: createPane(),
   focusedPaneId: "",
   maximizedPaneId: "",
@@ -555,6 +604,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         recent: normalized.recent,
         tabs: normalized.tabs,
         homeTabs: normalized.homeTabs,
+        homeViews: normalized.homeViews,
+        homePrefs: normalized.homePrefs,
         layout: normalized.layout,
         focusedPaneId: normalized.focusedPaneId,
         maximizedPaneId: normalized.maximizedPaneId,
@@ -613,6 +664,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         recent: normalized.recent,
         tabs: normalized.tabs,
         homeTabs: normalized.homeTabs,
+        homeViews: normalized.homeViews,
+        homePrefs: normalized.homePrefs,
         layout: normalized.layout,
         focusedPaneId: normalized.focusedPaneId,
         maximizedPaneId: normalized.maximizedPaneId,
@@ -734,7 +787,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   openHomeTab: (settings, paneId) => {
     const tabId = createHomeTabId();
-    const homeSettings = normalizeHomeTabSettings(settings ?? defaultHomeTabSettings);
+    const homeSettings = normalizeHomeTabSettings(settings ?? newHomeTabSettings(get()));
     set((state) => {
       const layout = addTabToPane(state.layout, paneId ?? state.focusedPaneId, tabId);
       const pane = paneOfTab(layout, tabId);
@@ -752,12 +805,85 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   updateHomeTab: (tabId, patch) => {
     if (!isHomeTab(tabId) || !paneOfTab(get().layout, tabId)) return;
+    set((state) => {
+      const settings = normalizeHomeTabSettings({ ...state.homeTabs[tabId], ...patch });
+      let homeViews = state.homeViews;
+      if (settings.template === "custom" && !homeViews.some((view) => view.id === settings.view)) {
+        if (!homeViews.length) homeViews = [makeCustomView(nextViewName(homeViews))];
+        settings.view = homeViews[0].id;
+      }
+      return { homeTabs: { ...state.homeTabs, [tabId]: settings }, homeViews };
+    });
+    scheduleTabs(get);
+  },
+  createHomeView: (layout, name) => {
+    const views = get().homeViews;
+    const source = layout ? (normalizeCustomLayout(layout) ?? defaultCustomLayout()) : defaultCustomLayout();
+    const view = makeCustomView((name ?? "").trim() || nextViewName(views), source);
+    set({ homeViews: [...views, view].slice(-16) });
+    scheduleTabs(get);
+    return view.id;
+  },
+  updateHomeView: (viewId, patch) => {
+    let changed = false;
     set((state) => ({
-      homeTabs: {
-        ...state.homeTabs,
-        [tabId]: normalizeHomeTabSettings({ ...state.homeTabs[tabId], ...patch }),
-      },
+      homeViews: state.homeViews.map((view) => {
+        if (view.id !== viewId) return view;
+        const next = normalizeCustomView({ ...view, ...patch, id: view.id });
+        if (!next) return view;
+        changed = true;
+        return next;
+      }),
     }));
+    if (changed) scheduleTabs(get);
+  },
+  duplicateHomeView: (viewId) => {
+    const views = get().homeViews;
+    const source = views.find((view) => view.id === viewId);
+    if (!source || views.length >= 16) return undefined;
+    const copy = makeCustomView(nextViewName(views, `${source.name} copy`.slice(0, 34)), source);
+    set((state) => {
+      const background = state.homePrefs.backgrounds[viewId];
+      return {
+        homeViews: [...views, copy],
+        homePrefs: background ? { ...state.homePrefs, backgrounds: { ...state.homePrefs.backgrounds, [copy.id]: structuredClone(background) } } : state.homePrefs,
+      };
+    });
+    scheduleTabs(get);
+    return copy.id;
+  },
+  removeHomeView: (viewId) => {
+    set((state) => {
+      const homeTabs: Record<string, HomeTabSettings> = {};
+      for (const [tabId, settings] of Object.entries(state.homeTabs)) {
+        homeTabs[tabId] = settings.view === viewId ? normalizeHomeTabSettings({ ...settings, template: "desk", view: undefined }) : settings;
+      }
+      const backgrounds = { ...state.homePrefs.backgrounds };
+      delete backgrounds[viewId];
+      const homePrefs: HomePrefs = { ...state.homePrefs, backgrounds };
+      if (homePrefs.defaultView === viewId) delete homePrefs.defaultView;
+      return { homeViews: state.homeViews.filter((view) => view.id !== viewId), homeTabs, homePrefs };
+    });
+    scheduleTabs(get);
+  },
+  setHomeBackground: (viewKey, patch) => {
+    set((state) => {
+      const current = backgroundForView(state.homePrefs, viewKey);
+      const next = normalizeHomeBackground({ ...current, ...patch });
+      const backgrounds = { ...state.homePrefs.backgrounds };
+      if (next.background === DEFAULT_HOME_BACKGROUND.background && !next.color && !next.gradient && !next.ascii) delete backgrounds[viewKey];
+      else backgrounds[viewKey] = next;
+      return { homePrefs: { ...state.homePrefs, backgrounds } };
+    });
+    scheduleTabs(get);
+  },
+  setDefaultHomeView: (viewKey) => {
+    set((state) => {
+      const homePrefs: HomePrefs = { ...state.homePrefs };
+      if (viewKey && viewKey !== "desk") homePrefs.defaultView = viewKey;
+      else delete homePrefs.defaultView;
+      return { homePrefs };
+    });
     scheduleTabs(get);
   },
 
@@ -896,7 +1022,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const aligned = alignHistory(current.history.filter((id) => id !== tabId), "");
         return {
           ...layoutPatch(current, layoutFromTabs([home], home), "", ""),
-          homeTabs: { ...withoutHomeTab(current.homeTabs, tabId), [home]: { ...defaultHomeTabSettings } },
+          homeTabs: { ...withoutHomeTab(current.homeTabs, tabId), [home]: newHomeTabSettings(current) },
           history: aligned.history,
           historyIndex: aligned.historyIndex,
           outline: [],
@@ -1152,7 +1278,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     if (!findPane(state.layout, paneId)) return;
     const tabId = createHomeTabId();
-    const homeSettings = normalizeHomeTabSettings(defaultHomeTabSettings);
+    const homeSettings = newHomeTabSettings(get());
     const next = splitPaneWith(state.layout, paneId, side, createPane([tabId], tabId));
     if (next === state.layout) return;
     set((current) => ({
@@ -1196,7 +1322,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const aligned = alignHistory(current.history.filter((id) => !closedPageTabs.includes(id)), "");
         return {
           ...layoutPatch(current, fresh, firstPane(fresh)?.id, ""),
-          homeTabs: { ...stripHomeTabs(current.homeTabs), [home]: { ...defaultHomeTabSettings } },
+          homeTabs: { ...stripHomeTabs(current.homeTabs), [home]: newHomeTabSettings(current) },
           history: aligned.history,
           historyIndex: aligned.historyIndex,
           outline: [],
@@ -1382,6 +1508,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         get().activeTabId,
         get().homeTabs,
         serializeLayout(get().layout, get().focusedPaneId, get().maximizedPaneId),
+        get().homeViews,
+        get().homePrefs,
       );
     } catch (error) {
       console.warn("Could not save tabs", error);

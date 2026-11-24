@@ -3,6 +3,8 @@
 
 export type {
     AppSettings,
+    HomeASCII,
+    HomeGradient,
     HomeTabSettings,
     PageDocument,
     PageMeta,

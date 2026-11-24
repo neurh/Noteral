@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func (s *Store) ListPages(workspaceID string) ([]PageMeta, error) {
 }
 
 func listPages(db *sql.DB) ([]PageMeta, error) {
-	rows, err := db.Query(`SELECT `+metaColumns+` FROM pages WHERE deleted_at IS NULL ORDER BY position ASC, title COLLATE NOCASE ASC`)
+	rows, err := db.Query(`SELECT ` + metaColumns + ` FROM pages WHERE deleted_at IS NULL ORDER BY position ASC, title COLLATE NOCASE ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -93,13 +94,13 @@ func (s *Store) Snapshot(workspaceID string) (WorkspaceSnapshot, error) {
 		valid[page.ID] = true
 	}
 	tabs, activeTab := normalizeTabState(ui.Tabs, ui.ActiveTabID, valid)
-	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: tabs, ActiveTabID: activeTab, ActivePageID: activePageForTab(activeTab), HomeTabs: normalizeHomeTabs(tabs, ui.HomeTabs), Layout: ui.Layout, Trash: trash}, nil
+	return WorkspaceSnapshot{Workspace: w, Pages: pages, Favorites: favorites, Recent: recent, Tabs: tabs, ActiveTabID: activeTab, ActivePageID: activePageForTab(activeTab), HomeTabs: normalizeHomeTabs(tabs, ui.HomeTabs), Layout: ui.Layout, HomeViews: ui.HomeViews, HomePrefs: ui.HomePrefs, Trash: trash}, nil
 }
 
 // listTrash returns trashed pages whose parent is not also trashed, so each
 // deleted subtree appears once in the trash instead of page by page.
 func listTrash(db *sql.DB) ([]PageMeta, error) {
-	rows, err := db.Query(`SELECT `+metaColumnsP+`,p.deleted_at
+	rows, err := db.Query(`SELECT ` + metaColumnsP + `,p.deleted_at
 		FROM pages p
 		WHERE p.deleted_at IS NOT NULL
 		  AND NOT EXISTS (SELECT 1 FROM pages parent WHERE parent.id=p.parent_id AND parent.deleted_at IS NOT NULL)
@@ -710,7 +711,7 @@ func listFavorites(db *sql.DB) ([]string, error) {
 }
 
 func listRecent(db *sql.DB) ([]PageMeta, error) {
-	rows, err := db.Query(`SELECT `+metaColumnsP+` FROM recent r JOIN pages p ON p.id=r.page_id WHERE p.deleted_at IS NULL ORDER BY r.opened_at DESC LIMIT 12`)
+	rows, err := db.Query(`SELECT ` + metaColumnsP + ` FROM recent r JOIN pages p ON p.id=r.page_id WHERE p.deleted_at IS NULL ORDER BY r.opened_at DESC LIMIT 12`)
 	if err != nil {
 		return nil, err
 	}
@@ -798,16 +799,148 @@ func activePageForTab(tabID string) string {
 	return tabID
 }
 
-var homeTemplates = map[string]bool{"default": true, "library": true, "focus": true, "gallery": true}
-var homeBackgrounds = map[string]bool{"paper": true, "linen": true, "sage": true, "clay": true, "dusk": true}
+var homeTemplates = map[string]bool{
+	"desk": true, "focus": true, "dashboard": true, "gallery": true,
+	"timeline": true, "index": true, "launchpad": true, "custom": true,
+}
+
+// legacyHomeTemplates maps views from earlier releases onto their successors.
+var legacyHomeTemplates = map[string]string{"default": "desk", "library": "index"}
+
+var homeBackgrounds = map[string]bool{
+	"paper": true, "linen": true, "sage": true, "mist": true, "clay": true, "slate": true, "dusk": true, "ink": true,
+	"dawn": true, "meadow": true, "lagoon": true, "peach": true, "aurora": true, "midnight": true,
+	"dots": true, "grid": true, "ruled": true, "blueprint": true,
+	"ascii-moon": true, "ascii-sunset": true, "ascii-galaxy": true, "ascii-rain": true, "ascii-dunes": true,
+	"ascii-topo": true,
+	"custom-color": true, "custom-gradient": true,
+}
+
+// legacyHomeBackgrounds maps retired animated backgrounds onto their successors.
+var legacyHomeBackgrounds = map[string]string{
+	"ascii-waves": "ascii-topo", "ascii-stars": "ascii-galaxy", "ascii-torus": "ascii-galaxy",
+	"ascii-embers": "ascii-sunset", "ascii-ripples": "ascii-moon", "ascii-contours": "ascii-dunes",
+	"ascii-life": "ascii-moon", "ascii-peaks": "ascii-moon", "ascii-aurora": "ascii-galaxy",
+	"ascii-city": "ascii-rain", "ascii-deepsea": "ascii-moon", "ascii-sakura": "ascii-dunes",
+	"ascii-silk": "ascii-topo",
+	"ascii-fireflies": "ascii-moon", "ascii-snow": "ascii-moon", "ascii-halftone": "ascii-dunes",
+	"ascii-nightsea": "ascii-moon", "ascii-pulse": "ascii-galaxy", "ascii-stitch": "ascii-topo",
+	"ascii-signal": "ascii-rain", "ascii-flow": "ascii-galaxy", "ascii-ridges": "ascii-topo",
+}
+
+const maxHomeCustomBytes = 64 << 10
+
+// maxHomeViewsBytes bounds the workspace's saved custom Home views.
+const maxHomeViewsBytes = 1 << 20
+
+var homeViewID = regexp.MustCompile(`^[\w-]{1,40}$`)
+
+// normalizeHomeViews accepts a bounded JSON array of objects. ok is false when
+// the input is unusable, so callers can keep what was stored before.
+func normalizeHomeViews(in json.RawMessage) (json.RawMessage, bool) {
+	if len(in) == 0 || len(in) > maxHomeViewsBytes {
+		return nil, false
+	}
+	var probe []map[string]json.RawMessage
+	if json.Unmarshal(in, &probe) != nil || probe == nil {
+		return nil, false
+	}
+	if len(probe) == 0 {
+		return nil, true
+	}
+	return append(json.RawMessage(nil), in...), true
+}
+
+// maxHomePrefsBytes bounds the workspace's Home preferences object.
+const maxHomePrefsBytes = 256 << 10
+
+// normalizeHomePrefs accepts a bounded JSON object. ok is false when the input
+// is unusable, so callers can keep what was stored before.
+func normalizeHomePrefs(in json.RawMessage) (json.RawMessage, bool) {
+	if len(in) == 0 || len(in) > maxHomePrefsBytes {
+		return nil, false
+	}
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(in, &probe) != nil || probe == nil {
+		return nil, false
+	}
+	if len(probe) == 0 {
+		return nil, true
+	}
+	return append(json.RawMessage(nil), in...), true
+}
+
+func isHexColor(v string) bool {
+	if len(v) != 7 || v[0] != '#' {
+		return false
+	}
+	for _, c := range v[1:] {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
 
 func normalizeHomeSettings(in HomeTabSettings) HomeTabSettings {
-	out := HomeTabSettings{Template: "default", Background: "paper"}
-	if homeTemplates[in.Template] {
+	out := HomeTabSettings{Template: "desk", Background: "paper"}
+	if next, ok := legacyHomeTemplates[in.Template]; ok {
+		out.Template = next
+	} else if homeTemplates[in.Template] {
 		out.Template = in.Template
 	}
-	if homeBackgrounds[in.Background] {
+	if next, ok := legacyHomeBackgrounds[in.Background]; ok {
+		out.Background = next
+	} else if homeBackgrounds[in.Background] {
 		out.Background = in.Background
+	}
+	if isHexColor(in.Color) {
+		out.Color = strings.ToLower(in.Color)
+	}
+	if g := in.Gradient; g != nil && isHexColor(g.From) && isHexColor(g.To) {
+		kind := "linear"
+		if g.Kind == "radial" {
+			kind = "radial"
+		}
+		angle := ((g.Angle % 360) + 360) % 360
+		out.Gradient = &HomeGradient{From: strings.ToLower(g.From), To: strings.ToLower(g.To), Angle: angle, Kind: kind}
+	}
+	if a := in.ASCII; a != nil {
+		speed := a.Speed
+		if speed < 0.25 || speed > 3 {
+			speed = 1
+		}
+		ascii := &HomeASCII{Speed: speed, Still: a.Still}
+		if isHexColor(a.Ink) {
+			ascii.Ink = strings.ToLower(a.Ink)
+		}
+		if a.Density == "fine" || a.Density == "large" {
+			ascii.Density = a.Density
+		}
+		if a.Veil != nil && *a.Veil >= 0 && *a.Veil <= 0.8 {
+			veil := *a.Veil
+			ascii.Veil = &veil
+		}
+		if a.Cursor != nil && !*a.Cursor {
+			off := false
+			ascii.Cursor = &off
+		}
+		out.ASCII = ascii
+	}
+	if len(in.Custom) > 0 && len(in.Custom) <= maxHomeCustomBytes {
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(in.Custom, &probe) == nil && probe != nil {
+			out.Custom = append(json.RawMessage(nil), in.Custom...)
+		}
+	}
+	if out.Template == "custom" && homeViewID.MatchString(in.View) {
+		out.View = in.View
+	}
+	if out.Background == "custom-color" && out.Color == "" {
+		out.Background = "paper"
+	}
+	if out.Background == "custom-gradient" && out.Gradient == nil {
+		out.Background = "paper"
 	}
 	return out
 }
@@ -856,8 +989,12 @@ func normalizeTabState(tabs []string, active string, valid map[string]bool) ([]s
 // SaveUITabs persists open tabs, the active tab, and the pane layout for a
 // workspace. Tabs may be page IDs or reserved Home tab IDs; active is the
 // active tab, not necessarily a page. layout is opaque JSON owned by the
-// frontend and is stored only when it is well-formed.
-func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string, homeTabs map[string]HomeTabSettings, layout string) error {
+// frontend and is stored only when it is well-formed. homeViews is the
+// workspace's saved custom Home views (an opaque JSON array owned by the
+// frontend); it is replaced only when it is a bounded JSON array. homePrefs is
+// the workspace's Home preferences (an opaque JSON object owned by the
+// frontend), replaced only when it is a bounded JSON object.
+func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string, homeTabs map[string]HomeTabSettings, layout string, homeViews json.RawMessage, homePrefs json.RawMessage) error {
 	ws, err := s.workspace(workspaceID)
 	if err != nil {
 		return err
@@ -877,7 +1014,21 @@ func (s *Store) SaveUITabs(workspaceID string, tabs []string, active string, hom
 	if layout != "" && !json.Valid([]byte(layout)) {
 		layout = ""
 	}
-	raw, _ := json.Marshal(UISettings{Tabs: clean, ActiveTabID: active, ActivePageID: activePageForTab(active), HomeTabs: normalizeHomeTabs(clean, homeTabs), Layout: layout})
+	views, viewsOK := normalizeHomeViews(homeViews)
+	prefs, prefsOK := normalizeHomePrefs(homePrefs)
+	if !viewsOK || !prefsOK {
+		prev, err := loadUISettings(ws.DB)
+		if err != nil {
+			return err
+		}
+		if !viewsOK {
+			views = prev.HomeViews
+		}
+		if !prefsOK {
+			prefs = prev.HomePrefs
+		}
+	}
+	raw, _ := json.Marshal(UISettings{Tabs: clean, ActiveTabID: active, ActivePageID: activePageForTab(active), HomeTabs: normalizeHomeTabs(clean, homeTabs), Layout: layout, HomeViews: views, HomePrefs: prefs})
 	_, err = ws.DB.Exec(`INSERT INTO workspace_settings(key,value) VALUES('ui',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, string(raw))
 	return err
 }

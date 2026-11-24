@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -114,12 +115,65 @@ func TestSaveReopenConflictAndSearch(t *testing.T) {
 
 func TestHomeSettingsDefaults(t *testing.T) {
 	got := normalizeHomeSettings(HomeTabSettings{Template: "neon", Background: "chartreuse"})
-	if got.Template != "default" || got.Background != "paper" {
+	if got.Template != "desk" || got.Background != "paper" {
 		t.Fatalf("unknown values should fall back to defaults: %+v", got)
 	}
-	got = normalizeHomeSettings(HomeTabSettings{Template: "focus", Background: "sage"})
-	if got.Template != "focus" || got.Background != "sage" {
+	if got := normalizeHomeSettings(HomeTabSettings{Background: "ascii-torus"}); got.Background != "ascii-galaxy" {
+		t.Fatalf("retired background should map to its successor: %+v", got)
+	}
+	got = normalizeHomeSettings(HomeTabSettings{Template: "focus", Background: "ascii-rain"})
+	if got.Template != "focus" || got.Background != "ascii-rain" {
 		t.Fatalf("supported values should survive: %+v", got)
+	}
+	if got := normalizeHomeSettings(HomeTabSettings{Template: "library"}); got.Template != "index" {
+		t.Fatalf("legacy library view should map to index: %+v", got)
+	}
+	if got := normalizeHomeSettings(HomeTabSettings{Template: "default"}); got.Template != "desk" {
+		t.Fatalf("legacy default view should map to desk: %+v", got)
+	}
+}
+
+func TestHomeAsciiWallpapers(t *testing.T) {
+	for _, id := range []string{"ascii-moon", "ascii-sunset", "ascii-galaxy", "ascii-rain", "ascii-dunes", "ascii-topo"} {
+		if got := normalizeHomeSettings(HomeTabSettings{Background: id}); got.Background != id {
+			t.Fatalf("%s should be supported: %+v", id, got)
+		}
+	}
+	for old, want := range map[string]string{"ascii-peaks": "ascii-moon", "ascii-silk": "ascii-topo", "ascii-deepsea": "ascii-moon", "ascii-city": "ascii-rain", "ascii-flow": "ascii-galaxy", "ascii-halftone": "ascii-dunes"} {
+		if got := normalizeHomeSettings(HomeTabSettings{Background: old}); got.Background != want {
+			t.Fatalf("%s should map to %s: %+v", old, want, got)
+		}
+	}
+	on, off := true, false
+	if got := normalizeHomeSettings(HomeTabSettings{Background: "ascii-moon", ASCII: &HomeASCII{Speed: 1, Cursor: &on}}); got.ASCII == nil || got.ASCII.Cursor != nil {
+		t.Fatalf("cursor on is the default and should not be stored: %+v", got.ASCII)
+	}
+	if got := normalizeHomeSettings(HomeTabSettings{Background: "ascii-moon", ASCII: &HomeASCII{Speed: 1, Cursor: &off}}); got.ASCII == nil || got.ASCII.Cursor == nil || *got.ASCII.Cursor {
+		t.Fatalf("cursor off should survive: %+v", got.ASCII)
+	}
+}
+
+func TestHomeSettingsCustomValues(t *testing.T) {
+	got := normalizeHomeSettings(HomeTabSettings{
+		Template:   "custom",
+		Background: "custom-gradient",
+		Color:      "#ABCDEF",
+		Gradient:   &HomeGradient{From: "#112233", To: "#445566", Angle: -45, Kind: "radial"},
+		ASCII:      &HomeASCII{Speed: 9, Ink: "#ff0000", Density: "huge", Still: true},
+		Custom:     json.RawMessage(`{"widgets":[{"id":"w1","type":"clock"}]}`),
+	})
+	if got.Color != "#abcdef" || got.Gradient == nil || got.Gradient.Angle != 315 || got.Gradient.Kind != "radial" {
+		t.Fatalf("custom colors should normalize: %+v %+v", got, got.Gradient)
+	}
+	if got.ASCII == nil || got.ASCII.Speed != 1 || got.ASCII.Ink != "#ff0000" || got.ASCII.Density != "" || !got.ASCII.Still {
+		t.Fatalf("ascii speed should clamp to default: %+v", got.ASCII)
+	}
+	if !strings.Contains(string(got.Custom), "clock") {
+		t.Fatalf("custom layout should survive: %s", got.Custom)
+	}
+	bad := normalizeHomeSettings(HomeTabSettings{Background: "custom-color", Color: "red", Custom: json.RawMessage(`[1,2]`)})
+	if bad.Background != "paper" || bad.Color != "" || bad.Custom != nil {
+		t.Fatalf("invalid custom values should be dropped: %+v", bad)
 	}
 }
 
@@ -128,9 +182,9 @@ func TestHomeTabsPersist(t *testing.T) {
 	homeTabs := map[string]HomeTabSettings{
 		"home:one":   {Template: "gallery", Background: "sage"},
 		"home:two":   {Template: "focus", Background: "dusk"},
-		"home:stale": {Template: "library", Background: "clay"},
+		"home:stale": {Template: "index", Background: "clay"},
 	}
-	if err := st.SaveUITabs("ws_default", []string{"home:one", "pg_welcome", "home:two", "home:one", "pg_missing"}, "home:two", homeTabs, ""); err != nil {
+	if err := st.SaveUITabs("ws_default", []string{"home:one", "pg_welcome", "home:two", "home:one", "pg_missing"}, "home:two", homeTabs, "", nil, nil); err != nil {
 		t.Fatalf("save tabs: %v", err)
 	}
 	snap, err := st.Snapshot("ws_default")
@@ -151,7 +205,7 @@ func TestHomeTabsPersist(t *testing.T) {
 	}
 
 	layout := `{"version":1,"root":{"type":"pane","id":"p1","tabs":["pg_welcome"],"activeTabId":"pg_welcome"},"focusedPaneId":"p1","maximizedPaneId":""}`
-	if err := st.SaveUITabs("ws_default", snap.Tabs, "pg_welcome", snap.HomeTabs, layout); err != nil {
+	if err := st.SaveUITabs("ws_default", snap.Tabs, "pg_welcome", snap.HomeTabs, layout, nil, nil); err != nil {
 		t.Fatalf("save page tab: %v", err)
 	}
 	snap, _ = st.Snapshot("ws_default")
@@ -162,7 +216,7 @@ func TestHomeTabsPersist(t *testing.T) {
 		t.Fatalf("layout did not round-trip: %q", snap.Layout)
 	}
 
-	if err := st.SaveUITabs("ws_default", nil, "", nil, "{not json"); err != nil {
+	if err := st.SaveUITabs("ws_default", nil, "", nil, "{not json", nil, nil); err != nil {
 		t.Fatalf("save empty tabs: %v", err)
 	}
 	snap, _ = st.Snapshot("ws_default")
@@ -195,7 +249,7 @@ func TestBacklinksFavoritesTabsAndTrash(t *testing.T) {
 	if err != nil || !favorite {
 		t.Fatalf("favorite: %v %v", favorite, err)
 	}
-	if err := st.SaveUITabs("ws_default", []string{"pg_welcome", child.ID, "pg_missing"}, child.ID, nil, ""); err != nil {
+	if err := st.SaveUITabs("ws_default", []string{"pg_welcome", child.ID, "pg_missing"}, child.ID, nil, "", nil, nil); err != nil {
 		t.Fatalf("save tabs: %v", err)
 	}
 	snap, err := st.Snapshot("ws_default")
@@ -543,5 +597,66 @@ func TestMovePreventsCycles(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("moved child missing from list")
+	}
+}
+
+func TestHomeViewsPersistAcrossTabSaves(t *testing.T) {
+	st, _ := openTestStore(t)
+	defer st.Close()
+	views := json.RawMessage(`[{"id":"v1","name":"Morning","widgets":[]}]`)
+	homeTabs := map[string]HomeTabSettings{"home:one": {Template: "custom", Background: "paper", View: "v1"}}
+	if err := st.SaveUITabs("ws_default", []string{"home:one"}, "home:one", homeTabs, "", views, nil); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	snap, err := st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if string(snap.HomeViews) != string(views) || snap.HomeTabs["home:one"].View != "v1" {
+		t.Fatalf("views not kept: %s %#v", snap.HomeViews, snap.HomeTabs["home:one"])
+	}
+	// Unusable input keeps what was stored; an empty array clears it.
+	if err := st.SaveUITabs("ws_default", snap.Tabs, snap.ActiveTabID, snap.HomeTabs, "", json.RawMessage(`{"bad":1}`), nil); err != nil {
+		t.Fatalf("save bad: %v", err)
+	}
+	if snap, _ = st.Snapshot("ws_default"); string(snap.HomeViews) != string(views) {
+		t.Fatalf("bad input replaced views: %s", snap.HomeViews)
+	}
+	bad := map[string]HomeTabSettings{"home:one": {Template: "desk", Background: "paper", View: "v1"}, "home:two": {Template: "custom", Background: "paper", View: "no spaces"}}
+	if err := st.SaveUITabs("ws_default", []string{"home:one", "home:two"}, "home:one", bad, "", json.RawMessage(`[]`), nil); err != nil {
+		t.Fatalf("save empty: %v", err)
+	}
+	snap, _ = st.Snapshot("ws_default")
+	if len(snap.HomeViews) != 0 || snap.HomeTabs["home:one"].View != "" || snap.HomeTabs["home:two"].View != "" {
+		t.Fatalf("expected cleared views and dropped view ids: %s %#v", snap.HomeViews, snap.HomeTabs)
+	}
+}
+
+func TestHomePrefsPersistAcrossTabSaves(t *testing.T) {
+	st, _ := openTestStore(t)
+	defer st.Close()
+	prefs := json.RawMessage(`{"defaultView":"focus","backgrounds":{"desk":{"background":"ascii-moon"}}}`)
+	if err := st.SaveUITabs("ws_default", []string{"home:one"}, "home:one", nil, "", nil, prefs); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	snap, err := st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if string(snap.HomePrefs) != string(prefs) {
+		t.Fatalf("prefs not kept: %s", snap.HomePrefs)
+	}
+	// Unusable input keeps what was stored; an empty object clears it.
+	if err := st.SaveUITabs("ws_default", snap.Tabs, snap.ActiveTabID, snap.HomeTabs, "", nil, json.RawMessage(`[1,2]`)); err != nil {
+		t.Fatalf("save bad: %v", err)
+	}
+	if snap, _ = st.Snapshot("ws_default"); string(snap.HomePrefs) != string(prefs) {
+		t.Fatalf("bad input replaced prefs: %s", snap.HomePrefs)
+	}
+	if err := st.SaveUITabs("ws_default", snap.Tabs, snap.ActiveTabID, snap.HomeTabs, "", nil, json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("save empty: %v", err)
+	}
+	if snap, _ = st.Snapshot("ws_default"); len(snap.HomePrefs) != 0 {
+		t.Fatalf("expected cleared prefs: %s", snap.HomePrefs)
 	}
 }

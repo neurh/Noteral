@@ -1,7 +1,7 @@
 import { AppService } from "../../bindings/noteral/internal/service";
 import type { Bootstrap, DuplicateResult, ExportResult } from "../../bindings/noteral/internal/service/models";
 import type { Asset } from "../../bindings/noteral/internal/assets/models";
-import type { HomeTabSettings } from "./home";
+import type { HomeCustomView, HomePrefs, HomeTabSettings } from "./home";
 import type { CatalogEntry, Info, Manifest, Runtime } from "../../bindings/noteral/internal/plugins/models";
 import type {
   AppSettings,
@@ -38,8 +38,8 @@ export const api = {
     AppService.MovePage(workspaceId, pageId, newParentId, beforeId),
   savePage: (workspaceId: string, pageId: string, docJson: string, expectedRevision: number) =>
     AppService.SavePage(workspaceId, pageId, docJson, expectedRevision),
-  saveTabs: (workspaceId: string, tabs: string[], activeTab: string, homeTabs: Record<string, HomeTabSettings>, layout: string) =>
-    AppService.SaveUITabs(workspaceId, tabs, activeTab, homeTabs, layout),
+  saveTabs: (workspaceId: string, tabs: string[], activeTab: string, homeTabs: Record<string, HomeTabSettings>, layout: string, homeViews: HomeCustomView[], homePrefs: HomePrefs) =>
+    AppService.SaveUITabs(workspaceId, tabs, activeTab, homeTabs, layout, homeViews, homePrefs),
   toggleFavorite: (workspaceId: string, pageId: string) => AppService.ToggleFavorite(workspaceId, pageId),
   getFavorites: (workspaceId: string) => AppService.GetFavorites(workspaceId),
   getRecent: (workspaceId: string) => AppService.GetRecent(workspaceId),

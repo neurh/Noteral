@@ -307,3 +307,71 @@ Not checked: autoscroll while dragging past the scroller edge. The scripted chec
 Follow-up (databases, Shift+Arrow):
 - The marquee missed database blocks: React node views wrap `.bn-block-content` in a `.react-renderer` div, so the `:scope > .bn-block > .bn-block-content` lookup skipped them. It now accepts both shapes. Checked: a box across the middle of an inline database selects it and highlights the whole embed (`/tmp/pwm/53-db-sel.png`).
 - Shift+↑/↓ from a caret: within a multi-line block the text selection extends line by line as before. At the block's top or bottom line it becomes a block selection of that block plus the neighbour, and further presses grow or shrink it. A text selection spanning two blocks becomes a selection of those blocks. Checked in `/tmp/pwm/shift.mjs`, including growing over a database (`60-shift-up.png`).
+
+# Rehearsal: Home redesign (views, options menu, backgrounds)
+
+Gold: a Home tab that reads as part of Noteral (paper tokens, Newsreader display, Inter UI), with eight views, a two-level options menu (root → View / Background panels with back + close), a widget-based Custom view, and animated ASCII backgrounds that never cost the editor its frame rate.
+
+Harness: server-mode build (`CGO_ENABLED=0 go build -tags server,production -o bin/noteral-server .`), `NOTERAL_DATA_DIR=/tmp/noteral-rehearsal-data WAILS_SERVER_PORT=8123`, workspace seeded with 18 pages (emoji icons, colour/gradient/image covers, 4 favourites). Playwright chromium-1148, 1366×860 and 390×844, light and dark.
+
+States filmed: Desk, Focus, Dashboard, Gallery, Timeline, Index, Launchpad, Custom (editing); menu root, View panel, Background panel (ASCII hover preview); Rain, Tide, Aurora (dark), Ripples at 390.
+
+Findings → fixes
+- Background thumbnails and gallery/continue covers rendered 0px wide. Chromium's UA sheet gives `<button>` `align-items: flex-start`, so block children of column-flex buttons shrink to content. → `align-items: stretch` on `.home-pick-card`, `.home-card`, `.hw-continue-card`.
+- Dashboard was three cramped columns inside a 715px pane at a 1366 window: breakpoints keyed to the viewport, not the pane. → `.home-scroll` is a size container (`container: home / inline-size`); layout breakpoints are `@container home`. Header/menu rules stay on `@media`.
+- Activity heatmap cells grew to 40px squares in wide cards. → week count fitted to card width with a ResizeObserver (~15px cells, 6–52 weeks).
+- Quick actions truncated ("Sea… Ctrl K") in half-width cards. → widget is an inline-size container; kbd hint hides under 330px.
+- Custom view stacked every M widget full-width below 900px. → M stays half-width until 640px.
+- Eyebrow wrapped leaving a dangling "•" at 390. → eyebrow stacks without the dot under 640px.
+
+Checks
+- ASCII cost (headless, software raster, 1366×860): main-thread ~180–210 ms/s, script 48–88 ms/s at the 20 fps cap, no long tasks; paper baseline ~1 ms/s. Engine already pauses off-screen / hidden tab / inactive Home tab, honours reduced motion (still frame), batches ≤3 fillText per row, and steps down to 12 fps then larger cells if frames exceed 14 ms.
+- Keyboard reorder in Custom (ArrowLeft on grip) persists across reload.
+- `tsc --noEmit`, vitest 92/92, `go test ./internal/...` (store) pass.
+
+Not checked
+- Real WebKitGTK desktop window (GPU path) — only headless Chromium.
+- Pointer-drag reorder filmed as a loop; only keyboard reorder was driven.
+
+## Round 2: Custom view editor and ASCII wallpapers
+
+Gold: Custom is a real editor, not a toggle. A docked Customize inspector (Page · Add · Widget) beside the live canvas. Twenty-one widgets on a 12-column grid. Spans and heights are free, every widget has its own settings, and there's undo/redo. The ASCII scenes read as illustrated wallpapers (peaks, sunset, aurora, city, galaxy, deep sea, code rain, sakura, dunes, silk), not as noise fields.
+
+Harness: same server build and data dir as above. Scripts live in `/tmp/rh/`: `custom.mjs` films Page/Widget/Add/view stills at 1366 (inspector open and closed) and 390, light and dark. `interact.mjs` drives the presets, resize drag, undo, keyboard move and add. `ascii*.mjs` measures fps per scene, `exp.mjs` bisects the CSS, and `trace.mjs` records a CDP trace.
+
+Findings → fixes
+- The inspector rendered as a floating sheet over the canvas at 1366. The `@container homeshell` rule was trying to style its own container, and a container query can't do that. → added an inner `.home-custom-frame`: row when docked, column (bottom sheet, 54%) under 760px.
+- Planner preset left holes at the editing width (about 700px). The clock and countdown kept 4/12 while their neighbours went to 6/12. → under 900px, every span from 2 to 5 becomes 6 and every span from 7 to 11 becomes 12, with no type exceptions.
+- At 390, a half-width clock sat orphaned beside nothing. → under 640px, every slot takes the full row.
+- The widget search showed a double focus ring (field ring plus input ring). → the input drops its own ring.
+- The root menu's Background thumbnail was blank for ASCII scenes. → it now shows a still `AsciiCanvas` (5px cells, not playing).
+- Empty-state copy said "panel on the right", which is wrong for the bottom sheet. → "in the Widget panel".
+
+Checks
+- All six still passes: 7–9 slots, no horizontal overflow, no console errors.
+- Presets apply the expected span sets (Balanced, Minimal, Planner, Writer, Command center).
+- Resize drag 4→2 then Ctrl+Z → 4. ArrowRight moves the focused slot. Adding "Countdown" from search inserts it after the selection and switches to the Widget tab.
+- ASCII engine, headless Node, 1016×731 at 8×16 cells: 0.08–0.9 ms/frame. 14–224 cells change per frame out of 5842 (code rain is the most).
+- In-app fps (headless, software GL): 59–61 on 7 scenes, 31–39 on Sakura, Dunes and Silk. A CDP trace puts the cost in `VizCompositorThread` (1200 ms per 1.5 s, against 470 for Aurora). `CrRendererMain` used 2 ms and the worker used 89 ms. The UI thread is never blocked. Bisecting points at the gallery cards' covers over the moving canvas, which is software compositing only.
+- `tsc --noEmit` and vitest pass.
+
+Not checked
+- Compositor cost with a GPU / WebKitGTK. The Sakura/Dunes/Silk slowdown is expected to vanish there, but that hasn't been measured.
+- Touch drag for the grip and resize handles.
+
+### Home round 3 — free-form custom views, new widgets, interactive wallpapers
+
+- Real app screen (no faux UI): `bin/noteral-server` on 8123 with `/tmp/noteral-rehearsal-data`, Playwright at 1366×860 and 390×844, light + dark (`/tmp/rh/free.mjs`).
+- Scripted checks: View panel lists built-ins + "Your views n/16" + New view; dbl-click opens the editor; bottom-handle resize of a full-width card pushes only cards beneath it; body-drag moves a card with a drop ghost on the 24-col lattice; two Ctrl+Z restore the exact boxes; adding Buttons places it in the first free spot; no horizontal overflow and no console errors at either width.
+- Under 600px canvas width the layout stacks in reading order and the inspector becomes a bottom sheet; gestures are off there (keyboard + inspector steppers still work).
+- Wallpapers: isolated esbuild harness `/tmp/rh/bg/` (main-thread engine, scrim), stills wide / hover+ripple / 390 in `montage-all.png`; compute per frame ≤ ~2ms at 1366×860 normal density (ridges 2.08ms while hovered with a ripple).
+- Known soft spots: Cross stitch and Signal read faint on low-contrast panels; Fireflies glow is small; Moon shading is slightly stripy at normal density.
+
+### Home round 4 — fewer wallpapers, per-view backgrounds, default view
+
+- Wallpapers trimmed to one "ASCII wallpapers" group: Full moon, Ocean sunset, Spiral galaxy, Code rain, Dunes, Topography. Removed scenes map to the closest survivor (TS `LEGACY_BACKGROUNDS`, Go `legacyHomeBackgrounds`).
+- Tuner is a 3-column grid (label · control · value); segmented controls fill the control column so every row lines up at 1366 and 390 (`/tmp/rh/r4/*-tune.png`).
+- Edit mode: the wallpaper ignores the cursor and dims to 70%, so dragging widgets doesn't trigger ripples behind them (`calm` prop on HomeBackdrop).
+- Backgrounds live in workspace `homePrefs.backgrounds[viewKey]` (template id or custom view id); switching view switches background. Old per-tab backgrounds migrate once.
+- View panel has "New Home tabs open [select]" + Default badge; Ctrl+T / + opens the chosen view. "New Home tab" / "Open a copy" removed from the menu.
+- Scripted: `/tmp/rh/bgmenu.mjs`, `/tmp/rh/calm.mjs` — no console errors, no horizontal overflow.

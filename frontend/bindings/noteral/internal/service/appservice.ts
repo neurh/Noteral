@@ -12,6 +12,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as json$0 from "../../../encoding/json/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as application$0 from "../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -208,8 +211,8 @@ export function SaveSettings(settings: store$0.AppSettings): $CancellablePromise
     return $Call.ByID(1783267486, settings);
 }
 
-export function SaveUITabs(workspaceID: string, tabs: string[] | null, activeTab: string, homeTabs: { [_ in string]?: store$0.HomeTabSettings } | null, layout: string): $CancellablePromise<void> {
-    return $Call.ByID(1256119601, workspaceID, tabs, activeTab, homeTabs, layout);
+export function SaveUITabs(workspaceID: string, tabs: string[] | null, activeTab: string, homeTabs: { [_ in string]?: store$0.HomeTabSettings } | null, layout: string, homeViews: json$0.RawMessage, homePrefs: json$0.RawMessage): $CancellablePromise<void> {
+    return $Call.ByID(1256119601, workspaceID, tabs, activeTab, homeTabs, layout, homeViews, homePrefs);
 }
 
 export function Search(workspaceID: string, query: string, limit: number): $CancellablePromise<store$0.SearchHit[] | null> {
