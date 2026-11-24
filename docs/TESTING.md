@@ -15,6 +15,10 @@ go test -tags gtk3 ./...
 # React: command registry, snippet formatting, editor bridge
 npm --prefix frontend test
 
+# Plugin CLI + registry bot (offline; a local server stands in for GitHub)
+node --test registry/*.test.mjs
+node registry/validate.mjs
+
 # TypeScript + production renderer
 cd frontend
 ./node_modules/.bin/tsc --noEmit

@@ -4,7 +4,7 @@ Noteral plugins are small JavaScript bundles that run in a sandboxed iframe and 
 
 - **[Manifest](manifest.md)**: every `manifest.json` field
 - **[Extending the interface](ui.md)**: sidebar tabs, status-bar widgets, custom blocks, custom page types, Home, appearance layers, testing
-- **[Publishing](publishing.md)**: GitHub Releases and the community registry
+- **[Publishing](publishing.md)**: `npm run release` and `npm run submit`, using the GitHub CLI, GitHub Releases and the community registry
 - **[API reference](../sdk/api-reference.md)**: every method, event, permission and type, generated from the source
 - **[llms.txt](../sdk/llms.txt)** / **[llms-full.txt](../sdk/llms-full.txt)**: the same material for coding agents
 
@@ -26,11 +26,11 @@ main.js       ──► loaded into a sandboxed <iframe sandbox="allow-scripts">
 ## Quick start
 
 ```bash
-git clone https://github.com/neurh/Noteral && cd Noteral
-cp -r examples/starter ../my-plugin        # manifest.json, src/main.ts, README.md
-cd ../my-plugin
-# edit manifest.json: id, name, author, repo, permissions
-npx esbuild src/main.ts --bundle --format=iife --outfile=main.js
+git clone https://github.com/neurh/noteral-plugins        # docs, SDK types, CLI, examples, registry
+node noteral-plugins/sdk/cli/noteral-plugin.mjs init my-plugin --github   # new public repo with a working plugin
+cd my-plugin
+npm run build                              # src/main.ts → main.js
+npm run check                              # the store's validation, locally
 zip my-plugin.zip manifest.json main.js    # add styles.css if you have one
 ```
 

@@ -261,6 +261,25 @@ for (const file of guides) {
 }
 emit("docs/sdk/llms-full.txt", [llmsIndex(), ...guideText, referenceMarkdown()].join("\n\n---\n\n"));
 
+// ── publishing CLI ──────────────────────────────────────────────────────────
+// sdk/cli/noteral-plugin.mjs carries the permission list between markers so it
+// stays one self-contained file; plugin repos (and the starter) keep a copy.
+
+{
+  const cliFile = "sdk/cli/noteral-plugin.mjs";
+  const cli = await readFile(path.join(root, cliFile), "utf8");
+  const start = "// @generated permissions start\n";
+  const end = "// @generated permissions end\n";
+  const from = cli.indexOf(start);
+  const to = cli.indexOf(end);
+  if (from < 0 || to < from) throw new Error(`${cliFile}: @generated permissions markers are missing`);
+  const perms = PERMISSIONS.map((p) => `  { id: ${JSON.stringify(p.id)}, title: ${JSON.stringify(p.title)}, risk: ${JSON.stringify(p.risk)} },`);
+  const block = [`export const SDK_VERSION = ${JSON.stringify(SDK_VERSION)};`, "export const PERMISSIONS = [", ...perms, "];", ""].join("\n");
+  const next = cli.slice(0, from + start.length) + block + cli.slice(to);
+  emit(cliFile, next);
+  emit("examples/starter/scripts/noteral-plugin.mjs", next);
+}
+
 // ── write or check ──────────────────────────────────────────────────────────
 
 let stale = 0;

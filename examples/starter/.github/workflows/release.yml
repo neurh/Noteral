@@ -1,5 +1,6 @@
-# Push a tag that matches manifest.json's version (e.g. `git tag 0.1.0 && git push origin 0.1.0`)
-# to publish a GitHub Release with the files Noteral's plugin store downloads.
+# Pushing a version tag (e.g. 1.2.0) publishes a GitHub Release with the files
+# Noteral's plugin store downloads. `noteral-plugin release` does the same from
+# your machine; whichever runs second just refreshes the assets.
 name: Release
 on:
   push:
@@ -13,11 +14,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npx --yes esbuild@0.28.2 src/main.ts --bundle --format=iife --outfile=main.js
-      - name: Check version
+      - name: Build and check
+        run: node scripts/noteral-plugin.mjs check --release
+      - name: Check the tag matches manifest.json
         run: test "$(node -p "require('./manifest.json').version")" = "${GITHUB_REF_NAME#v}"
       - name: Publish
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          files="manifest.json main.js"; [ -f styles.css ] && files="$files styles.css"
-          gh release create "$GITHUB_REF_NAME" $files --title "$GITHUB_REF_NAME" --generate-notes
+          entry="$(node -p "require('./manifest.json').entry || 'main.js'")"
+          files="manifest.json $entry"; [ -f styles.css ] && files="$files styles.css"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" $files --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" $files --title "$(node -p "require('./manifest.json').name") $GITHUB_REF_NAME" --generate-notes
+          fi

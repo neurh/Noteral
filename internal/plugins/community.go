@@ -19,7 +19,7 @@ import (
 // DefaultRegistryURL is the community registry Noteral reads by default. It is
 // a plain JSON file in a public GitHub repository — no Noteral server exists.
 // Plugin authors add themselves with a pull request (see docs/plugins/publishing.md).
-const DefaultRegistryURL = "https://raw.githubusercontent.com/neurh/Noteral/main/registry/community-plugins.json"
+const DefaultRegistryURL = "https://raw.githubusercontent.com/neurh/noteral-plugins/main/registry/community-plugins.json"
 
 const (
 	maxRegistryBytes   = 4 << 20
