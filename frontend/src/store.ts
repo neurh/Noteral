@@ -32,12 +32,14 @@ import {
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 export type Overlay = "palette" | "library" | "plugins" | "settings" | "workspaces" | null;
 export type LeftTab = "tree" | "favorites" | "recent" | "trash";
-export type RightTab = "outline" | "backlinks" | "info";
+/** A built-in sidebar tab ("outline", "backlinks", "info", "assistant") or a contribution key. */
+export type RightTab = string;
 
-export type ItemKind = "page" | "folder" | "database";
+/** "custom" nodes get their look and behaviour from a node type (plugin or layer). */
+export type ItemKind = "page" | "folder" | "database" | "custom";
 
 export function kindOf(page: { kind?: string } | undefined | null): ItemKind {
-  return page?.kind === "folder" || page?.kind === "database" ? page.kind : "page";
+  return page?.kind === "folder" || page?.kind === "database" || page?.kind === "custom" ? page.kind : "page";
 }
 
 // Structured-data writes are serialized per page so a slow early write can

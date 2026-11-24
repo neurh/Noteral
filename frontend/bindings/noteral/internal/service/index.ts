@@ -9,5 +9,8 @@ export {
 export type {
     Bootstrap,
     DuplicateResult,
-    ExportResult
+    ExportResult,
+    PickedPlugin,
+    PluginEnvironment,
+    PluginSource
 } from "./models.js";

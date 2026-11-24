@@ -18,6 +18,9 @@ import * as json$0 from "../../../encoding/json/models.js";
 import * as application$0 from "../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as ai$0 from "../ai/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as assets$0 from "../assets/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -25,6 +28,9 @@ import * as plugins$0 from "../plugins/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as store$0 from "../store/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as web$0 from "../web/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as time$0 from "../../../time/models.js";
@@ -35,6 +41,17 @@ import * as $models from "./models.js";
 
 export function Bootstrap(): $CancellablePromise<$models.Bootstrap> {
     return $Call.ByID(1042870756);
+}
+
+export function CancelAIStream(requestID: string): $CancellablePromise<void> {
+    return $Call.ByID(2795150786, requestID);
+}
+
+/**
+ * CheckPluginUpdates compares GitHub-installed plugins to their latest release.
+ */
+export function CheckPluginUpdates(): $CancellablePromise<plugins$0.Update[] | null> {
+    return $Call.ByID(2812344313);
 }
 
 /**
@@ -50,6 +67,14 @@ export function CreatePage(workspaceID: string, parentID: string): $CancellableP
 
 export function CreateWorkspace(name: string): $CancellablePromise<store$0.WorkspaceSnapshot> {
     return $Call.ByID(1193029587, name);
+}
+
+export function DeleteAIChat(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2941658693, id);
+}
+
+export function DeleteAIProvider(id: string): $CancellablePromise<void> {
+    return $Call.ByID(224531978, id);
 }
 
 /**
@@ -80,8 +105,12 @@ export function ExportPageMarkdown(workspaceID: string, pageID: string): $Cancel
     return $Call.ByID(4156178810, workspaceID, pageID);
 }
 
-export function FetchPluginCatalog(rawURL: string): $CancellablePromise<plugins$0.CatalogEntry[] | null> {
-    return $Call.ByID(695623560, rawURL);
+/**
+ * FetchCommunityRegistry downloads community-plugins.json. An empty URL uses
+ * the default GitHub-hosted registry.
+ */
+export function FetchCommunityRegistry(rawURL: string): $CancellablePromise<plugins$0.RegistryResult> {
+    return $Call.ByID(1615725048, rawURL);
 }
 
 /**
@@ -92,8 +121,31 @@ export function FlushDone(): $CancellablePromise<void> {
     return $Call.ByID(4013685320);
 }
 
+export function GetAIChat(id: string): $CancellablePromise<string> {
+    return $Call.ByID(3221065238, id);
+}
+
+export function GetAISettings(): $CancellablePromise<string> {
+    return $Call.ByID(381156973);
+}
+
 export function GetBacklinks(workspaceID: string, pageID: string): $CancellablePromise<store$0.PageMeta[] | null> {
     return $Call.ByID(114972066, workspaceID, pageID);
+}
+
+/**
+ * GetCommunityRelease reads the latest GitHub Release of a plugin repository.
+ */
+export function GetCommunityRelease(repo: string, expectedID: string): $CancellablePromise<plugins$0.Release> {
+    return $Call.ByID(578083436, repo, expectedID);
+}
+
+/**
+ * GetCustomizations returns the appearance/layout customization document
+ * (theme tokens, CSS snippets, layout and component options). "{}" when unset.
+ */
+export function GetCustomizations(): $CancellablePromise<string> {
+    return $Call.ByID(1076509364);
 }
 
 export function GetDataDir(): $CancellablePromise<string> {
@@ -108,6 +160,10 @@ export function GetPageTitles(workspaceID: string): $CancellablePromise<{ [_ in 
     return $Call.ByID(2452024722, workspaceID);
 }
 
+export function GetPluginEnvironment(): $CancellablePromise<$models.PluginEnvironment> {
+    return $Call.ByID(3211158162);
+}
+
 export function GetPluginRuntime(id: string): $CancellablePromise<plugins$0.Runtime> {
     return $Call.ByID(2382178291, id);
 }
@@ -117,6 +173,10 @@ export function GetPluginRuntime(id: string): $CancellablePromise<plugins$0.Runt
  */
 export function GetPluginSettings(id: string): $CancellablePromise<{ [_ in string]?: any } | null> {
     return $Call.ByID(1472584208, id);
+}
+
+export function GetPluginSource(id: string): $CancellablePromise<$models.PluginSource> {
+    return $Call.ByID(480527344, id);
 }
 
 export function GetRecent(workspaceID: string): $CancellablePromise<store$0.PageMeta[] | null> {
@@ -135,12 +195,43 @@ export function ImportAsset(workspaceID: string, pageID: string, imagesOnly: boo
     return $Call.ByID(3024721597, workspaceID, pageID, imagesOnly);
 }
 
-export function InstallCatalogPlugin(id: string): $CancellablePromise<plugins$0.Info> {
-    return $Call.ByID(766611043, id);
+export function InstallCatalogPlugin(id: string, approved: string[] | null): $CancellablePromise<plugins$0.Info> {
+    return $Call.ByID(766611043, id, approved);
 }
 
-export function InstallPlugin(): $CancellablePromise<plugins$0.Info> {
-    return $Call.ByID(3754183058);
+/**
+ * InstallCommunityPlugin installs or updates a plugin from its latest release.
+ */
+export function InstallCommunityPlugin(repo: string, expectedID: string, approved: string[] | null): $CancellablePromise<plugins$0.Info> {
+    return $Call.ByID(2932770657, repo, expectedID, approved);
+}
+
+/**
+ * InstallGeneratedPlugin installs a single-file plugin written in-app (by the
+ * assistant or the developer console). The user approved `approved` in the UI.
+ */
+export function InstallGeneratedPlugin(manifest: plugins$0.Manifest, code: string, styles: string, approved: string[] | null): $CancellablePromise<plugins$0.Info> {
+    return $Call.ByID(2134473941, manifest, code, styles, approved);
+}
+
+/**
+ * InstallPluginBundle installs a previously picked bundle after the user
+ * approved exactly the listed permissions.
+ */
+export function InstallPluginBundle(token: string, approved: string[] | null): $CancellablePromise<plugins$0.Info> {
+    return $Call.ByID(1853986474, token, approved);
+}
+
+export function ListAIChats(): $CancellablePromise<ai$0.ChatSummary[] | null> {
+    return $Call.ByID(2227712655);
+}
+
+export function ListAIModels(providerID: string): $CancellablePromise<ai$0.Model[] | null> {
+    return $Call.ByID(2397311306, providerID);
+}
+
+export function ListAIProviders(): $CancellablePromise<ai$0.ProviderView[] | null> {
+    return $Call.ByID(944546714);
 }
 
 export function ListPluginCatalog(): $CancellablePromise<plugins$0.CatalogEntry[] | null> {
@@ -171,6 +262,22 @@ export function OpenWorkspace(id: string): $CancellablePromise<store$0.Workspace
     return $Call.ByID(580247127, id);
 }
 
+/**
+ * PickPluginBundle opens a file dialog and inspects the chosen zip without
+ * installing it. Returns an empty token when the user cancels.
+ */
+export function PickPluginBundle(): $CancellablePromise<$models.PickedPlugin> {
+    return $Call.ByID(1782295644);
+}
+
+/**
+ * PluginHTTP performs an HTTP request on behalf of a plugin that holds the
+ * "network" permission. The permission is re-checked here, not only in the UI.
+ */
+export function PluginHTTP(pluginID: string, req: web$0.Request): $CancellablePromise<web$0.Response> {
+    return $Call.ByID(792729953, pluginID, req);
+}
+
 export function RenamePage(workspaceID: string, pageID: string, title: string): $CancellablePromise<store$0.PageMeta> {
     return $Call.ByID(2647629883, workspaceID, pageID, title);
 }
@@ -187,6 +294,18 @@ export function RevealDataDir(): $CancellablePromise<void> {
     return $Call.ByID(1392811090);
 }
 
+export function SaveAIChat(doc: string): $CancellablePromise<void> {
+    return $Call.ByID(2246633315, doc);
+}
+
+export function SaveAIProvider($in: ai$0.ProviderInput): $CancellablePromise<ai$0.ProviderView> {
+    return $Call.ByID(1046851588, $in);
+}
+
+export function SaveAISettings(doc: string): $CancellablePromise<void> {
+    return $Call.ByID(2184062000, doc);
+}
+
 /**
  * SaveAsset accepts a base64 payload from BlockNote's uploadFile callback. The
  * browser passes the original filename; Go validates imagery and copies it into
@@ -194,6 +313,13 @@ export function RevealDataDir(): $CancellablePromise<void> {
  */
 export function SaveAsset(workspaceID: string, pageID: string, filename: string, base64Data: string): $CancellablePromise<assets$0.Asset> {
     return $Call.ByID(4138504709, workspaceID, pageID, filename, base64Data);
+}
+
+/**
+ * SaveCustomizations replaces the customization document.
+ */
+export function SaveCustomizations(doc: string): $CancellablePromise<void> {
+    return $Call.ByID(948102353, doc);
 }
 
 export function SavePage(workspaceID: string, pageID: string, docJSON: string, expectedRevision: number): $CancellablePromise<store$0.SaveResult> {
@@ -237,6 +363,14 @@ export function SetPageData(workspaceID: string, pageID: string, data: string): 
     return $Call.ByID(1164206069, workspaceID, pageID, data);
 }
 
+/**
+ * StartAIStream begins a streaming completion. Chunks arrive as "ai:stream"
+ * events and completion as one "ai:done" event, both keyed by requestID.
+ */
+export function StartAIStream(requestID: string, providerID: string, model: string, body: string): $CancellablePromise<void> {
+    return $Call.ByID(311563404, requestID, providerID, model, body);
+}
+
 export function ToggleFavorite(workspaceID: string, pageID: string): $CancellablePromise<boolean> {
     return $Call.ByID(4022802562, workspaceID, pageID);
 }
@@ -258,4 +392,18 @@ export function UninstallPlugin(id: string): $CancellablePromise<void> {
  */
 export function WaitForFlush(timeout: time$0.Duration): $CancellablePromise<void> {
     return $Call.ByID(931584784, timeout);
+}
+
+/**
+ * WebFetch downloads a page and returns readable Markdown.
+ */
+export function WebFetch(rawURL: string, maxChars: number): $CancellablePromise<web$0.Page> {
+    return $Call.ByID(2763694408, rawURL, maxChars);
+}
+
+/**
+ * WebSearch runs a keyless web search (DuckDuckGo, falling back to Wikipedia).
+ */
+export function WebSearch(query: string, limit: number): $CancellablePromise<web$0.SearchResponse> {
+    return $Call.ByID(570042044, query, limit);
 }

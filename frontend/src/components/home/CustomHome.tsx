@@ -1,3 +1,4 @@
+import { cleanCss } from "../../lib/customizations";
 import {
   useCallback,
   useEffect,
@@ -147,6 +148,22 @@ function cloneWidget(source: HomeWidget): HomeWidget {
 }
 
 const sameBox = (a: Box, b: Box) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+
+/**
+ * Custom CSS for a view and its widgets, scoped with CSS nesting: `&` (or bare declarations)
+ * target the view root, or the widget's card for widget CSS.
+ */
+function homeScopedCss(viewId: string, layout: { css?: string; widgets: HomeWidget[] }): string {
+  const safeId = viewId.replace(/[^\w-]/g, "");
+  const parts: string[] = [];
+  if (layout.css?.trim()) parts.push(`.home-custom[data-home-view="${safeId}"] {\n${cleanCss(layout.css)}\n}`);
+  for (const widget of layout.widgets) {
+    if (!widget.css?.trim()) continue;
+    const wid = widget.id.replace(/[^\w-]/g, "");
+    parts.push(`.home-custom[data-home-view="${safeId}"] .hc-slot[data-hw="${wid}"] > .hw, .home-custom[data-home-view="${safeId}"] .hc-slot[data-hw="${wid}"] .hw-slot-body > .hw {\n${cleanCss(widget.css)}\n}`);
+  }
+  return parts.join("\n");
+}
 
 export function CustomHome({ view, editing, onEditingChange, onChange, onRename, onDuplicateView, onDeleteView }: CustomHomeProps) {
   const layout = useMemo(() => layoutOf(view), [view]);
@@ -528,6 +545,7 @@ export function CustomHome({ view, editing, onEditingChange, onChange, onRename,
   });
 
   const empty = !layout.widgets.length;
+  const scopedCss = useMemo(() => homeScopedCss(view.id, layout), [view.id, layout]);
 
   const canvas = (
     <div
@@ -539,10 +557,12 @@ export function CustomHome({ view, editing, onEditingChange, onChange, onRename,
       data-font={layout.font}
       data-valign={layout.valign}
       data-accent={layout.accent ? "custom" : undefined}
+      data-home-view={view.id}
       onPointerDown={(event) => {
         if (editing && (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains("hc-canvas"))) setSelectedId(null);
       }}
     >
+      {scopedCss ? <style>{scopedCss}</style> : null}
       <div className="hc-canvas" ref={canvasRef} style={stacked || empty ? undefined : { height: canvasHeight }} hidden={empty}>
         {editing && draft && !stacked ? (
           <div
@@ -559,6 +579,7 @@ export function CustomHome({ view, editing, onEditingChange, onChange, onRename,
         {shown.map((widget) => {
           const body = renderWidget(widget, ctxFor(widget));
           const common = {
+            "data-hw": widget.id,
             "data-type": widget.type,
             "data-card": widget.style ?? layout.cards,
             "data-tinted": widget.tint ? "" : undefined,

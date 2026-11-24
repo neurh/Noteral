@@ -35,6 +35,9 @@ import {
   type HomeHabit,
   type HomeWidget,
   type HomeWidgetType,
+  MAX_VIEW_CSS,
+  MAX_WIDGET_CSS,
+  MAX_WIDGET_HTML,
 } from "../../lib/home";
 import { useAppStore } from "../../store";
 import { isOpenable } from "./data";
@@ -421,6 +424,20 @@ function PagePanel({ layout, viewName, onLayout, onPreset, onClear, onTidy, onRe
           />
         </Field>
       </Section>
+      <Section title="Custom CSS">
+        <Field label="View CSS" hint={<>Scoped to this view; <code>&amp;</code> is the view, <code>.hw</code> a card</>}>
+          <textarea
+            className="hi-input hi-textarea hi-code"
+            rows={5}
+            spellCheck={false}
+            value={layout.css ?? ""}
+            maxLength={MAX_VIEW_CSS}
+            placeholder={"& .hw { backdrop-filter: blur(12px); }\n& .hw-head h2 { text-transform: uppercase; }"}
+            aria-label="View CSS"
+            onChange={(event) => onLayout({ css: event.target.value || undefined }, "view-css")}
+          />
+        </Field>
+      </Section>
 
       <div className="hi-footer-actions">
         <button
@@ -698,8 +715,41 @@ function WidgetPanel({ layout, widget, stacked, onWidget, onBox, onFit, onDuplic
 }
 
 function TypeSettings({ widget, patch }: { widget: HomeWidget; patch: (next: Partial<HomeWidget>, key?: string) => void }) {
+  return (
+    <>
+      <TypeFields widget={widget} patch={patch} />
+      <Field label="Card CSS" hint={<>Use <code>&amp;</code> for the card</>}>
+        <textarea
+          className="hi-input hi-textarea hi-code"
+          rows={3}
+          spellCheck={false}
+          value={widget.css ?? ""}
+          maxLength={MAX_WIDGET_CSS}
+          placeholder={"border-radius: 4px;\n& h2 { letter-spacing: .04em; }"}
+          onChange={(event) => patch({ css: event.target.value || undefined }, `css:${widget.id}`)}
+        />
+      </Field>
+    </>
+  );
+}
+
+function TypeFields({ widget, patch }: { widget: HomeWidget; patch: (next: Partial<HomeWidget>, key?: string) => void }) {
   const pages = useAppStore((state) => state.pages);
   switch (widget.type) {
+    case "html":
+      return (
+        <Field label="HTML" hint="Runs in a sandbox; window.noteral is the SDK">
+          <textarea
+            className="hi-input hi-textarea hi-code"
+            rows={10}
+            spellCheck={false}
+            value={widget.html ?? ""}
+            maxLength={MAX_WIDGET_HTML}
+            placeholder={"<h3>Hello</h3>\n<script>\n  noteral.call('pages.list', {}).then(p => document.body.append(p.length + ' pages'))\n</script>"}
+            onChange={(event) => patch({ html: event.target.value }, `html:${widget.id}`)}
+          />
+        </Field>
+      );
     case "clock":
       return <Toggle label="24-hour time" checked={widget.hour24 === true} onChange={(hour24) => patch({ hour24 })} />;
     case "quick": {

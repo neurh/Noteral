@@ -1,0 +1,23 @@
+# Push a tag that matches manifest.json's version (e.g. `git tag 0.1.0 && git push origin 0.1.0`)
+# to publish a GitHub Release with the files Noteral's plugin store downloads.
+name: Release
+on:
+  push:
+    tags: ["*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npx --yes esbuild@0.28.2 src/main.ts --bundle --format=iife --outfile=main.js
+      - name: Check version
+        run: test "$(node -p "require('./manifest.json').version")" = "${GITHUB_REF_NAME#v}"
+      - name: Publish
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          files="manifest.json main.js"; [ -f styles.css ] && files="$files styles.css"
+          gh release create "$GITHUB_REF_NAME" $files --title "$GITHUB_REF_NAME" --generate-notes

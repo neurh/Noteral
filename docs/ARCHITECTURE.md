@@ -43,7 +43,8 @@ failure is fatal with instructions to pass `--data-dir`.
 ├── noteral.db
 ├── workspaces/<workspace-id>/workspace.db
 ├── workspaces/<workspace-id>/assets/<yyyy>/<mm>/<random>-<name>
-├── plugins/<plugin-id>/{plugin.json,plugin.js,settings.json}
+├── plugins/<plugin-id>/{plugin.json (normalized manifest),main.js,styles.css,settings.json}
+├── ai/{providers.json,settings.json,chats/}
 └── backups/<YYYY-MM-DD>/{noteral.db,workspaces/.../workspace.db,manifest.json}
 ```
 
@@ -127,8 +128,9 @@ state/counts to avoid rerendering the editor on unrelated store changes.
 ## Plugins
 
 The Go plugin manager handles installation, manifest validation, embedded
-catalog copies, explicit remote catalog fetch, and settings. It never executes
-plugin JavaScript.
+catalog copies, the GitHub-hosted community registry (`registry/community-plugins.json`
+plus each plugin's latest GitHub Release), update checks, and settings. It never
+executes plugin JavaScript.
 
 The renderer creates one `<iframe sandbox="allow-scripts">` per enabled plugin.
 The SDK and entry code are injected via `srcdoc` with a local-only CSP. The
@@ -137,12 +139,26 @@ Node, or host DOM. The host:
 
 - validates `event.source`, protocol version, declared contributions, and
   permissions;
-- limits request/payload sizes and supports a 10-second request timeout;
+- routes every SDK call through `frontend/src/sdk-host` (`spec.ts` declares each
+  method's schema, permission and tier; `handlers.ts` implements it; `host.ts`
+  validates params and checks permissions);
+- limits request/payload sizes and times out commands after 30 seconds;
 - forwards only validated command/status/panel results into the UI;
 - removes commands, status items, panels, event listeners, and the iframe when
   a plugin is disabled.
 
-See [PLUGIN_SDK.md](PLUGIN_SDK.md) for the public contract.
+See [plugins/README.md](plugins/README.md) for the public contract and
+[sdk/api-reference.md](sdk/api-reference.md) for every method.
+
+## Assistant
+
+`frontend/src/assistant` is an AI chat that drives the same SDK methods as
+tools, filtered by mode (Ask = `read` tier, Edit = `+content`, Creator = `+app`).
+`internal/ai` stores providers (keys `0600`, never sent to the UI), and streams
+raw SSE lines from OpenAI-compatible, Anthropic and Gemini APIs as `ai:stream`
+events; the renderer parses them and runs the tool loop. `internal/web` gives
+key-free web search (DuckDuckGo → Wikipedia) and readable-Markdown fetch, and
+blocks private addresses. See [assistant.md](assistant.md).
 
 ## Commands
 

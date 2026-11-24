@@ -2,9 +2,12 @@ package plugins
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"noteral/internal/datadir"
 	"noteral/internal/store"
@@ -24,22 +27,68 @@ func testManager(t *testing.T) (*Manager, *store.Store) {
 	return New(st, info), st
 }
 
+// useFixtureCatalog swaps the bundled catalog (empty in the shipped app) for two test plugins.
+func useFixtureCatalog(t *testing.T) {
+	t.Helper()
+	plugins := []Manifest{
+		{ID: "com.noteral.reading-time", Name: "Reading Time", Version: "2.0.0", SDKVersion: "2.0.0", Entry: "main.js",
+			Permissions: []string{"editor.read", "ui.status", "ui.panel", "ui.modal", "settings.read", "settings.write"}},
+		{ID: "com.noteral.meeting-notes", Name: "Meeting Notes", Version: "2.0.0", SDKVersion: "2.0.0", Entry: "main.js",
+			Permissions: []string{"editor.read", "editor.write", "pages.write", "ui.notify"}},
+	}
+	files := fstest.MapFS{}
+	for _, man := range plugins {
+		data, err := json.Marshal(man)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files["catalog/plugins/"+man.ID+"/manifest.json"] = &fstest.MapFile{Data: data}
+		files["catalog/plugins/"+man.ID+"/main.js"] = &fstest.MapFile{Data: []byte("Noteral.register(class extends Noteral.Plugin {});")}
+	}
+	index, err := json.Marshal(CatalogFile{Version: 1, Plugins: plugins})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["catalog/catalog.json"] = &fstest.MapFile{Data: index}
+	previous := catalogFS
+	catalogFS = files
+	t.Cleanup(func() { catalogFS = previous })
+}
+
+func TestShippedCatalogIsEmpty(t *testing.T) {
+	manager, _ := testManager(t)
+	catalog, err := manager.Catalog()
+	if err != nil || len(catalog) != 0 {
+		t.Fatalf("the app ships no bundled plugins: %+v %v", catalog, err)
+	}
+}
+
 func TestCatalogInstallToggleRuntimeAndUninstall(t *testing.T) {
+	useFixtureCatalog(t)
 	manager, _ := testManager(t)
 	catalog, err := manager.Catalog()
 	if err != nil {
 		t.Fatalf("catalog: %v", err)
 	}
 	if len(catalog) != 2 {
-		t.Fatalf("expected 2 bundled plugins, got %d", len(catalog))
+		t.Fatalf("expected 2 fixture plugins, got %d", len(catalog))
 	}
 	const id = "com.noteral.reading-time"
-	info, err := manager.InstallCatalog(id)
+	if _, err := manager.InstallCatalog(id, nil); err == nil {
+		t.Fatal("install without approval must fail")
+	}
+	if _, err := manager.InstallCatalog(id, []string{"editor.read"}); err == nil || !strings.Contains(err.Error(), "ui.status") {
+		t.Fatalf("partial approval must name the missing permission, got %v", err)
+	}
+	info, err := manager.InstallCatalog(id, []string{"editor.read", "ui.status", "ui.panel", "ui.modal", "settings.read", "settings.write"})
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
-	if info.Enabled {
-		t.Fatal("catalog install must start disabled")
+	if !info.Enabled {
+		t.Fatal("approved catalog install should be enabled")
+	}
+	if _, err := manager.Toggle(id, false); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := manager.Runtime(id); err == nil {
 		t.Fatal("disabled plugin must not expose runtime code")
@@ -104,7 +153,7 @@ func TestInstallZipRejectsTraversal(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.InstallFromZip(zipPath); err == nil {
+	if _, err := manager.InstallFromZip(zipPath, []string{}); err == nil {
 		t.Fatal("expected traversal zip to be rejected")
 	}
 }
@@ -125,8 +174,40 @@ func TestValidateManifestPermissionsAndEntry(t *testing.T) {
 		t.Fatal("escaping entry accepted")
 	}
 	bad = base
-	bad.SDKVersion = "2.0.0"
+	bad.SDKVersion = "3.0.0"
 	if _, err := validateManifest(bad); err == nil {
 		t.Fatal("unsupported SDK accepted")
+	}
+	v2 := base
+	v2.SDKVersion = "^2.0.0"
+	if _, err := validateManifest(v2); err != nil {
+		t.Fatalf("SDK 2 rejected: %v", err)
+	}
+	noSDK := base
+	noSDK.SDKVersion, noSDK.Entry = "", ""
+	got, err := validateManifest(noSDK)
+	if err != nil || got.SDKVersion != SDKVersion || got.Entry != "main.js" {
+		t.Fatalf("defaults not applied: %+v %v", got, err)
+	}
+	bad = base
+	bad.MinAppVersion = "soon"
+	if _, err := validateManifest(bad); err == nil {
+		t.Fatal("non-semver minAppVersion accepted")
+	}
+}
+
+func TestCompareVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"1.0.0", "1.0.0", 0}, {"1.0.1", "1.0.0", 1}, {"1.2.0", "1.10.0", -1},
+		{"2.0.0", "10.0.0", -1}, {"1.0.0-beta", "1.0.0", -1}, {"v1.0.0", "1.0.0", 0},
+		{"1.0.0-beta.2", "1.0.0-beta.1", 1},
+	}
+	for _, c := range cases {
+		if got := CompareVersions(c.a, c.b); got != c.want {
+			t.Errorf("CompareVersions(%q,%q)=%d want %d", c.a, c.b, got, c.want)
+		}
 	}
 }

@@ -80,7 +80,7 @@ Data directory: `/tmp/noteral-final` (removed before the run). Binary:
    counts (`3 pages`, `1 page`) matched the databases.
 6. **Search** — `Ctrl+K`, query `Zebra`, returned Alpha Project with the body
    snippet (FTS5, not just a title filter).
-7. **Plugins** — installed **Reading Time** from the bundled catalog. It was
+7. **Plugins** — installed **Reading Time** from the bundled catalog (at the time; the shipped catalog is now empty and these live in `examples/`, so install `examples/reading-time` as a zip to repeat this). It was
    auto-enabled, the status bar showed `10 words · 1 min read`, and the
    inspector panel showed the reading-time text. Toggling it off removed the
    status item and panel immediately and wrote `plugin_state.enabled=0`.
@@ -108,8 +108,9 @@ The screenshot in the README (`docs/noteral-editor.png`) is from this run.
   covered by tests and the tree/tab components are implemented, but the pointer
   gesture itself is a manual-test item.
 - **Local plugin zip through the file dialog** was not clicked through in the
-  UI; the install/zip validation path is covered by Go tests. The bundled
-  catalog install/enable/disable path was verified in the running app.
+  UI; the install/zip validation path is covered by Go tests. The catalog
+  install/enable/disable path was verified in the running app (Go tests now use
+  a fixture catalog, since the shipped one is empty).
 - **Remote catalog fetch** was not performed against a live URL. It is
   explicit-only, validates http(s), has a timeout/size limit, and is covered by
   code/tests rather than a network test.
@@ -127,7 +128,8 @@ The screenshot in the README (`docs/noteral-editor.png`) is from this run.
 rm -rf /tmp/noteral-smoke
 ./bin/noteral --data-dir /tmp/noteral-smoke
 # create a page, type, attach an image, link a second page, create a workspace,
-# search, install/disable Reading Time, close, reopen with the same data dir.
+# search, install/disable examples/reading-time (zip manifest.json + main.js),
+# close, reopen with the same data dir.
 ```
 
 For the database spot checks used during acceptance:

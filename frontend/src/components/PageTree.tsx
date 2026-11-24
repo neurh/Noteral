@@ -1,3 +1,4 @@
+import { KindIcon } from "./KindIcon";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Copy, FileText, Folder, FolderOpen, MoreHorizontal, Plus, Star, Table2, Trash2, Pencil, Download, ArrowUpRight } from "lucide-react";
 import type { PageMeta } from "../lib/api";
@@ -167,6 +168,8 @@ export function PageTree() {
         isOpen && kids.length ? <FolderOpen size={14} /> : <Folder size={14} />
       ) : kind === "database" ? (
         <Table2 size={14} />
+      ) : kind === "custom" ? (
+        <KindIcon page={page} />
       ) : (
         <FileText size={14} />
       );

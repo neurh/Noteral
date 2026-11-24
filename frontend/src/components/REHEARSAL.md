@@ -375,3 +375,23 @@ Not checked
 - Backgrounds live in workspace `homePrefs.backgrounds[viewKey]` (template id or custom view id); switching view switches background. Old per-tab backgrounds migrate once.
 - View panel has "New Home tabs open [select]" + Default badge; Ctrl+T / + opens the chosen view. "New Home tab" / "Open a copy" removed from the menu.
 - Scripted: `/tmp/rh/bgmenu.mjs`, `/tmp/rh/calm.mjs` — no console errors, no horizontal overflow.
+
+## Plugin store (`PluginManager.tsx`) and permission review
+
+Gold: the existing modal language: `.modal` header with the reading-font title, `--bg-raised` body, `--bg-sunken` footer, `.primary-button` for the one committing action. The store reuses it; the only new visual elements are the risk badges (`--danger` / `--warning` / neutral, the same tones the assistant's approval card uses) and the switch already used in Settings.
+
+States: Installed (empty, then one community plugin), Bundled (two catalog plugins), Community (five registry entries, one already installed showing `v1.4.0 installed`), review of a high-risk plugin (`network` + `editor.write`), review → install → Installed. Light and dark, 1366×860 and 390×844.
+
+Harness: server mode (`CGO_ENABLED=0 go build -tags server,production -o bin/noteral-server .`, `WAILS_SERVER_PORT=8125`, `NOTERAL_DATA_DIR=/tmp/noteral-pl-data`) with a local GitHub mock (`/tmp/pl-rh/gh.mjs` on :9912 serving `registry.json`, `releases/latest` and `releases/latest/download/{manifest.json,main.js}`), pointed at by the new `NOTERAL_GITHUB_BASE` / `NOTERAL_GITHUB_API` env overrides (`internal/plugins/plugins.go` `New`), and the registry URL set via `localStorage["noteral.pluginRegistryUrl"]`. Stills and geometry come from `/tmp/pl-rh/shots.mjs <scheme> <W> <H> [--setup]`: modal rect, page h-scroll, overflowing descendants, console errors.
+
+Gate: a real app screen, so the `film --gate` loop does not apply (as above). Exact-width stills plus scripted geometry: zero console errors, no h-scroll, no overflowing elements in any state.
+
+Frames → findings → fixes:
+- The modal height jumped between tabs (654 → 723 → 740 px) and the tab bar moved under the cursor. Fix: `.modal.plugin-store { width: min(100%, 700px); height: min(86vh, 760px); }`, with the body `flex: 1; min-height: 0`. All states now measure 700×740 (366×726 at 390).
+- At 560 px the community cards truncated the repo (`ada/noteral-focus-ti`) to make room for tags. Fix: the wider modal, plus the tags now shrink and ellipsize first (`.plugin-tags { flex: 0 1 auto }`, `.plugin-repo-link { flex: 0 0 auto; max-width: 70% }`).
+- The review meta read `v1.4.0 · by Ada Okafor · GitHub · ada/noteral-focus-timer · 1.4.0`, repeating the version. It now reads `v1.4.0 · by … · github.com/<repo>`, and the tag is shown only when it differs from the manifest version.
+- The risk badge column (56 px) left a gap before the permission title. It is now 46 px.
+- At 390 the "Release page" button squeezed the meta into a broken `github.com/lin-` line. Fix: `.plugin-review-head` stacks at ≤620 px and the meta wraps anywhere.
+- Found while staging: `styles.css` was allowed up to 512 KB by Go (`maxStylesBytes`), but the runtime refused anything over 64 KB at load time, so the plugin would install and then fail to start. The runtime limit (`MAX_STYLE_BYTES`, `frontend/src/plugins/runtime.ts`) now matches Go at 512 KB.
+
+Not covered: the update flow with added permissions (`new` tags) and the runtime-failure row are covered by Go tests (`community_test.go`) and the code path, but weren't filmed. "Install from file" opens the native picker, which server mode can't drive.

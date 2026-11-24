@@ -1,2 +1,0 @@
-(()=>{var r=window.Noteral;function i(t,n){let o=Math.max(1,Math.ceil(t.wordCount/220)),e=t.wordCount===1?"1 word":`${t.wordCount} words`;n.status.set("reading-time",`${e} \xB7 ${o} min read`,"Estimated at 220 words per minute"),n.panels.set("reading-stats",`${e} on this page.
-About ${o} min at 220 words per minute.`)}r.definePlugin(async t=>{await t.editor.snapshot().then(n=>i(n,t)),t.events.on("document:changed",n=>{i(n,t)})});})();

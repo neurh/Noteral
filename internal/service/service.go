@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,11 +15,13 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"noteral/internal/ai"
 	"noteral/internal/assets"
 	"noteral/internal/blocknote"
 	"noteral/internal/datadir"
 	"noteral/internal/plugins"
 	"noteral/internal/store"
+	"noteral/internal/web"
 )
 
 // Version is the application version displayed in Settings/About.
@@ -31,6 +32,8 @@ type AppService struct {
 	store   *store.Store
 	assets  *assets.Manager
 	plugins *plugins.Manager
+	ai      *ai.Manager
+	web     *web.Client
 	info    datadir.Info
 	app     *application.App
 	flush   chan struct{}
@@ -38,7 +41,8 @@ type AppService struct {
 }
 
 func New(st *store.Store, am *assets.Manager, pm *plugins.Manager, info datadir.Info) *AppService {
-	return &AppService{store: st, assets: am, plugins: pm, info: info, flush: make(chan struct{})}
+	pm.SetAppVersion(Version)
+	return &AppService{store: st, assets: am, plugins: pm, ai: ai.New(info.Root), web: web.New(), info: info, flush: make(chan struct{})}
 }
 
 // SetApp is called immediately after application.New so dialogs can be shown.
@@ -389,63 +393,4 @@ func (s *AppService) WaitForFlush(timeout time.Duration) {
 	case <-s.flush:
 	case <-time.After(timeout):
 	}
-}
-
-// GetPluginSettings returns an enabled plugin's own settings object.
-func (s *AppService) GetPluginSettings(id string) (map[string]any, error) {
-	return s.plugins.GetSettings(id)
-}
-
-// SavePluginSettings merges a plugin's own settings object.
-func (s *AppService) SavePluginSettings(id string, patch map[string]any) (map[string]any, error) {
-	return s.plugins.SaveSettings(id, patch)
-}
-
-func (s *AppService) ListPlugins() ([]plugins.Info, error) { return s.plugins.List() }
-
-func (s *AppService) TogglePlugin(id string, enabled bool) (plugins.Info, error) {
-	return s.plugins.Toggle(id, enabled)
-}
-
-func (s *AppService) UninstallPlugin(id string) error { return s.plugins.Uninstall(id) }
-
-func (s *AppService) InstallPlugin() (plugins.Info, error) {
-	if s.app == nil {
-		return plugins.Info{}, fmt.Errorf("dialogs are unavailable")
-	}
-	path, err := s.app.Dialog.OpenFile().
-		SetTitle("Install a plugin bundle").
-		AddFilter("Noteral plugin", "*.zip").
-		PromptForSingleSelection()
-	if err != nil || path == "" {
-		return plugins.Info{}, err
-	}
-	return s.plugins.InstallFromZip(path)
-}
-
-func (s *AppService) ListPluginCatalog() ([]plugins.CatalogEntry, error) {
-	return s.plugins.Catalog()
-}
-
-func (s *AppService) InstallCatalogPlugin(id string) (plugins.Info, error) {
-	info, err := s.plugins.InstallCatalog(id)
-	if err != nil {
-		return plugins.Info{}, err
-	}
-	// Enabling is explicit but examples are useful immediately.
-	if strings.HasPrefix(info.Manifest.ID, "com.noteral.") {
-		return s.plugins.Toggle(id, true)
-	}
-	return info, nil
-}
-
-func (s *AppService) FetchPluginCatalog(rawURL string) ([]plugins.CatalogEntry, error) {
-	if _, err := url.ParseRequestURI(strings.TrimSpace(rawURL)); err != nil {
-		return nil, fmt.Errorf("enter a valid catalog URL")
-	}
-	return s.plugins.FetchRemoteCatalog(rawURL)
-}
-
-func (s *AppService) GetPluginRuntime(id string) (plugins.Runtime, error) {
-	return s.plugins.Runtime(id)
 }

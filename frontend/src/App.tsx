@@ -18,8 +18,10 @@ import { CommandPalette } from "./components/CommandPalette";
 import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { LibraryDialog } from "./components/LibraryDialog";
 import { PluginManager } from "./components/PluginManager";
+import { HostDialogs } from "./components/HostDialogs";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { editorBridge } from "./lib/editorBridge";
+import { toggleAssistant } from "./assistant/open";
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -166,6 +168,15 @@ function makeCommands(): AppCommand[] {
         const state = store.getState();
         state.updateSettings({ rightOpen: !state.settings.rightOpen });
       },
+    },
+    {
+      id: "app.assistant",
+      title: "Open assistant",
+      category: "View",
+      description: "Chat with an AI model about your notes, edit pages, or customize the app",
+      keywords: "ai chat llm agent ask edit creator",
+      shortcut: "Ctrl/⌘ J",
+      run: () => toggleAssistant(),
     },
     {
       id: "app.library",
@@ -329,6 +340,9 @@ export default function App() {
       } else if (key === "w") {
         event.preventDefault();
         if (state.activeTabId) void state.closeTab(state.activeTabId);
+      } else if (key === "j" && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        toggleAssistant();
       } else if (key === "b") {
         // Ctrl/Cmd+B is bold while writing; only toggle outside editable fields.
         if (isEditable(event.target) && !event.shiftKey) return;
@@ -373,7 +387,7 @@ export default function App() {
   useEffect(() => {
     const onResize = () => {
       const state = store.getState();
-      if (window.innerWidth <= 1180 && state.settings.rightOpen) state.updateSettings({ rightOpen: false }, false);
+      if (window.innerWidth <= 1180 && state.settings.rightOpen && state.rightTab !== "assistant") state.updateSettings({ rightOpen: false }, false);
       if (window.innerWidth <= 900 && state.settings.leftOpen) state.updateSettings({ leftOpen: false }, false);
     };
     onResize();
@@ -446,6 +460,7 @@ export default function App() {
       <WorkspaceDialog />
       <LibraryDialog />
       <PluginManager />
+      <HostDialogs />
       <SettingsDialog />
     </div>
   );

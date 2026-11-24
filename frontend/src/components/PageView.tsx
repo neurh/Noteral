@@ -13,16 +13,19 @@ import {
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { FileSymlink, ImagePlus, Link2, Move, Puzzle, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
+import { Blocks, FileSymlink, ImagePlus, Link2, Move, Puzzle, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
 import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
 import { commandRegistry } from "../lib/commands";
-import { editorBridge } from "../lib/editorBridge";
+import { editorBridge, type BlockSummary, type InsertPosition } from "../lib/editorBridge";
 import { statsOfDoc, type DocNode } from "../lib/docStats";
 import { kindOf, useAppStore, type LoadedDocument } from "../store";
 import { defaultSchema, serializeSchema } from "../lib/database";
 import { databaseBlockSpec } from "./database/DatabaseBlock";
+import { CustomNodeView } from "./CustomNodeView";
+import { customBlockSpec, parseBlockData, serializeBlockData } from "./CustomBlock";
+import { useContributions } from "../lib/contributions";
 import { DatabaseView } from "./database/DatabaseView";
 import { RowProperties } from "./database/RowProperties";
 import { FolderView } from "./FolderView";
@@ -41,7 +44,7 @@ const preloadIconPicker = () => { void import("./IconPickerDialog"); };
 const preloadCoverPicker = () => { void import("./CoverPickerDialog"); };
 
 const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, database: databaseBlockSpec() },
+  blockSpecs: { ...defaultBlockSpecs, database: databaseBlockSpec(), custom: customBlockSpec() },
   inlineContentSpecs: { ...defaultInlineContentSpecs, pageLink: pageLinkSpec },
 });
 
@@ -117,6 +120,22 @@ function parseDocument(raw: string): Block[] {
     // Fall through to an empty paragraph.
   }
   return [{ type: "paragraph", content: "" } as unknown as Block];
+}
+
+function summarizeBlock(block: unknown, titleFor: (id: string) => string | undefined): BlockSummary {
+  const record = block as unknown as { id: string; type: string; content?: unknown; props?: Record<string, unknown>; children?: Block[] };
+  const out: BlockSummary = { id: record.id, type: record.type, text: inlineText(record.content, titleFor) };
+  // Drop styling defaults so summaries stay short; keep meaningful props (level, checked, language, url…).
+  const props = Object.fromEntries(
+    Object.entries(record.props ?? {}).filter(([key, value]) => {
+      if (key === "textAlignment") return value !== "left";
+      return value !== "default" && value !== "" && value !== false;
+    }),
+  );
+  if (record.type === "custom" && typeof props.data === "string" && props.data.length > 400) props.data = `${props.data.slice(0, 400)}…`;
+  if (Object.keys(props).length) out.props = props;
+  if (record.children?.length) out.children = record.children.map((child) => summarizeBlock(child, titleFor));
+  return out;
 }
 
 function toPluginBlock(block: unknown): Record<string, unknown> {
@@ -273,6 +292,94 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
         }
         editor.focus();
       },
+      getMarkdown: (blockIds?: string[]) => {
+        const all = editor.document;
+        const chosen = blockIds?.length ? all.filter((block) => blockIds.includes(block.id)) : all;
+        return editor.blocksToMarkdownLossy(chosen as never);
+      },
+      getBlocks: () => editor.document.map((block) => summarizeBlock(block, titleOf)),
+      getSelection: () => {
+        const selection = editor.getSelection();
+        const cursor = editor.getTextCursorPosition().block;
+        return {
+          text: editor.getSelectedText(),
+          blockIds: selection ? selection.blocks.map((block) => block.id) : [cursor.id],
+          cursorBlockId: cursor.id,
+        };
+      },
+      insertMarkdown: async (markdown: string, position: InsertPosition, blockId?: string) => {
+        const parsed = editor.tryParseMarkdownToBlocks(markdown);
+        if (!parsed.length) return [];
+        const doc = editor.document;
+        let inserted: { id: string }[];
+        if (position === "start") {
+          inserted = editor.insertBlocks(parsed as never, doc[0], "before");
+        } else if (position === "end") {
+          const last = doc[doc.length - 1];
+          const lastEmpty = last.type === "paragraph" && !inlineText(last.content, titleOf).trim();
+          inserted = lastEmpty ? editor.replaceBlocks([last], parsed as never).insertedBlocks : editor.insertBlocks(parsed as never, last, "after");
+        } else if ((position === "before" || position === "after") && blockId) {
+          if (!editor.getBlock(blockId)) throw new Error(`Block ${blockId} does not exist`);
+          inserted = editor.insertBlocks(parsed as never, blockId, position);
+        } else {
+          const cursor = editor.getTextCursorPosition().block;
+          const empty = cursor.type === "paragraph" && !inlineText(cursor.content, titleOf).trim();
+          inserted = empty ? editor.replaceBlocks([cursor], parsed as never).insertedBlocks : editor.insertBlocks(parsed as never, cursor, "after");
+        }
+        return inserted.map((block) => block.id);
+      },
+      replaceBlocks: async (blockIds: string[], markdown: string) => {
+        const missing = blockIds.filter((id) => !editor.getBlock(id));
+        if (missing.length) throw new Error(`Unknown block ids: ${missing.join(", ")}`);
+        const parsed = editor.tryParseMarkdownToBlocks(markdown);
+        const result = editor.replaceBlocks(blockIds, (parsed.length ? parsed : [{ type: "paragraph" }]) as never);
+        return result.insertedBlocks.map((block) => block.id);
+      },
+      updateBlock: async (blockId: string, patch: { type?: string; text?: string; props?: Record<string, unknown> }) => {
+        if (!editor.getBlock(blockId)) throw new Error(`Block ${blockId} does not exist`);
+        const update: Record<string, unknown> = {};
+        if (patch.type) update.type = patch.type;
+        if (patch.props) update.props = patch.props;
+        if (typeof patch.text === "string") update.content = patch.text;
+        editor.updateBlock(blockId, update as never);
+      },
+      removeBlocks: async (blockIds: string[]) => {
+        const existing = blockIds.filter((id) => editor.getBlock(id));
+        if (existing.length) editor.removeBlocks(existing);
+      },
+      insertCustomBlock: async (kind: string, data: unknown, afterBlockId?: string) => {
+        const block = { type: "custom", props: { kind, data: serializeBlockData(data) } } as never;
+        let inserted: { id: string }[];
+        if (afterBlockId) {
+          if (!editor.getBlock(afterBlockId)) throw new Error(`Block ${afterBlockId} does not exist`);
+          inserted = editor.insertBlocks([block], afterBlockId, "after");
+        } else {
+          const cursor = editor.getTextCursorPosition().block;
+          const empty = cursor.type === "paragraph" && !inlineText(cursor.content, titleOf).trim();
+          inserted = empty ? editor.replaceBlocks([cursor], [block]).insertedBlocks : editor.insertBlocks([block], cursor, "after");
+        }
+        const id = inserted[0]?.id ?? "";
+        const doc = editor.document;
+        if (doc[doc.length - 1]?.id === id) editor.insertBlocks([{ type: "paragraph" } as never], id, "after");
+        return id;
+      },
+      getCustomBlock: (blockId: string) => {
+        const block = editor.getBlock(blockId);
+        if (!block || block.type !== ("custom" as never)) return undefined;
+        const props = block.props as unknown as { kind: string; data: string };
+        return { kind: props.kind, data: parseBlockData(props.data) };
+      },
+      setCustomBlockData: async (blockId: string, data: unknown) => {
+        const block = editor.getBlock(blockId);
+        if (!block || block.type !== ("custom" as never)) throw new Error(`Block ${blockId} is not a custom block`);
+        editor.updateBlock(blockId, { props: { data: serializeBlockData(data) } } as never);
+      },
+      setMarkdown: async (markdown: string) => {
+        const parsed = editor.tryParseMarkdownToBlocks(markdown);
+        editor.replaceBlocks(editor.document, (parsed.length ? parsed : [{ type: "paragraph" }]) as never);
+      },
+      undo: () => editor.undo(),
+      redo: () => editor.redo(),
       insertPageLink: async (pageId: string) => {
         editor.insertInlineContent([{ type: "pageLink", props: { pageId } }] as never, { updateSelection: true });
         editor.focus();
@@ -488,6 +595,29 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
     statsTimer.current = setTimeout(publishStats, active ? 250 : 1000);
   }
 
+  const { blockTypes } = useContributions();
+  const blockTypeItems = useMemo(
+    () =>
+      blockTypes.map((def) => ({
+        title: def.title,
+        subtext: def.description ?? `Added by ${def.owner.name}`,
+        group: "Custom blocks",
+        aliases: [def.type, ...(def.keywords ?? [])],
+        icon: def.icon ? <PageIcon value={def.icon} size={16} /> : <Blocks size={16} />,
+        onItemClick: () => {
+          const cursor = editor.getTextCursorPosition().block;
+          const block = { type: "custom", props: { kind: def.type, data: def.defaultData === undefined ? "" : serializeBlockData(def.defaultData) } } as never;
+          const empty = cursor.type === "paragraph" && !inlineText(cursor.content, titleOf).trim();
+          const inserted = empty ? editor.replaceBlocks([cursor], [block]).insertedBlocks : editor.insertBlocks([block], cursor, "after");
+          const id = inserted[0]?.id;
+          const doc = editor.document;
+          if (id && doc[doc.length - 1]?.id === id) editor.insertBlocks([{ type: "paragraph" } as never], id, "after");
+        },
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editor, blockTypes],
+  );
+
   const customItems = useMemo(
     () => [
       {
@@ -654,6 +784,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
             ) : null}
             {kind === "database" ? <DatabaseView databaseId={page.id} /> : null}
             {kind === "folder" ? <FolderView folderId={page.id} /> : null}
+            {kind === "custom" ? <CustomNodeView pageId={page.id} /> : null}
             {kind === "page" ? (
             <div className="page-body" onKeyDownCapture={handleEditorKeyDownCapture}>
             <BlockNoteView
@@ -683,7 +814,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
                       icon: <Puzzle size={16} />,
                       onItemClick: () => void command.run(),
                     }));
-                  return rankSlashItems([...defaults, ...customItems, ...pluginItems], query);
+                  return rankSlashItems([...defaults, ...customItems, ...blockTypeItems, ...pluginItems], query);
                 }}
               />
             </BlockNoteView>

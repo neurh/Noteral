@@ -1,4 +1,5 @@
-import { PanelLeft, PanelRight, Search } from "lucide-react";
+import { MessagesSquare, PanelLeft, PanelRight, Search } from "lucide-react";
+import { toggleAssistant } from "../assistant/open";
 import { useAppStore } from "../store";
 import { WindowControls } from "./WindowControls";
 
@@ -11,6 +12,7 @@ export function TopBar() {
   const platform = useAppStore((state) => state.bootstrap?.platform ?? "");
   const leftOpen = useAppStore((state) => state.settings.leftOpen);
   const rightOpen = useAppStore((state) => state.settings.rightOpen);
+  const assistantOpen = useAppStore((state) => state.settings.rightOpen && state.rightTab === "assistant");
   const updateSettings = useAppStore((state) => state.updateSettings);
   const setOverlay = useAppStore((state) => state.setOverlay);
   const isMac = platform === "darwin";
@@ -47,6 +49,16 @@ export function TopBar() {
         </button>
       </div>
       <div className="topbar-right">
+        <button
+          type="button"
+          className={`icon-button topbar-assistant ${assistantOpen ? "is-on" : ""}`}
+          aria-label={assistantOpen ? "Hide assistant" : "Show assistant"}
+          aria-pressed={assistantOpen}
+          title={`${assistantOpen ? "Hide" : "Show"} assistant (${isMac ? "⌘J" : "Ctrl+J"})`}
+          onClick={() => toggleAssistant()}
+        >
+          <MessagesSquare size={16} />
+        </button>
         <button
           type="button"
           className={`icon-button topbar-toggle-right ${rightOpen ? "is-on" : ""}`}

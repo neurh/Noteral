@@ -30,6 +30,7 @@ export const HOME_WIDGET_TYPES = [
   "image",
   "habits",
   "progress",
+  "html",
 ] as const;
 export type HomeWidgetType = (typeof HOME_WIDGET_TYPES)[number];
 /** Coarse size, derived from the widget width, that widgets use to pick list lengths. */
@@ -82,7 +83,14 @@ export const HOME_WIDGET_INFO: Record<HomeWidgetType, HomeWidgetInfo> = {
   habits: { label: "Habits", description: "Tick off daily habits across the week.", span: 6, rows: 20, category: "personal" },
   progress: { label: "Goals", description: "Progress bars or rings for what you're working toward.", span: 4, rows: 18, category: "personal" },
   spacer: { label: "Spacer", description: "Empty room or a divider line.", span: 12, rows: 4, category: "layout" },
+  html: { label: "Custom HTML", description: "Your own HTML, CSS and script, sandboxed, with access to the App API.", span: 6, rows: 18, category: "layout" },
 };
+
+/** Size caps for custom widgets, which are stored with the workspace's Home views. */
+export const MAX_WIDGET_HTML = 120_000;
+export const MAX_WIDGET_CSS = 20_000;
+export const MAX_WIDGET_DATA = 60_000;
+export const MAX_VIEW_CSS = 50_000;
 
 export const HOME_WIDGET_CATEGORIES: { id: HomeWidgetCategory; label: string }[] = [
   { id: "essentials", label: "Essentials" },
@@ -225,6 +233,12 @@ export interface HomeWidget {
   goals?: HomeGoal[];
   /** Image widget source (http, https or an asset URL). */
   url?: string;
+  /** Custom HTML widget: the document rendered in a sandboxed frame. */
+  html?: string;
+  /** Extra CSS for this widget's card; `&` is the card. */
+  css?: string;
+  /** Free-form JSON for HTML widgets (noteral.props.data, saved with noteral.setData). */
+  data?: unknown;
 }
 
 export type HomeCustomWidth = "narrow" | "wide" | "full";
@@ -244,6 +258,8 @@ export interface HomeCustomLayout {
   font: HomeCustomFont;
   valign: "top" | "center";
   accent?: string;
+  /** Custom CSS scoped to the view; `&` is the view root. */
+  css?: string;
   widgets: HomeWidget[];
 }
 
@@ -659,6 +675,16 @@ function normalizeWidget(w: Loose, id: string): HomeWidget {
     }
     widget.goals = goals;
   }
+  if (type === "html") widget.html = typeof w.html === "string" ? w.html.slice(0, MAX_WIDGET_HTML) : "";
+  if (typeof w.css === "string" && w.css.trim()) widget.css = w.css.slice(0, MAX_WIDGET_CSS);
+  if (type === "html" && w.data !== undefined) {
+    try {
+      const json = JSON.stringify(w.data);
+      if (json && json.length <= MAX_WIDGET_DATA) widget.data = JSON.parse(json);
+    } catch {
+      // Not JSON: drop it.
+    }
+  }
   return widget;
 }
 
@@ -689,6 +715,7 @@ export function normalizeCustomLayout(value: unknown): HomeCustomLayout | undefi
     widgets: arrangeWidgets(unplaceOverlaps(widgets)),
   };
   if (isHexColor(c.accent)) layout.accent = c.accent.toLowerCase();
+  if (typeof c.css === "string" && c.css.trim()) layout.css = c.css.slice(0, MAX_VIEW_CSS);
   return layout;
 }
 

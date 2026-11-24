@@ -10,6 +10,11 @@ export interface CatalogEntry {
     "enabled": boolean;
     "remote"?: boolean;
     "source"?: string;
+
+    /**
+     * InstalledVersion is set when a (possibly older) copy is installed.
+     */
+    "installedVersion"?: string;
 }
 
 /**
@@ -20,6 +25,27 @@ export interface CommandContribution {
     "title": string;
     "description"?: string;
     "keywords"?: string;
+}
+
+/**
+ * CommunityPlugin is a registry entry merged with local install state.
+ */
+export interface CommunityPlugin {
+    "id": string;
+    "name": string;
+    "author": string;
+    "description": string;
+    "repo": string;
+    "tags"?: string[] | null;
+    "installed": boolean;
+    "installedVersion"?: string;
+    "enabled": boolean;
+
+    /**
+     * InstalledFromRegistry is true when the local copy came from this repo, so
+     * updates can be offered for it.
+     */
+    "installedFromRegistry": boolean;
 }
 
 /**
@@ -50,8 +76,19 @@ export interface Manifest {
     "name": string;
     "version": string;
     "sdkVersion": string;
+
+    /**
+     * MinAppVersion is the oldest Noteral version the plugin supports.
+     */
+    "minAppVersion"?: string;
     "description"?: string;
     "author"?: string;
+    "authorUrl"?: string;
+
+    /**
+     * Repo is the GitHub "owner/name" the plugin is released from.
+     */
+    "repo"?: string;
     "entry": string;
     "permissions": string[] | null;
     "contributes": Contributions;
@@ -67,11 +104,44 @@ export interface PanelContribution {
 }
 
 /**
+ * RegistryResult is what the store UI renders.
+ */
+export interface RegistryResult {
+    "url": string;
+    "fetchedAt": string;
+    "plugins": CommunityPlugin[] | null;
+    "skipped": number;
+}
+
+/**
+ * Release describes the latest GitHub Release of a community plugin.
+ */
+export interface Release {
+    "repo": string;
+    "manifest": Manifest;
+    "tag"?: string;
+    "notes"?: string;
+    "publishedAt"?: string;
+    "htmlUrl": string;
+    "hasStyles": boolean;
+    "compatible": boolean;
+    "problem"?: string;
+    "installedVersion"?: string;
+    "updateAvailable": boolean;
+
+    /**
+     * NewPermissions lists permissions the release adds over the installed copy.
+     */
+    "newPermissions"?: string[] | null;
+}
+
+/**
  * Runtime is the trusted-host view used to create a sandboxed iframe.
  */
 export interface Runtime {
     "id": string;
     "code": string;
+    "styles"?: string;
     "manifest": Manifest;
 }
 
@@ -82,4 +152,17 @@ export interface StatusContribution {
     "id": string;
     "label": string;
     "description"?: string;
+}
+
+/**
+ * Update is an available update for an installed community plugin.
+ */
+export interface Update {
+    "id": string;
+    "name": string;
+    "repo": string;
+    "current": string;
+    "latest": string;
+    "newPermissions"?: string[] | null;
+    "problem"?: string;
 }

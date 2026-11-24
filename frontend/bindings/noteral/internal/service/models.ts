@@ -3,6 +3,9 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as plugins$0 from "../plugins/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as store$0 from "../store/models.js";
 
 /**
@@ -29,4 +32,39 @@ export interface DuplicateResult {
 
 export interface ExportResult {
     "path": string;
+}
+
+/**
+ * PickedPlugin describes a local bundle awaiting permission approval.
+ */
+export interface PickedPlugin {
+    "token": string;
+    "manifest": plugins$0.Manifest;
+
+    /**
+     * InstalledVersion is set when the bundle would update an installed plugin.
+     */
+    "installedVersion": string;
+    "problem": string;
+}
+
+/**
+ * PluginEnvironment tells the store which host it is talking to.
+ */
+export interface PluginEnvironment {
+    "appVersion": string;
+    "sdkVersion": string;
+    "defaultRegistryUrl": string;
+    "allowedPermissions": string[] | null;
+    "pluginsDirectory": string;
+}
+
+/**
+ * GetPluginSource returns an installed plugin's manifest, code and styles —
+ * used by the assistant to read and revise plugins it created.
+ */
+export interface PluginSource {
+    "manifest": plugins$0.Manifest;
+    "code": string;
+    "styles": string;
 }

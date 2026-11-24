@@ -10,6 +10,7 @@ import {
   Coffee,
   FileText,
   Goal,
+  CodeXml,
   Heart,
   ImageIcon,
   Link2,
@@ -51,6 +52,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { PageMeta } from "../../lib/api";
 import { coverStyle } from "../../lib/covers";
+import { APP_VIEW_PERMISSIONS, ViewFrame } from "../ViewFrame";
 import { relativeTime } from "../../lib/format";
 import {
   DEFAULT_QUICK_ACTIONS,
@@ -114,6 +116,7 @@ export const WIDGET_ICONS: Record<HomeWidgetType, LucideIcon> = {
   image: ImageIcon,
   habits: Repeat,
   progress: Goal,
+  html: CodeXml,
 };
 
 // ---------------------------------------------------------------------------
@@ -1172,6 +1175,36 @@ export function GoalsWidget({ widget, onPatch, size = "s" }: WidgetProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Custom HTML
+
+const HOME_VIEW_OWNER = { kind: "app" as const, id: "home", name: "Home" };
+
+export function HtmlWidget({ widget, editing = false, onPatch }: WidgetProps) {
+  const props = useMemo(() => ({ data: widget?.data ?? null, widgetId: widget?.id ?? "", editing }), [widget?.data, widget?.id, editing]);
+  if (!widget) return null;
+  const title = widget.title?.trim();
+  return (
+    <WidgetCard bare={!title || widget.hideTitle} title={widget.hideTitle ? undefined : title} className="hw-html">
+      {widget.html ? (
+        <ViewFrame
+          viewKey={`app:home:${widget.id}`}
+          html={widget.html}
+          owner={HOME_VIEW_OWNER}
+          permissions={APP_VIEW_PERMISSIONS}
+          props={props}
+          fill
+          onData={onPatch ? (data) => onPatch({ data }) : undefined}
+          className="hw-html-frame"
+          title={title || "Custom HTML widget"}
+        />
+      ) : (
+        <HomeEmpty>Add HTML in this widget's settings, or ask the assistant to build one.</HomeEmpty>
+      )}
+    </WidgetCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export interface RenderContext {
   /** Layout-level greeting headline. */
@@ -1233,6 +1266,8 @@ export function renderWidget(widget: HomeWidget, ctx: RenderContext): ReactNode 
       return <HabitsWidget {...props} />;
     case "progress":
       return <GoalsWidget {...props} />;
+    case "html":
+      return <HtmlWidget {...props} />;
   }
 }
 

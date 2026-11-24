@@ -26,7 +26,7 @@ func metaDest(p *PageMeta) []any {
 }
 
 func validKind(kind string) bool {
-	return kind == KindPage || kind == KindFolder || kind == KindDatabase
+	return kind == KindPage || kind == KindFolder || kind == KindDatabase || kind == KindCustom
 }
 
 // PageMetaByID returns a single page's metadata.
@@ -812,7 +812,7 @@ var homeBackgrounds = map[string]bool{
 	"dawn": true, "meadow": true, "lagoon": true, "peach": true, "aurora": true, "midnight": true,
 	"dots": true, "grid": true, "ruled": true, "blueprint": true,
 	"ascii-moon": true, "ascii-sunset": true, "ascii-galaxy": true, "ascii-rain": true, "ascii-dunes": true,
-	"ascii-topo": true,
+	"ascii-topo":   true,
 	"custom-color": true, "custom-gradient": true,
 }
 
@@ -822,7 +822,7 @@ var legacyHomeBackgrounds = map[string]string{
 	"ascii-embers": "ascii-sunset", "ascii-ripples": "ascii-moon", "ascii-contours": "ascii-dunes",
 	"ascii-life": "ascii-moon", "ascii-peaks": "ascii-moon", "ascii-aurora": "ascii-galaxy",
 	"ascii-city": "ascii-rain", "ascii-deepsea": "ascii-moon", "ascii-sakura": "ascii-dunes",
-	"ascii-silk": "ascii-topo",
+	"ascii-silk":      "ascii-topo",
 	"ascii-fireflies": "ascii-moon", "ascii-snow": "ascii-moon", "ascii-halftone": "ascii-dunes",
 	"ascii-nightsea": "ascii-moon", "ascii-pulse": "ascii-galaxy", "ascii-stitch": "ascii-topo",
 	"ascii-signal": "ascii-rain", "ascii-flow": "ascii-galaxy", "ascii-ridges": "ascii-topo",

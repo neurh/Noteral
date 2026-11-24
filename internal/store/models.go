@@ -19,6 +19,9 @@ const (
 	KindPage     = "page"
 	KindFolder   = "folder"
 	KindDatabase = "database"
+	// KindCustom is a page of a plugin- or assistant-defined type. Data holds
+	// {"type": "<type id>", "data": <JSON>}; the app renders it with the type's view.
+	KindCustom = "custom"
 )
 
 // PageMeta is the lightweight sidebar/tab representation of a page. Bodies are

@@ -4,10 +4,14 @@
 export type {
     CatalogEntry,
     CommandContribution,
+    CommunityPlugin,
     Contributions,
     Info,
     Manifest,
     PanelContribution,
+    RegistryResult,
+    Release,
     Runtime,
-    StatusContribution
+    StatusContribution,
+    Update
 } from "./models.js";
