@@ -1,3 +1,4 @@
+import { ContributedMenuItems } from "./ContributedMenuItems";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -21,7 +22,7 @@ import {
   writeTabDrag,
 } from "../lib/dragTab";
 import { paneList, type PaneNode } from "../lib/panes";
-import { isHomeTab, useAppStore } from "../store";
+import { isHomeTab, kindOf, useAppStore } from "../store";
 import { PageIcon } from "./PageIcon";
 import { KindIcon } from "./KindIcon";
 
@@ -446,6 +447,15 @@ export function TabStrip({ pane }: TabStripProps) {
                         </div>
                       );
                     })}
+                    <ContributedMenuItems
+                      context={{
+                        menu: "tab",
+                        tabKey: pane.activeTabId,
+                        pageId: pane.activeTabId && !isHomeTab(pane.activeTabId) ? pane.activeTabId : undefined,
+                        kind: pane.activeTabId && !isHomeTab(pane.activeTabId) ? kindOf(pageById.get(pane.activeTabId)) : "home",
+                      }}
+                      onDone={() => setMenuOpen(false)}
+                    />
                   </div>,
                   document.body,
                 )

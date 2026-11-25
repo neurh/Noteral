@@ -487,6 +487,16 @@ function BehaviourSettings() {
         <input type="checkbox" checked={settings.webAccess} onChange={(event) => updateSettings({ webAccess: event.target.checked })} />
         <span>Allow web search and reading pages (free, no key)</span>
       </label>
+      <label className="assistant-check">
+        <input type="checkbox" checked={settings.agents !== false} onChange={(event) => updateSettings({ agents: event.target.checked })} />
+        <span>Let the assistant start sub-agents that research in parallel (read-only)</span>
+      </label>
+      <div className="assistant-field-row">
+        <label className="assistant-field">
+          <span>Run at once</span>
+          <input className="inline-input" type="number" min={1} max={8} value={settings.parallel ?? 4} onChange={(event) => updateSettings({ parallel: clamp(Number(event.target.value), 1, 8, 4) })} />
+        </label>
+      </div>
       <div className="assistant-field-row">
         <label className="assistant-field">
           <span>Max steps</span>

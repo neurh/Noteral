@@ -23,7 +23,7 @@ import { statsOfDoc, type DocNode } from "../lib/docStats";
 import { kindOf, useAppStore, type LoadedDocument } from "../store";
 import { defaultSchema, serializeSchema } from "../lib/database";
 import { databaseBlockSpec } from "./database/DatabaseBlock";
-import { CustomNodeView } from "./CustomNodeView";
+import { CustomNodeView, useNodeType } from "./CustomNodeView";
 import { customBlockSpec, parseBlockData, serializeBlockData } from "./CustomBlock";
 import { useContributions } from "../lib/contributions";
 import { DatabaseView } from "./database/DatabaseView";
@@ -190,6 +190,9 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   const cover = coverStyle(withCoverPosition(page.cover, coverOffset.x, coverOffset.y));
   const icon = parsePageIcon(page.icon) ? page.icon : "";
   const kind = page.kind;
+  const nodeData = useAppStore((state) => (kind === "custom" ? state.pages.find((item) => item.id === page.id)?.data : undefined));
+  const nodeType = useNodeType(nodeData);
+  const fullCustom = kind === "custom" && (!nodeType || (nodeType.layout ?? "full") === "full");
   const parentId = useAppStore((state) => state.pages.find((item) => item.id === page.id)?.parentId ?? page.parentId);
   const parentIsDatabase = useAppStore((state) => kindOf(state.pages.find((item) => item.id === parentId)) === "database");
   const createItem = useAppStore((state) => state.createItem);
@@ -670,6 +673,15 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       const next = editor.document[index + 1];
       if (!next) editor.insertBlocks([{ type: "paragraph" } as never], inserted, "after");
     }
+  }
+
+  if (fullCustom) {
+    // A full-page custom type: the view is the whole page, with its own scrolling.
+    return (
+      <div className={`page-pane custom-node-pane ${active ? "active" : ""}`} aria-hidden={!active}>
+        <CustomNodeView pageId={page.id} />
+      </div>
+    );
   }
 
   return (

@@ -96,6 +96,8 @@ Rules for agents writing plugins:
 - assets.pickFile({}) → string | null [assets.write] — Ask the user to pick a file; returns its URL.
 - settings.get({}) → Record<string, unknown> [settings.read] — Read the plugin's saved settings.
 - settings.set({patch}) → Record<string, unknown> [settings.write] — Merge a patch into the plugin's saved settings.
+- settings.options({}) → Record<string, unknown> [settings.read] — The plugin's user options: saved values merged over the defaults of its declared fields.
+- settings.define({fields}) → SettingFieldInfo[] [settings.read] — Declare (replace) the fields of the plugin's Options screen at runtime.
 - preferences.get({}) → Preferences [preferences] — Read app preferences (theme, fonts, page width, autosave, …).
 - preferences.update({theme?, editorFont?, fontSize?, lineHeight?, pageWidth?, fullWidth?, autosaveDelay?, spellcheck?, reduceMotion?, showStats?}) → Preferences [preferences] — Change app preferences.
 - appearance.get({}) → Customizations [appearance] — Get the current customizations (tokens, CSS snippets, component styles).
@@ -134,12 +136,15 @@ Rules for agents writing plugins:
 - statusBar.list({}) → StatusWidgetInfo[] — List status bar widgets (built-in and custom).
 - statusBar.setWidget({id, text?, tooltip?, icon?, html?, width?, side?, order?, command?, layer?}) → StatusWidgetInfo [ui.status] — Add or update a status bar widget: text with an icon and click command, or a small HTML view.
 - statusBar.removeWidget({id, layer?}) → void [ui.status] — Remove a status bar widget.
+- menus.list({menu?}) → MenuItemInfo[] — List custom items in app menus (optionally one menu).
+- menus.addItem({id, menu, title, icon?, command, kinds?, nodeTypes?, blockTypes?, danger?, layer?}) → MenuItemInfo [menus] — Add or update an item in an app menu: the page "…" menu, tree item menu, block menu, sidebar tab menu or status bar menu.
+- menus.removeItem({id, layer?}) → void [menus] — Remove a custom menu item.
 - blocks.registerType({type, title, description?, icon?, keywords?, html, defaultData?, height?, layer?}) → BlockTypeInfo [blocks] — Register a custom editor block type rendered by an HTML view; it appears in the slash menu.
 - blocks.unregisterType({type, layer?}) → void [blocks] — Remove a custom block type (existing blocks show a placeholder).
 - blocks.listTypes({}) → BlockTypeInfo[] — List custom block types.
 - blocks.insert({type, data?, after?}) → { blockId: string } [editor.write] — Insert a custom block into the open page.
 - blocks.setData({blockId, data}) → void [editor.write] — Replace the data of a custom block in the open page.
-- nodes.registerType({type, title, description?, icon?, html, defaultData?, layer?}) → NodeTypeInfo [nodes] — Register a custom page type for the page tree, opened in a full-page HTML view.
+- nodes.registerType({type, title, description?, icon?, html, defaultData?, layout?, layer?}) → NodeTypeInfo [nodes] — Register a custom page type for the page tree, opened in a full-page HTML view.
 - nodes.unregisterType({type, layer?}) → void [nodes] — Remove a custom page type (existing items show a placeholder).
 - nodes.listTypes({}) → NodeTypeInfo[] — List custom page types.
 - nodes.create({type, title?, parentId?, data?, open?}) → { pageId: string } [pages.write] — Create an item of a custom page type in the tree.
@@ -167,6 +172,7 @@ Rules for agents writing plugins:
 - workspace:opened: WorkspaceInfo — A workspace was opened.
 - pages:changed: { count: number } — Pages were created, renamed, moved or trashed.
 - panel:action: { panelId: string; actionId: string } — A button in one of the plugin's panels or Markdown tabs was pressed.
+- settings:changed: { options: Record<string, unknown>; changed: string[] } — The user changed the plugin's options.
 - view:message: { view: string; name: string; payload: unknown } — One of the plugin's HTML views called noteral.post(name, payload).
 
 ## Permissions
@@ -199,3 +205,4 @@ Rules for agents writing plugins:
 - blocks (low): Add new kinds of blocks to the editor (rendered in a sandbox).
 - nodes (low): Add new kinds of items to the page tree (rendered in a sandbox).
 - home (medium): Create, change and remove Home views and widgets.
+- menus (low): Add items to page, tree, block, tab and status bar menus.

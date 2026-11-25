@@ -7,6 +7,7 @@ import "./styles/database.css";
 import "./styles/home.css";
 import "./styles/home-custom.css";
 import "./styles/extensions.css";
+import "./styles/assistant.css";
 import App from "./App";
 
 const root = document.getElementById("root");

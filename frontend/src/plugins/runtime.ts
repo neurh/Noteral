@@ -12,10 +12,11 @@ import { useSyncExternalStore } from "react";
 import { api, errorMessage } from "../lib/api";
 import type { Info, Manifest } from "../lib/api";
 import { commandRegistry } from "../lib/commands";
-import { contributions, emptySet } from "../lib/contributions";
+import { contributions, emptySet, normalizeMenuItem, normalizeSettingField } from "../lib/contributions";
 import { customizations } from "../lib/customizations";
 import type { ContributionSet } from "../lib/contributions";
 import { devlog } from "../lib/devlog";
+import { loadOptions, onOptionsSaved, optionFields } from "../lib/pluginOptions";
 import { viewHub } from "../lib/viewFrame";
 import { ApiError, callMethod, hasPermission } from "../sdk-host/host";
 import type { PluginSurface } from "../sdk-host/host";
@@ -95,7 +96,7 @@ export interface TrialResult {
   /** Errors and console output from the plugin while it ran. */
   logs: { level: string; message: string }[];
   commands: string[];
-  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; panels: string[]; statusItems: string[] };
+  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; menuItems: string[]; settings: string[]; panels: string[]; statusItems: string[] };
   /** App API calls the plugin made while loading. */
   calls: string[];
   /** Write calls that were not run during the test. */
@@ -134,6 +135,20 @@ function srcdoc(code: string, pluginId: string): string {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** What a plugin's manifest.json declares up front: menu items and user options. */
+function manifestContributions(manifest: Manifest): ContributionSet {
+  const set = emptySet();
+  for (const item of manifest.contributes?.menus ?? []) {
+    const def = normalizeMenuItem(item);
+    if (def) set.menuItems.push(def);
+  }
+  for (const field of manifest.contributes?.settings ?? []) {
+    const def = normalizeSettingField(field);
+    if (def) set.settings.push(def);
+  }
+  return set;
 }
 
 function protocolFor(manifest: Manifest): Protocol {
@@ -301,7 +316,7 @@ class PluginRuntimeManager {
       const frame: FrameRecord = {
         key,
         trial,
-        contrib: emptySet(),
+        contrib: manifestContributions(manifest),
         info,
         manifest,
         iframe,
@@ -323,7 +338,11 @@ class PluginRuntimeManager {
       iframe.addEventListener("load", () => this.postInit(frame));
       iframe.srcdoc = srcdoc(code, manifest.id);
       this.container.appendChild(iframe);
-      if (!trial) this.registerStaticCommands(frame);
+      if (!trial) {
+        this.registerStaticCommands(frame);
+        // Menu items and options declared in manifest.json show up right away.
+        if (frame.contrib.menuItems.length || frame.contrib.settings.length) this.publishContributions(frame);
+      }
       frame.startTimer = window.setTimeout(() => {
         if (frame.ready || this.frames.get(id) !== frame) return;
         this.fail(frame, "did not start within 6 seconds");
@@ -364,7 +383,7 @@ class PluginRuntimeManager {
     } catch (error) {
       return {
         ok: false, status: "failed", error: errorMessage(error), logs: [], commands: [], calls: [], skipped: [],
-        contributions: { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [], panels: [], statusItems: [] },
+        contributions: { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [], menuItems: [], settings: [], panels: [], statusItems: [] },
       };
     }
     if (!frame) throw new ApiError("Could not start the test frame.", "failed");
@@ -384,6 +403,8 @@ class PluginRuntimeManager {
         statusWidgets: frame.contrib.statusWidgets.map((widget) => widget.id),
         blockTypes: frame.contrib.blockTypes.map((block) => block.type),
         nodeTypes: frame.contrib.nodeTypes.map((node) => node.type),
+        menuItems: frame.contrib.menuItems.map((item) => `${item.menu}:${item.id}`),
+        settings: frame.contrib.settings.map((field) => field.key),
         panels: [...frame.panels.keys()],
         statusItems: [...frame.statuses.keys()],
       },
@@ -441,6 +462,24 @@ class PluginRuntimeManager {
       ...frame.contrib,
       sidebarTabs: tabs,
     });
+  }
+
+  /**
+   * The user (or the plugin itself) changed saved options: tell the plugin and its views.
+   * `options` is the full set with defaults filled in; `changed` lists the keys.
+   */
+  async optionsSaved(pluginId: string, changed: string[]) {
+    const frame = this.frames.get(pluginId);
+    if (!frame) return;
+    const options = await loadOptions(pluginId, optionFields(frame.manifest));
+    this.optionsChanged(pluginId, options, changed);
+  }
+
+  optionsChanged(pluginId: string, options: Record<string, unknown>, changed: string[]) {
+    const data = { options, changed };
+    const frame = this.frames.get(pluginId);
+    if (frame?.ready && frame.subscriptions.has("settings:changed")) this.post(frame, { type: "event", event: "settings:changed", data });
+    viewHub.emit("settings:changed", data, (view) => view.ownerKind === "plugin" && view.ownerId === pluginId);
   }
 
   /** A plugin's HTML view called noteral.post(name, payload). */
@@ -530,7 +569,20 @@ class PluginRuntimeManager {
     commandRegistry.unregister(this.commandId(frame, localId));
   }
 
-  private runCommand(frame: FrameRecord, commandId: string): Promise<void> {
+  /**
+   * Run one of a plugin's commands from a menu item, passing what the menu was opened on
+   * (page, block, tab…). The handler receives it as its first argument.
+   */
+  runMenuCommand(pluginId: string, commandId: string, context: Record<string, unknown>): Promise<void> {
+    const frame = this.frames.get(pluginId);
+    if (!frame) {
+      notify("That plugin is not running.", "error");
+      return Promise.resolve();
+    }
+    return this.runCommand(frame, commandId, context);
+  }
+
+  private runCommand(frame: FrameRecord, commandId: string, context?: Record<string, unknown>): Promise<void> {
     if (this.frames.get(frame.key) !== frame) return Promise.resolve();
     if (!frame.ready) {
       notify(`Plugin “${frame.manifest.name}” is ${frame.failed ? "not running" : "still starting"}.`);
@@ -543,7 +595,7 @@ class PluginRuntimeManager {
         reject(new Error(`“${frame.manifest.name}” did not finish the command in time.`));
       }, COMMAND_TIMEOUT);
       frame.pending.set(requestId, { resolve, reject, timer });
-      this.post(frame, { type: "command", commandId, requestId });
+      this.post(frame, { type: "command", commandId, requestId, context: context ?? null });
     }).catch((error) => {
       notify(`${frame.manifest.name}: ${errorMessage(error)}`, "error");
     });
@@ -807,6 +859,7 @@ function sleep(ms: number) {
 }
 
 export const pluginRuntime = new PluginRuntimeManager();
+onOptionsSaved((pluginId, _saved, changed) => void pluginRuntime.optionsSaved(pluginId, changed));
 
 const subscribe = (listener: () => void) => pluginRuntime.subscribe(listener);
 

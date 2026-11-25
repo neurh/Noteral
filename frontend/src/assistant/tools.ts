@@ -84,6 +84,7 @@ export async function runTool(
 // ── presentation ─────────────────────────────────────────────────────────
 
 const VERBS: Record<string, [string, string]> = {
+  "agents.run": ["Running an agent", "Ran an agent"],
   "web.search": ["Searching the web", "Searched the web"],
   "web.fetch": ["Reading", "Read"],
   "editor.getMarkdown": ["Reading the page", "Read the page"],
@@ -149,4 +150,24 @@ export function toolHint(name: string, args: Record<string, unknown>): string {
 
 export function toolSpec(name: string): MethodSpec | undefined {
   return METHODS.find((method) => method.name === name);
+}
+
+/** Read-only lookups that can safely run at the same time as others in the same turn. */
+export function canRunInParallel(name: string): boolean {
+  if (name === "agents.run") return true;
+  if (name.startsWith("ui.") || name.startsWith("navigation.") || name.startsWith("tabs.")) return false;
+  const spec = METHODS.find((method) => method.name === name);
+  return spec?.tier === "read" && !spec.confirm;
+}
+
+/** Runs `jobs` with at most `limit` in flight; resolves when all settle. */
+export async function runLimited(jobs: (() => Promise<void>)[], limit: number): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      await job();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, jobs.length)) }, worker));
 }

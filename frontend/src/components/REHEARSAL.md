@@ -395,3 +395,13 @@ Frames → findings → fixes:
 - Found while staging: `styles.css` was allowed up to 512 KB by Go (`maxStylesBytes`), but the runtime refused anything over 64 KB at load time, so the plugin would install and then fail to start. The runtime limit (`MAX_STYLE_BYTES`, `frontend/src/plugins/runtime.ts`) now matches Go at 512 KB.
 
 Not covered: the update flow with added permissions (`new` tags) and the runtime-failure row are covered by Go tests (`community_test.go`) and the code path, but weren't filmed. "Install from file" opens the native picker, which server mode can't drive.
+
+## Round 4: full custom pages and transparent views
+
+I checked this with a mock Creator turn (`/tmp/ai-rh/board.mjs`). The turn registers a `board` page type with `layout: "full"`, a custom block and an HTML status widget, then calls `nodes.create`. Results at 1366 and 390:
+
+- The item opens in `.custom-node-pane` with no title, cover or icon, and the frame fills the pane (1016×693 at 1366).
+- No outer element scrolls. The only scroll area is the view's own `main`.
+- Inside each frame, `html` and `body` compute to `rgba(0, 0, 0, 0)`, so the status widget blends into the bar.
+- `noteral.surface` is `page` / `status` and `noteral.fill` is `true` for the full page.
+- Fault fixed: the status bar showed "0 words · 1 blocks" for custom items, folders and databases. Stats now show only for documents.

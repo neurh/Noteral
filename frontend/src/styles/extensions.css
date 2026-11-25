@@ -74,9 +74,15 @@ body.resizing-rows, body.resizing-rows * { cursor: row-resize !important; }
 .custom-block-missing code { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-soft); }
 
 /* ── custom page types ─────────────────────────────────────────────────── */
+/* layout "full": the view is the page. One scroll container: the view's own document. */
+.page-pane.custom-node-pane { flex-direction: column; background: var(--bg); }
+.custom-node-view.is-full { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.custom-node-view.is-full .custom-node-frame { flex: 1; min-height: 0; }
+/* layout "page": under the page head, growing with its content (the page scrolls). */
 .page-editor.kind-custom { width: min(100%, max(var(--page-width, 780px), 1180px)); }
-.custom-node-view { display: flex; flex-direction: column; min-height: max(420px, calc(100vh - 300px)); }
-.custom-node-frame { flex: 1; min-height: 0; width: 100%; border: 0; display: block; }
+.custom-node-view.is-page { margin-top: 6px; }
+.custom-node-frame { width: 100%; border: 0; display: block; }
+.custom-node-pane > .custom-node-missing { margin-top: 18vh; }
 .custom-node-missing {
   margin: 48px auto; max-width: 420px; padding: 18px 20px; text-align: center;
   border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); color: var(--text-muted); font-size: 13px;
@@ -113,7 +119,7 @@ button.status-widget:hover { background: var(--bg-hover); color: var(--text); }
 /* ── Sandboxed HTML views (plugins, layers, Home widgets) ────────────── */
 .view-frame { position: relative; width: 100%; min-width: 0; }
 .view-frame.is-fill { flex: 1; min-height: 0; height: 100%; }
-.view-frame > iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
+.view-frame > iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
 .view-frame-error {
   position: absolute; left: 6px; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 6px;
   padding: 4px 4px 4px 8px; border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger);
@@ -148,3 +154,38 @@ button.status-widget:hover { background: var(--bg-hover); color: var(--text); }
 .switch.is-small .switch-track { width: 24px; height: 14px; }
 .switch.is-small .switch-thumb { top: 2px; left: 2px; width: 10px; height: 10px; }
 .switch.is-small input:checked + .switch-track .switch-thumb { transform: translateX(10px); }
+
+/* ── menu items added by plugins and customizations ──────────────────── */
+.menu .contributed-menu-item { gap: 8px; }
+.contributed-menu-item > svg, .contributed-menu-item > .page-icon { flex: none; color: var(--text-muted); }
+.contributed-menu-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contributed-menu-owner { flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-faint); }
+.menu-item-dot { flex: none; width: 14px; height: 14px; display: inline-grid; place-items: center; }
+.menu-item-dot::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--text-faint); }
+.menu.status-menu { z-index: 120; min-width: 210px; }
+
+/* ── plugin options (Plugins → Installed → sliders button) ──────────── */
+.plugin-row-side .plugin-options-toggle:hover { color: var(--text); background: var(--bg-hover); }
+.plugin-row-side .plugin-options-toggle.active { color: var(--accent-deep); background: var(--accent-softer); }
+.plugin-options { margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-sunken); display: flex; flex-direction: column; gap: 14px; }
+.plugin-options.is-loading { flex-direction: row; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.plugin-options-section { display: flex; flex-direction: column; gap: 12px; }
+.plugin-options-section > h5 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
+.plugin-option { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.plugin-option > label, .plugin-option-text > label { font-size: 12.5px; font-weight: 550; color: var(--text); }
+.plugin-option-help { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+.plugin-option.is-toggle { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.plugin-option-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.plugin-option input[type="text"], .plugin-option input[type="number"], .plugin-option select, .plugin-option textarea {
+  width: 100%; min-height: 30px; padding: 5px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--bg-raised); color: var(--text); font: inherit; font-size: 12.5px; outline: none;
+}
+.plugin-option textarea { resize: vertical; line-height: 1.5; }
+.plugin-option input:focus-visible, .plugin-option select:focus-visible, .plugin-option textarea:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-softer); }
+.plugin-option-slider { display: flex; align-items: center; gap: 10px; }
+.plugin-option-slider input { flex: 1; accent-color: var(--accent); }
+.plugin-option-slider output { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-muted); }
+.plugin-option-color { display: flex; align-items: center; gap: 8px; }
+.plugin-option-color input { width: 34px; height: 26px; padding: 0; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; }
+.plugin-option-color code { font-size: 11.5px; color: var(--text-muted); }
+.plugin-options-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }

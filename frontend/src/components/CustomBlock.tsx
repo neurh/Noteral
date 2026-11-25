@@ -46,6 +46,7 @@ function CustomBlockBody({ blockId, kind, data, editable, onData }: CustomBlockB
   }
   return (
     <ViewFrame
+      surface="block"
       viewKey={`${def.key}#${blockId}`}
       html={def.html}
       owner={def.owner}

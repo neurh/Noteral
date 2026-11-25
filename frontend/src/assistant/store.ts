@@ -1,6 +1,10 @@
 /**
  * Assistant state and the agent loop: stream a completion, run the tools it asks
  * for (asking the user where needed), feed the results back, repeat.
+ *
+ * Each chat runs on its own: switching or starting chats doesn't stop a running
+ * one, and several chats can work at once. Within a turn, read-only lookups and
+ * sub-agents (agents.run) run in parallel.
  */
 import { Events } from "@wailsio/runtime";
 import { create } from "zustand";
@@ -9,6 +13,7 @@ import type { ChatSummary, ProviderInput, ProviderView } from "../lib/api";
 import { callMethod } from "../sdk-host/host";
 import type { ActivePage, AppInfo } from "../sdk-host/types";
 import type { AskAnswer } from "../lib/dialogs";
+import { AGENT_TOOL, agentSystemPrompt, agentTitle, agentToolDef, agentTools } from "./agents";
 import { resolveMentions } from "./mentions";
 import type { Mention } from "./mentions";
 import { effectiveThinking, modelKey, resolveModel } from "./models";
@@ -17,24 +22,37 @@ import { buildBody, newId, StreamParser } from "./protocol";
 import { presetFor } from "./providers";
 import type { ProviderKind } from "./providers";
 import { systemPrompt } from "./prompt";
-import { needsApproval, runTool, toolDefs } from "./tools";
+import { sourcesOfCall } from "./sources";
+import { canRunInParallel, needsApproval, runLimited, runTool, toolDefs } from "./tools";
 import { DEFAULT_SETTINGS } from "./types";
-import type { AssistantMode, AssistantSettings, Chat, ChatMessage, Part, ToolPart } from "./types";
+import type { AgentRun, AgentStep, AssistantMode, AssistantSettings, Chat, ChatMessage, Part, ToolPart, Usage } from "./types";
 
 export type AssistantView = "chat" | "history" | "providers";
+
+/** A chat that is working right now. */
+export interface RunInfo {
+  messageId: string;
+  startedAt: number;
+  title: string;
+}
 
 interface AssistantState {
   ready: boolean;
   providers: ProviderView[];
   settings: AssistantSettings;
   chats: ChatSummary[];
+  /** The open chat. */
   chat: Chat;
+  /** Chats that are working, by chat id. */
+  runs: Record<string, RunInfo>;
+  /** Tool ids waiting for the user, by chat id. */
+  waiting: Record<string, string[]>;
+  /** Mirrors for the open chat. */
   running: boolean;
-  view: AssistantView;
-  /** Tool ids waiting for the user. */
   awaiting: string[];
-  /** Methods the user allowed for the rest of this chat. */
+  /** Methods the user allowed for the rest of the open chat. */
   allowed: string[];
+  view: AssistantView;
 
   init(): Promise<void>;
   setView(view: AssistantView): void;
@@ -50,7 +68,8 @@ interface AssistantState {
   refreshChats(): Promise<void>;
   send(text: string, mentions?: Mention[]): Promise<void>;
   regenerate(): Promise<void>;
-  stop(): void;
+  /** Stops the open chat (or the given one). */
+  stop(chatId?: string): void;
   respond(toolId: string, allow: boolean, always?: boolean): void;
   /** Answer a question the assistant asked with ui.ask. */
   answer(toolId: string, answer: AskAnswer): void;
@@ -94,14 +113,42 @@ function listen() {
   }
 }
 
-// ── loop control (module-level: one run at a time) ─────────────────────────
+// ── per-chat run control ────────────────────────────────────────────────────
 
-let activeRequest: string | null = null;
-let stopRequested = false;
-const approvals = new Map<string, (allow: boolean) => void>();
-const answers = new Map<string, (answer: AskAnswer) => void>();
+interface Control {
+  stopped: boolean;
+  /** In-flight stream ids (the main loop and any sub-agents). */
+  requests: Set<string>;
+  approvals: Map<string, (allow: boolean) => void>;
+  answers: Map<string, (answer: AskAnswer) => void>;
+}
+
+const controls = new Map<string, Control>();
+/** Chats kept in memory: the open one and any that are running. */
+const live = new Map<string, Chat>();
+/** Per-chat "allow for this chat" lists. */
+const allowedByChat = new Map<string, string[]>();
 const discoveredProviders = new Set<string>();
 let settingsTimer: number | undefined;
+
+function controlFor(chatId: string): Control {
+  let control = controls.get(chatId);
+  if (!control) {
+    control = { stopped: false, requests: new Set(), approvals: new Map(), answers: new Map() };
+    controls.set(chatId, control);
+  }
+  return control;
+}
+
+function releaseControl(chatId: string, control: Control) {
+  for (const resolve of control.approvals.values()) resolve(false);
+  control.approvals.clear();
+  for (const resolve of control.answers.values()) resolve({ answer: "", choices: [], cancelled: true });
+  control.answers.clear();
+  for (const id of control.requests) void api.cancelAIStream(id).catch(() => undefined);
+  control.requests.clear();
+  if (controls.get(chatId) === control) controls.delete(chatId);
+}
 
 function persistSettings(settings: AssistantSettings) {
   window.clearTimeout(settingsTimer);
@@ -126,21 +173,108 @@ async function promptContext(webAccess: boolean, toolCount: number) {
   };
 }
 
+type StreamResult = { parts: Part[]; usage?: Usage; error?: string; cancelled?: boolean; finish?: string };
+
+/**
+ * Stamps thinking parts with when they started and ended, so the timeline can show
+ * "Thought for 12s". A thinking part ends when anything follows it or the stream ends.
+ */
+function thinkingClock() {
+  const stamps: { startedAt?: number; endedAt?: number }[] = [];
+  return (parts: Part[], finished = false): Part[] => {
+    const now = Date.now();
+    return parts.map((part, index) => {
+      if (part.type !== "thinking") return part;
+      const stamp = (stamps[index] ??= {});
+      stamp.startedAt ??= now;
+      if (!stamp.endedAt && (finished || index < parts.length - 1)) stamp.endedAt = now;
+      return { ...part, startedAt: stamp.startedAt, ...(stamp.endedAt ? { endedAt: stamp.endedAt } : {}) };
+    });
+  };
+}
+
+/** One streamed completion. Resolves with what the model produced. */
+function streamStep(control: Control, kind: ProviderKind, providerId: string, model: string, body: Record<string, unknown>, onParts: (parts: Part[]) => void) {
+  return new Promise<StreamResult>((resolve) => {
+    const requestId = newId("req");
+    const parser = new StreamParser(kind);
+    const clock = thinkingClock();
+    control.requests.add(requestId);
+    streams.set(requestId, {
+      lines(lines) {
+        for (const line of lines) parser.push(line);
+        onParts(clock(parser.parts.map((part) => ({ ...part }))));
+      },
+      done(event) {
+        control.requests.delete(requestId);
+        const result = parser.result();
+        resolve({ ...result, parts: clock(result.parts.map((part) => ({ ...part })), true), error: parser.error || event.error || undefined, cancelled: event.cancelled });
+      },
+    });
+    api.startAIStream(requestId, providerId, model, JSON.stringify(body)).catch((error: unknown) => {
+      streams.delete(requestId);
+      control.requests.delete(requestId);
+      resolve({ parts: [], error: errorMessage(error) });
+    });
+    // Stopped before the stream registered: cancel it right away.
+    if (control.stopped) void api.cancelAIStream(requestId).catch(() => undefined);
+  });
+}
+
+const isOutputLimit = (finish?: string) => finish === "length" || finish === "max_tokens" || finish === "MAX_TOKENS";
+const AGENT_MAX_STEPS = 12;
+
 export const useAssistant = create<AssistantState>((set, get) => {
-  /** Replaces one message in the current chat (by id) — only if that chat is still open. */
-  const patchMessage = (chatId: string, messageId: string, patch: (message: ChatMessage) => ChatMessage) => {
-    const { chat } = get();
-    if (chat.id !== chatId) return;
-    set({ chat: { ...chat, messages: chat.messages.map((message) => (message.id === messageId ? patch(message) : message)) } });
+  /** Recomputes the open chat's mirrors. */
+  const mirrors = (chatId: string, runs = get().runs, waiting = get().waiting) => ({
+    running: Boolean(runs[chatId]),
+    awaiting: waiting[chatId] ?? [],
+    allowed: allowedByChat.get(chatId) ?? [],
+  });
+
+  /** Makes `chat` the open chat. */
+  const showChat = (chat: Chat, extra: Partial<AssistantState> = {}) => {
+    const previous = get().chat;
+    if (previous.id !== chat.id && !get().runs[previous.id]) live.delete(previous.id);
+    live.set(chat.id, chat);
+    set({ chat, ...mirrors(chat.id), ...extra });
   };
 
-  const patchTool = (chatId: string, messageId: string, toolId: string, patch: Partial<ToolPart>) =>
+  const chatById = (chatId: string) => live.get(chatId) ?? (get().chat.id === chatId ? get().chat : undefined);
+
+  /** Writes a chat (running or open); updates the view when it's the open one. */
+  const commit = (chat: Chat) => {
+    live.set(chat.id, chat);
+    if (get().chat.id === chat.id) set({ chat });
+  };
+
+  const patchMessage = (chatId: string, messageId: string, patch: (message: ChatMessage) => ChatMessage) => {
+    const chat = chatById(chatId);
+    if (!chat) return;
+    commit({ ...chat, messages: chat.messages.map((message) => (message.id === messageId ? patch(message) : message)) });
+  };
+
+  const patchTool = (chatId: string, messageId: string, toolId: string, patch: Partial<ToolPart> | ((part: ToolPart) => Partial<ToolPart>)) =>
     patchMessage(chatId, messageId, (message) => ({
       ...message,
-      parts: message.parts.map((part) => (part.type === "tool" && part.id === toolId ? { ...part, ...patch } : part)),
+      parts: message.parts.map((part) => (part.type === "tool" && part.id === toolId ? { ...part, ...(typeof patch === "function" ? patch(part) : patch) } : part)),
     }));
 
-  const currentMessage = (messageId: string) => get().chat.messages.find((message) => message.id === messageId);
+  const messageOf = (chatId: string, messageId: string) => chatById(chatId)?.messages.find((message) => message.id === messageId);
+
+  const setRun = (chatId: string, info: RunInfo | null) => {
+    const runs = { ...get().runs };
+    if (info) runs[chatId] = info;
+    else delete runs[chatId];
+    const waiting = { ...get().waiting };
+    if (!info) delete waiting[chatId];
+    set({ runs, waiting, ...(get().chat.id === chatId ? mirrors(chatId, runs, waiting) : {}) });
+  };
+
+  const setWaiting = (chatId: string, update: (ids: string[]) => string[]) => {
+    const waiting = { ...get().waiting, [chatId]: update(get().waiting[chatId] ?? []) };
+    set({ waiting, ...(get().chat.id === chatId ? { awaiting: waiting[chatId] } : {}) });
+  };
 
   const saveChat = async (chat: Chat) => {
     if (!chat.messages.length) return;
@@ -152,43 +286,111 @@ export const useAssistant = create<AssistantState>((set, get) => {
     }
   };
 
-  /** One streamed completion. Resolves with what the model produced. */
-  const streamStep = (kind: ProviderKind, providerId: string, model: string, body: Record<string, unknown>, onParts: (parts: Part[]) => void) =>
-    new Promise<{ parts: Part[]; usage?: { input: number; output: number }; error?: string; cancelled?: boolean; finish?: string }>((resolve) => {
-      const requestId = newId("req");
-      const parser = new StreamParser(kind);
-      activeRequest = requestId;
-      streams.set(requestId, {
-        lines(lines) {
-          for (const line of lines) parser.push(line);
-          onParts(parser.parts.map((part) => ({ ...part })));
-        },
-        done(event) {
-          if (activeRequest === requestId) activeRequest = null;
-          const result = parser.result();
-          resolve({ ...result, parts: result.parts.map((part) => ({ ...part })), error: parser.error || event.error || undefined, cancelled: event.cancelled });
-        },
+  const waitFor = <T,>(chatId: string, toolId: string, register: (resolve: (value: T) => void) => void) =>
+    new Promise<T>((resolve) => {
+      register(resolve);
+      setWaiting(chatId, (ids) => [...ids, toolId]);
+    }).finally(() => setWaiting(chatId, (ids) => ids.filter((id) => id !== toolId)));
+
+  /** Runs one sub-agent to completion; its progress is mirrored into the parent tool part. */
+  const runAgent = async (
+    control: Control,
+    chatId: string,
+    messageId: string,
+    call: ToolPart,
+    env: { kind: ProviderKind; provider: ProviderView; model: string; settings: AssistantSettings; thinking: ReturnType<typeof effectiveThinking>; workspace: string | null },
+  ): Promise<string> => {
+    const title = agentTitle(call.args);
+    const task = typeof call.args.task === "string" ? call.args.task : "";
+    if (!task.trim()) throw new Error("agents.run needs a task.");
+    const startedAt = Date.now();
+    let run: AgentRun = { title, task, status: "running", steps: [], text: "", startedAt };
+    const publish = (patch: Partial<AgentRun>) => {
+      run = { ...run, ...patch };
+      patchTool(chatId, messageId, call.id, { agent: run });
+    };
+    publish({});
+
+    const tools = agentTools(env.settings);
+    const system = agentSystemPrompt({ workspace: env.workspace, webAccess: env.settings.webAccess, title });
+    const chatTitleText = chatById(chatId)?.title ?? "";
+    const user: ChatMessage = { id: newId("msg"), role: "user", parts: [{ type: "text", text: task }], createdAt: startedAt };
+    let reply: ChatMessage = { id: newId("msg"), role: "assistant", parts: [], createdAt: startedAt };
+    const usage: Usage = { input: 0, output: 0 };
+    const textOf = (parts: Part[]) => parts.map((part) => (part.type === "text" ? part.text : "")).join("").trim();
+
+    for (let step = 0; step < AGENT_MAX_STEPS; step++) {
+      if (control.stopped) break;
+      const body = buildBody({
+        kind: env.kind,
+        model: env.model,
+        system,
+        messages: [user, reply],
+        tools: step === AGENT_MAX_STEPS - 1 ? [] : tools,
+        maxTokens: env.settings.maxTokens,
+        temperature: env.settings.temperature,
+        preset: env.provider.preset,
+        thinking: env.thinking,
       });
-      api.startAIStream(requestId, providerId, model, JSON.stringify(body)).catch((error: unknown) => {
-        streams.delete(requestId);
-        if (activeRequest === requestId) activeRequest = null;
-        resolve({ parts: [], error: errorMessage(error) });
+      const base = reply.parts;
+      const result = await streamStep(control, env.kind, env.provider.id, env.model, body, (parts) => {
+        const text = textOf(parts);
+        if (text && text !== run.text) publish({ text });
       });
-    });
+      usage.input = Math.max(usage.input, result.usage?.input ?? 0);
+      usage.output += result.usage?.output ?? 0;
+      reply = { ...reply, parts: [...base, ...result.parts] };
+      if (result.cancelled || control.stopped) break;
+      if (result.error) {
+        publish({ status: "error", text: result.error, endedAt: Date.now(), usage });
+        throw new Error(`The sub-agent failed: ${result.error}`);
+      }
+      const calls = result.parts.filter((part): part is ToolPart => part.type === "tool");
+      if (!calls.length) {
+        const report = textOf(result.parts) || textOf(reply.parts);
+        publish({ status: "done", text: report, endedAt: Date.now(), usage });
+        return report || "(The sub-agent finished without a report.)";
+      }
+      publish({
+        text: "",
+        steps: [...run.steps, ...calls.map((item): AgentStep => ({ id: item.id, name: item.name, args: item.args, status: "pending" }))],
+      });
+      const patchStep = (id: string, patch: Partial<AgentStep>) => publish({ steps: run.steps.map((item) => (item.id === id ? { ...item, ...patch } : item)) });
+      const results = new Map<string, Partial<ToolPart>>();
+      await runLimited(
+        calls.map((item) => async () => {
+          if (control.stopped) return;
+          if (!tools.some((tool) => tool.method === item.name)) {
+            const error = `${item.name} isn't available to sub-agents (read-only tools only).`;
+            results.set(item.id, { status: "error", error });
+            patchStep(item.id, { status: "error", error, endedAt: Date.now() });
+            return;
+          }
+          patchStep(item.id, { status: "running", startedAt: Date.now() });
+          try {
+            const output = await runTool(item.name, item.args, "ask", { id: chatId, title: chatTitleText });
+            results.set(item.id, { status: "done", result: output });
+            const sources = sourcesOfCall(item.name, item.args, output).map(({ title: name, url }) => ({ title: name, url }));
+            patchStep(item.id, { status: "done", endedAt: Date.now(), ...(sources.length ? { sources } : {}) });
+          } catch (error) {
+            results.set(item.id, { status: "error", error: errorMessage(error) });
+            patchStep(item.id, { status: "error", error: errorMessage(error), endedAt: Date.now() });
+          }
+        }),
+        env.settings.parallel,
+      );
+      reply = {
+        ...reply,
+        parts: reply.parts.map((part) => (part.type === "tool" && results.has(part.id) ? { ...part, ...results.get(part.id) } : part.type === "tool" && part.status === "pending" ? { ...part, status: "error", error: "Not run." } : part)),
+      };
+    }
+    publish({ status: "stopped", endedAt: Date.now(), usage, steps: run.steps.map((item) => (item.status === "running" || item.status === "pending" ? { ...item, status: "error", error: "Stopped." } : item)) });
+    const partial = textOf(reply.parts);
+    if (control.stopped) throw new Error("Stopped.");
+    return partial || `The sub-agent stopped after ${AGENT_MAX_STEPS} steps without a final report.`;
+  };
 
-  const waitForAnswer = (toolId: string) =>
-    new Promise<AskAnswer>((resolve) => {
-      answers.set(toolId, resolve);
-      set({ awaiting: [...get().awaiting, toolId] });
-    });
-
-  const waitForApproval = (toolId: string) =>
-    new Promise<boolean>((resolve) => {
-      approvals.set(toolId, resolve);
-      set({ awaiting: [...get().awaiting, toolId] });
-    });
-
-  /** Runs the agent loop for an (empty or partial) assistant message. */
+  /** Runs the agent loop for an (empty or partial) assistant message of a chat. */
   const runLoop = async (chatId: string, messageId: string) => {
     const { settings, providers } = get();
     const provider = providers.find((item) => item.id === settings.providerId && item.enabled);
@@ -196,35 +398,39 @@ export const useAssistant = create<AssistantState>((set, get) => {
       patchMessage(chatId, messageId, (message) => ({ ...message, error: "Choose a provider and model first." }));
       return;
     }
+    const chat = chatById(chatId);
+    if (!chat) return;
+    const control = controlFor(chatId);
+    control.stopped = false;
+    const startedAt = Date.now();
+    setRun(chatId, { messageId, startedAt, title: chat.title });
+
     const kind = provider.kind as ProviderKind;
-    const mode = get().chat.mode;
+    const mode = chat.mode;
+    const model = settings.model;
     const tools = toolDefs(mode, settings);
-    const system = systemPrompt(mode, settings, await promptContext(settings.webAccess, tools.length));
-    const resolved = resolveModel(settings.models, settings.discovered, provider.id, kind, settings.model);
+    if (settings.agents) tools.push(agentToolDef());
+    const resolved = resolveModel(settings.models, settings.discovered, provider.id, kind, model);
     const thinking = effectiveThinking(settings.thinking, resolved.thinking);
-    stopRequested = false;
-    set({ running: true });
-    patchMessage(chatId, messageId, (message) => ({ ...message, model: settings.model, providerId: provider.id }));
+    const workspace = useAppStore.getState().workspace?.name ?? null;
+    patchMessage(chatId, messageId, (message) => ({ ...message, model, providerId: provider.id, endedAt: undefined }));
 
     let outputTokens = 0;
+    const markStopped = () => patchMessage(chatId, messageId, (message) => ({ ...message, stopped: true }));
+
     try {
+      const system = systemPrompt(mode, settings, await promptContext(settings.webAccess, tools.length));
       for (let step = 0; step < Math.max(1, settings.maxSteps); step++) {
-        const before = currentMessage(messageId);
-        if (!before || get().chat.id !== chatId) return;
-        const history = get().chat.messages.slice(0, get().chat.messages.findIndex((message) => message.id === messageId) + 1);
-        const body = buildBody({
-          kind,
-          model: settings.model,
-          system,
-          messages: history,
-          tools,
-          maxTokens: settings.maxTokens,
-          temperature: settings.temperature,
-          preset: provider.preset,
-          thinking,
-        });
+        const before = messageOf(chatId, messageId);
+        const current = chatById(chatId);
+        if (!before || !current || control.stopped) {
+          if (control.stopped) markStopped();
+          return;
+        }
+        const history = current.messages.slice(0, current.messages.findIndex((message) => message.id === messageId) + 1);
+        const body = buildBody({ kind, model, system, messages: history, tools, maxTokens: settings.maxTokens, temperature: settings.temperature, preset: provider.preset, thinking });
         const baseParts = before.parts;
-        const result = await streamStep(kind, provider.id, settings.model, body, (parts) =>
+        const result = await streamStep(control, kind, provider.id, model, body, (parts) =>
           patchMessage(chatId, messageId, (message) => ({ ...message, parts: [...baseParts, ...parts] })),
         );
         outputTokens += result.usage?.output ?? 0;
@@ -233,8 +439,8 @@ export const useAssistant = create<AssistantState>((set, get) => {
           parts: [...baseParts, ...result.parts],
           usage: result.usage ? { input: result.usage.input, output: outputTokens } : message.usage,
         }));
-        if (result.cancelled || stopRequested) {
-          patchMessage(chatId, messageId, (message) => ({ ...message, stopped: true }));
+        if (result.cancelled || control.stopped) {
+          markStopped();
           return;
         }
         if (result.error) {
@@ -243,19 +449,43 @@ export const useAssistant = create<AssistantState>((set, get) => {
         }
         const calls = result.parts.filter((part): part is ToolPart => part.type === "tool");
         if (!calls.length) {
-          if (result.finish === "length" || result.finish === "max_tokens" || result.finish === "MAX_TOKENS") {
+          if (isOutputLimit(result.finish)) {
             patchMessage(chatId, messageId, (message) => ({ ...message, error: "The reply hit the output limit. Ask it to continue, or raise Max output in settings." }));
           }
           return;
         }
 
-        for (const call of calls) {
-          if (stopRequested) break;
-          if (needsApproval(call.name, get().settings) && !get().allowed.includes(call.name)) {
+        const execute = async (call: ToolPart) => {
+          if (control.stopped) return;
+          patchTool(chatId, messageId, call.id, { status: "running", startedAt: Date.now() });
+          try {
+            const output =
+              call.name === AGENT_TOOL
+                ? await runAgent(control, chatId, messageId, call, { kind, provider, model, settings, thinking, workspace })
+                : await runTool(call.name, call.args, mode, { id: chatId, title: chatById(chatId)?.title ?? "" });
+            patchTool(chatId, messageId, call.id, { status: "done", result: output, endedAt: Date.now() });
+          } catch (error) {
+            patchTool(chatId, messageId, call.id, { status: "error", error: errorMessage(error), endedAt: Date.now() });
+          }
+        };
+
+        // Consecutive read-only calls (and sub-agents) run together; anything that
+        // changes the app, asks the user or needs approval runs on its own, in order.
+        for (let index = 0; index < calls.length && !control.stopped; ) {
+          const call = calls[index];
+          const gated = needsApproval(call.name, get().settings) && !(allowedByChat.get(chatId) ?? []).includes(call.name);
+          if (!gated && canRunInParallel(call.name)) {
+            const batch: ToolPart[] = [];
+            while (index < calls.length && canRunInParallel(calls[index].name) && !needsApproval(calls[index].name, get().settings)) batch.push(calls[index++]);
+            await runLimited(batch.map((item) => () => execute(item)), get().settings.parallel);
+            continue;
+          }
+          index++;
+          if (gated) {
             patchTool(chatId, messageId, call.id, { status: "awaiting" });
-            const allow = await waitForApproval(call.id);
-            set({ awaiting: get().awaiting.filter((id) => id !== call.id) });
-            if (stopRequested) break;
+            const allow = await waitFor<boolean>(chatId, call.id, (resolve) => control.approvals.set(call.id, resolve));
+            control.approvals.delete(call.id);
+            if (control.stopped) break;
             if (!allow) {
               patchTool(chatId, messageId, call.id, { status: "declined", endedAt: Date.now() });
               continue;
@@ -263,45 +493,44 @@ export const useAssistant = create<AssistantState>((set, get) => {
           }
           if (call.name === "ui.ask") {
             patchTool(chatId, messageId, call.id, { status: "asking", startedAt: Date.now() });
-            const reply = await waitForAnswer(call.id);
-            set({ awaiting: get().awaiting.filter((id) => id !== call.id) });
-            if (stopRequested) break;
+            const reply = await waitFor<AskAnswer>(chatId, call.id, (resolve) => control.answers.set(call.id, resolve));
+            control.answers.delete(call.id);
+            if (control.stopped) break;
             patchTool(chatId, messageId, call.id, { status: "done", result: JSON.stringify(reply), endedAt: Date.now() });
             continue;
           }
-          patchTool(chatId, messageId, call.id, { status: "running", startedAt: Date.now() });
-          try {
-            const chat = get().chats.find((item) => item.id === chatId);
-            const output = await runTool(call.name, call.args, mode, { id: chatId, title: chat?.title ?? "" });
-            patchTool(chatId, messageId, call.id, { status: "done", result: output, endedAt: Date.now() });
-          } catch (error) {
-            patchTool(chatId, messageId, call.id, { status: "error", error: errorMessage(error), endedAt: Date.now() });
-          }
+          await execute(call);
         }
-        if (stopRequested) {
-          patchMessage(chatId, messageId, (message) => ({ ...message, stopped: true }));
+        if (control.stopped) {
+          markStopped();
           return;
         }
         if (step === settings.maxSteps - 1) {
           patchMessage(chatId, messageId, (message) => ({ ...message, error: `Paused after ${settings.maxSteps} steps. Send “continue” to keep going.` }));
         }
       }
+    } catch (error) {
+      patchMessage(chatId, messageId, (message) => ({ ...message, error: errorMessage(error) }));
     } finally {
       // Anything never answered or never run is marked so the transcript stays valid.
+      const now = Date.now();
       patchMessage(chatId, messageId, (message) => ({
         ...message,
-        parts: message.parts.map((part) => (part.type === "tool" && (part.status === "pending" || part.status === "awaiting" || part.status === "asking" || part.status === "running") ? { ...part, status: "error", error: "Not run — the response was stopped." } : part)),
+        endedAt: now,
+        parts: message.parts.map((part) => {
+          if (part.type === "thinking" && !part.endedAt) return { ...part, endedAt: now };
+          if (part.type !== "tool" || !(part.status === "pending" || part.status === "awaiting" || part.status === "asking" || part.status === "running")) return part;
+          const agent = part.agent && part.agent.status === "running" ? { ...part.agent, status: "stopped" as const, endedAt: now } : part.agent;
+          return { ...part, status: "error", error: "Not run — the response was stopped.", endedAt: now, ...(agent ? { agent } : {}) };
+        }),
       }));
-      for (const resolve of approvals.values()) resolve(false);
-      approvals.clear();
-      for (const resolve of answers.values()) resolve({ answer: "", choices: [], cancelled: true });
-      answers.clear();
-      activeRequest = null;
-      set({ running: false, awaiting: [] });
-      const chat = get().chat;
-      if (chat.id === chatId) {
-        const updated = { ...chat, updatedAt: Date.now() };
-        set({ chat: updated });
+      releaseControl(chatId, control);
+      setRun(chatId, null);
+      const finished = chatById(chatId);
+      if (finished) {
+        const updated = { ...finished, updatedAt: Date.now() };
+        commit(updated);
+        if (get().chat.id !== chatId) live.delete(chatId);
         await saveChat(updated);
       }
     }
@@ -313,10 +542,12 @@ export const useAssistant = create<AssistantState>((set, get) => {
     settings: DEFAULT_SETTINGS,
     chats: [],
     chat: emptyChat(DEFAULT_SETTINGS.mode),
+    runs: {},
+    waiting: {},
     running: false,
-    view: "chat",
     awaiting: [],
     allowed: [],
+    view: "chat",
 
     async init() {
       if (get().ready) return;
@@ -337,7 +568,8 @@ export const useAssistant = create<AssistantState>((set, get) => {
         const current = providers.find((item) => item.id === settings.providerId)!;
         settings = { ...settings, model: current.defaultModel || current.models?.[0] || presetFor(current.preset)?.models[0] || "" };
       }
-      set({ ready: true, settings, providers, chat: emptyChat(settings.mode), view: providers.length ? "chat" : "providers" });
+      set({ ready: true, settings, providers, view: providers.length ? "chat" : "providers" });
+      showChat(emptyChat(settings.mode));
       await get().refreshChats();
     },
 
@@ -351,7 +583,7 @@ export const useAssistant = create<AssistantState>((set, get) => {
 
     setMode(mode) {
       get().updateSettings({ mode });
-      set({ chat: { ...get().chat, mode } });
+      if (!get().running) commit({ ...get().chat, mode });
     },
 
     selectModel(providerId, model) {
@@ -396,24 +628,31 @@ export const useAssistant = create<AssistantState>((set, get) => {
     },
 
     newChat() {
-      if (get().running) get().stop();
-      set({ chat: emptyChat(get().settings.mode), view: "chat", allowed: [] });
+      // A running chat keeps working in the background.
+      showChat(emptyChat(get().settings.mode), { view: "chat" });
     },
 
     async openChat(id) {
-      if (get().running) get().stop();
+      const running = live.get(id);
+      if (running) {
+        showChat(running, { view: "chat" });
+        return;
+      }
       try {
         const raw = await api.getAIChat(id);
         const chat = JSON.parse(raw) as Chat;
-        set({ chat: { ...chat, messages: chat.messages ?? [], mode: chat.mode ?? "ask" }, view: "chat", allowed: [] });
+        showChat({ ...chat, messages: chat.messages ?? [], mode: chat.mode ?? "ask" }, { view: "chat" });
       } catch (error) {
         useAppStore.getState().notify(errorMessage(error), "error");
       }
     },
 
     async deleteChat(id) {
+      if (get().runs[id]) get().stop(id);
       await api.deleteAIChat(id);
-      if (get().chat.id === id) set({ chat: emptyChat(get().settings.mode) });
+      live.delete(id);
+      allowedByChat.delete(id);
+      if (get().chat.id === id) showChat(emptyChat(get().settings.mode));
       await get().refreshChats();
     },
 
@@ -428,10 +667,11 @@ export const useAssistant = create<AssistantState>((set, get) => {
     async send(text, mentions = []) {
       const trimmed = text.trim();
       if (!trimmed || get().running) return;
+      const chatId = get().chat.id;
       const resolved = mentions.length ? await resolveMentions(mentions) : [];
       const user: ChatMessage = { id: newId("msg"), role: "user", parts: [{ type: "text", text: trimmed }], createdAt: Date.now(), ...(resolved.length ? { mentions: resolved } : {}) };
       const reply: ChatMessage = { id: newId("msg"), role: "assistant", parts: [], createdAt: Date.now() };
-      const chat = get().chat;
+      const chat = chatById(chatId) ?? get().chat;
       const next: Chat = {
         ...chat,
         title: chat.title || chatTitle(trimmed),
@@ -441,7 +681,8 @@ export const useAssistant = create<AssistantState>((set, get) => {
         updatedAt: Date.now(),
         messages: [...chat.messages, user, reply],
       };
-      set({ chat: next, view: "chat" });
+      commit(next);
+      if (get().chat.id === chatId) set({ view: "chat" });
       await runLoop(next.id, reply.id);
     },
 
@@ -451,23 +692,30 @@ export const useAssistant = create<AssistantState>((set, get) => {
       const last = chat.messages[chat.messages.length - 1];
       if (!last || last.role !== "assistant") return;
       const reply: ChatMessage = { id: newId("msg"), role: "assistant", parts: [], createdAt: Date.now() };
-      set({ chat: { ...chat, messages: [...chat.messages.slice(0, -1), reply] } });
+      commit({ ...chat, messages: [...chat.messages.slice(0, -1), reply] });
       await runLoop(chat.id, reply.id);
     },
 
-    stop() {
-      stopRequested = true;
-      if (activeRequest) void api.cancelAIStream(activeRequest).catch(() => undefined);
-      for (const resolve of approvals.values()) resolve(false);
-      approvals.clear();
-      for (const resolve of answers.values()) resolve({ answer: "", choices: [], cancelled: true });
-      answers.clear();
+    stop(chatId) {
+      const id = chatId ?? get().chat.id;
+      const control = controls.get(id);
+      if (!control) return;
+      control.stopped = true;
+      for (const request of control.requests) void api.cancelAIStream(request).catch(() => undefined);
+      for (const resolve of control.approvals.values()) resolve(false);
+      control.approvals.clear();
+      for (const resolve of control.answers.values()) resolve({ answer: "", choices: [], cancelled: true });
+      control.answers.clear();
     },
 
     answer(toolId, reply) {
-      const resolve = answers.get(toolId);
-      answers.delete(toolId);
-      resolve?.(reply);
+      for (const control of controls.values()) {
+        const resolve = control.answers.get(toolId);
+        if (!resolve) continue;
+        control.answers.delete(toolId);
+        resolve(reply);
+        return;
+      }
     },
 
     async compact() {
@@ -482,12 +730,14 @@ export const useAssistant = create<AssistantState>((set, get) => {
         createdAt: Date.now(),
         parts: [{ type: "text", text: "Summarize our conversation so far so a fresh chat can continue it: the goal, decisions, what was changed (with page ids and names), open questions and next steps. Be complete but brief. Reply with the summary only." }],
       };
-      set({ running: true });
-      stopRequested = false;
+      const control = controlFor(chat.id);
+      control.stopped = false;
+      setRun(chat.id, { messageId: "", startedAt: Date.now(), title: chat.title });
       try {
         const body = buildBody({ kind, model: settings.model, system: "You write precise, compact summaries of work sessions.", messages: [...chat.messages, request], tools: [], maxTokens: Math.min(4096, settings.maxTokens), temperature: null, preset: provider.preset });
-        const result = await streamStep(kind, provider.id, settings.model, body, () => undefined);
+        const result = await streamStep(control, kind, provider.id, settings.model, body, () => undefined);
         const summary = result.parts.map((part) => (part.type === "text" ? part.text : "")).join("").trim();
+        if (result.cancelled || control.stopped) return;
         if (result.error || !summary) {
           useAppStore.getState().notify(result.error ? `Couldn't compact: ${result.error}` : "The model returned an empty summary.", "error");
           return;
@@ -502,23 +752,32 @@ export const useAssistant = create<AssistantState>((set, get) => {
         };
         const reply: ChatMessage = { id: newId("msg"), role: "assistant", createdAt: Date.now(), parts: [{ type: "text", text: "Got it — I have the summary and can pick up from there." }], model: settings.model, providerId: provider.id };
         const next: Chat = { ...fresh, title: chat.title ? `${chat.title} (continued)` : "Continued chat", messages: [note, reply] };
-        set({ chat: next, view: "chat", allowed: [] });
+        if (get().chat.id === chat.id) showChat(next, { view: "chat" });
         await saveChat(next);
       } finally {
-        set({ running: false });
+        releaseControl(chat.id, control);
+        setRun(chat.id, null);
       }
     },
 
     respond(toolId, allow, always) {
-      if (allow && always) {
-        const call = get()
-          .chat.messages.flatMap((message) => message.parts)
-          .find((part): part is ToolPart => part.type === "tool" && part.id === toolId);
-        if (call) set({ allowed: [...new Set([...get().allowed, call.name])] });
+      for (const [chatId, control] of controls) {
+        const resolve = control.approvals.get(toolId);
+        if (!resolve) continue;
+        if (allow && always) {
+          const call = chatById(chatId)
+            ?.messages.flatMap((message) => message.parts)
+            .find((part): part is ToolPart => part.type === "tool" && part.id === toolId);
+          if (call) {
+            const allowed = [...new Set([...(allowedByChat.get(chatId) ?? []), call.name])];
+            allowedByChat.set(chatId, allowed);
+            if (get().chat.id === chatId) set({ allowed });
+          }
+        }
+        control.approvals.delete(toolId);
+        resolve(allow);
+        return;
       }
-      const resolve = approvals.get(toolId);
-      approvals.delete(toolId);
-      resolve?.(allow);
     },
   };
 });

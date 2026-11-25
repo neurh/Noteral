@@ -8,10 +8,13 @@ export type {
     Contributions,
     Info,
     Manifest,
+    MenuContribution,
     PanelContribution,
     RegistryResult,
     Release,
     Runtime,
+    SettingContribution,
+    SettingOption,
     StatusContribution,
     Update
 } from "./models.js";

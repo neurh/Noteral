@@ -5,6 +5,8 @@ import type { PageMeta } from "../lib/api";
 import { api, errorMessage } from "../lib/api";
 import { kindOf, useAppStore } from "../store";
 import { NewItemMenu } from "./NewItemMenu";
+import { ContributedMenuItems } from "./ContributedMenuItems";
+import { parseNodeData } from "./CustomNodeView";
 import { PageIcon } from "./PageIcon";
 
 type DropZone = "before" | "after" | "inside";
@@ -301,6 +303,7 @@ export function PageTree() {
               <div className="menu-separator" />
               <button type="button" role="menuitem" onClick={() => void exportPage(page, "markdown")}><Download size={14} /> Export Markdown</button>
               <button type="button" role="menuitem" onClick={() => void exportPage(page, "json")}><Download size={14} /> Export JSON</button>
+              <ContributedMenuItems context={{ menu: "tree", pageId: page.id, kind: kindOf(page), nodeType: page.kind === "custom" ? parseNodeData(page.data).type : undefined }} onDone={() => setMenuFor(null)} />
               <div className="menu-separator" />
               <button
                 type="button"

@@ -1,3 +1,5 @@
+import { ContributedMenuItems } from "./ContributedMenuItems";
+import { useAppStore } from "../store";
 import { useEffect, useMemo } from "react";
 import type { Block } from "@blocknote/core";
 import { SideMenuExtension } from "@blocknote/core/extensions";
@@ -142,6 +144,24 @@ export function BlockHandleMenu() {
         </>
       )}
 
+      {blocks.length === 1 ? (
+        <ContributedMenuItems
+          context={{
+            menu: "block",
+            pageId: activePageId(),
+            blockId: block.id,
+            blockType: block.type === "custom" ? String((block.props as { kind?: string }).kind ?? "") : block.type,
+          }}
+          onDone={() => editor.focus()}
+          separator={<Components.Generic.Menu.Divider className="bn-menu-divider" />}
+          renderItem={(item, run, icon) => (
+            <Item className={`bn-menu-item handle-menu-item${item.danger ? " is-danger" : ""}`} icon={icon} onClick={run}>
+              <MenuText label={item.title} keys="" />
+            </Item>
+          )}
+        />
+      ) : null}
+
       <Components.Generic.Menu.Divider className="bn-menu-divider" />
 
       <Item className="bn-menu-item handle-menu-item is-danger" icon={<Trash2 size={16} />} onClick={() => removeBlocks(editor, ids)}>
@@ -155,6 +175,11 @@ export function BlockHandleMenu() {
  * BlockNote mounts the handle menu whenever the handle shows (on hover), but the
  * dropdown's children exist only while it's open, so this runs on open alone.
  */
+function activePageId(): string | undefined {
+  const state = useAppStore.getState();
+  return state.activePageId || undefined;
+}
+
 function SelectWhileOpen({ blockId }: { blockId: string }) {
   const editor = useBlockNoteEditor<any, any, any>();
   useEffect(() => {

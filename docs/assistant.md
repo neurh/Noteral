@@ -39,6 +39,36 @@ Under *Settings → Behaviour → Ask before*:
 
 Press **Esc** or the stop button to stop at any point. Tools that haven't run are marked as not run, and nothing half-finished is retried.
 
+The approval card names the action in plain words, shows its arguments as fields (with the raw JSON one click away), and is drawn in red for destructive calls. **Allow**, **Always in this chat** and **Decline** are all one click; **Esc** declines. While a card is waiting, the reply's header says *Waiting for you*.
+
+## How a reply reads
+
+Work and answer are kept apart:
+
+- **Timeline.** Thinking, tool calls and agents appear as steps in one compact timeline at the top of the reply, each one sliding in as it starts. Runs of the same tool are folded ("Read 5 pages", "Searched notes 3 times"). The header shows a live label and timer while the assistant works, then collapses to *Worked for 42s · 9 steps · 2 agents · 11 sources*. Click it to reopen. Long runs show the latest six steps with an *earlier steps* toggle, and each step opens to show its arguments and result.
+- **Thinking.** A live thinking step streams the last lines of the model's reasoning with its own timer. Before the first token there is a small thinking loader.
+- **Answer.** The final text is rendered on its own as Markdown (tables, code, links), below the timeline.
+- **Changes.** If the reply changed anything (pages created, blocks rewritten, styles set, plugins installed), a *Changes* list follows the answer, with links to the pages it touched.
+- **Sources.** Every web page the assistant searched or read is listed as a source card (pages it actually read come first), with the site and title. Search steps show the hosts as chips.
+
+## Sub-agents
+
+For broad research the assistant can start **sub-agents** with `agents.run({ title, task })`. Each agent is a separate, read-only run of the same model with its own short context: it can read and search your pages and databases and use the web, but it can't change anything, open UI or ask you questions. Several agents run at the same time (up to *Run at once*, default 4), and each appears in the timeline as a card with its title, timer, current activity and progress. When they finish, the assistant combines their reports into one answer. Agents are limited to 12 steps each.
+
+Independent read-only tool calls in one turn (several page reads, searches) also run in parallel; anything that changes the app runs one at a time, in order.
+
+## Many chats at once
+
+A reply keeps running when you switch to another chat or start a new one, so several chats can work at the same time. *History* marks chats that are working or waiting for you.
+
+The **ledger** button in the panel header (a badge counts other running chats) opens:
+
+- **Running**: every chat that is working, with buttons to open or stop it,
+- **This chat**: steps, changes, agents and sources so far, time spent and tokens used,
+- the agents it ran and the last changes it made.
+
+The context ring in the composer opens a **context window** breakdown: a segmented bar for the system prompt, your messages, replies, tool results, mentions and the draft, how much is free, and *Compact chat*.
+
 ### Creator mode and plugins
 
 In Creator mode the assistant can build interface as well as change settings: right-sidebar tabs (stacked in split groups), status-bar widgets, custom editor blocks, custom page types in the tree, Home views with HTML widgets and custom CSS, database views, filters, sorts and properties. These are the same methods plugins use, described in [Extending the interface](plugins/ui.md).
@@ -67,7 +97,7 @@ Plugins the assistant made are listed on the same tab. `appearance.reset` (alway
 
 Both are free and need no API key:
 
-- **`web.search`** queries DuckDuckGo (HTML, then Lite) and falls back to Wikipedia. It returns titles, URLs and snippets, and the chat shows the sources under the tool row.
+- **`web.search`** queries DuckDuckGo (HTML, then Lite) and falls back to Wikipedia. It returns titles, URLs and snippets, and the reply lists them as sources.
 - **`web.fetch`** downloads a page and extracts the readable text as Markdown (title, description, headings, lists, links), truncated to a character limit. JSON and plain text pass through.
 - Both refuse localhost and private network addresses. Turn web access off with the globe button in the composer; the web tools are then not sent to the model at all.
 
@@ -76,6 +106,8 @@ Both are free and need no API key:
 | Setting | Default | |
 | --- | --- | --- |
 | Web access | on | Sends `web.search` / `web.fetch`. |
+| Sub-agents | on | Lets the assistant use `agents.run`. |
+| Run at once | 4 | How many agents and parallel reads run together (1–8). |
 | Max steps | 24 | Tool-call rounds per reply before the assistant pauses and asks you to continue. |
 | Max output tokens | 8192 | Per step. |
 | Temperature | provider default | |

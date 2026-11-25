@@ -51,7 +51,8 @@ export function systemPrompt(mode: AssistantMode, settings: AssistantSettings, c
 - Prefer editor.* tools for the open page (they keep undo history); use pages.* for other pages.
 - Page content is Markdown. Headings, lists, task lists (- [ ]), tables, code blocks and quotes are supported. Link to a page with [Title](noteral://page/<id>).
 - Make focused edits: insert or replace the blocks that need changing rather than rewriting a whole page, unless asked.
-- Several independent lookups can be made in one turn.
+- Several independent lookups can be made in one turn — they run at the same time.${settings.agents !== false ? `
+- For broad research or several independent questions, start sub-agents with agents.run ({ title, task }) — call it several times in one turn and they work in parallel, each with its own read-only tools (notes, databases${ctx.webAccess ? ", web" : ""}). Give each a self-contained task: it can't see this chat. Each returns a report; combine them into one answer. Don't use agents for a single quick lookup, and never for changes — you make the changes yourself.` : ""}
 - When a tool fails, read the error, fix the call and retry once; then explain the problem.
 - If the user declines an action, don't retry it; ask what they'd like instead.`,
     ctx.webAccess

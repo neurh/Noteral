@@ -21,12 +21,14 @@ import {
   contributions,
   jsonClone,
   normalizeBlockType,
+  normalizeMenuItem,
   normalizeNodeType,
+  normalizeSettingField,
   normalizeSidebarTab,
   normalizeStatusWidget,
   upsert,
 } from "../lib/contributions";
-import type { ContributionOwner, ContributionSet } from "../lib/contributions";
+import type { ContributionOwner, ContributionSet, NodeTypeDef } from "../lib/contributions";
 import {
   BUILTIN_SIDEBAR_TABS,
   COMPONENTS,
@@ -42,6 +44,7 @@ import { dialogs } from "../lib/dialogs";
 import { activateSidebarTab, availableTabs, moveSidebarTab, resolveSidebar, setSidebarGroups } from "../lib/sidebarLayout";
 import { viewHub } from "../lib/viewFrame";
 import { pluginRuntime } from "../plugins/runtime";
+import { loadOptions } from "../lib/pluginOptions";
 import { PERMISSIONS } from "./spec";
 import { SNIPPET_ID, applyTokens, displayTitle, editCustomizations, editorFor, pluginInfo, requireMeta, store } from "./handlers";
 import type { CallContext } from "./handlers";
@@ -51,9 +54,11 @@ import type {
   ContributionOwnerInfo,
   LayerInfo,
   LogEntryInfo,
+  MenuItemInfo,
   NodeTypeInfo,
   PluginInstallResult,
   PluginTestResult,
+  SettingFieldInfo,
   SidebarInfo,
   SidebarTabInfo,
   StatusWidgetInfo,
@@ -476,6 +481,67 @@ const STATUS_HANDLERS: Record<string, Handler> = {
   },
 };
 
+// ── menus and plugin options ──────────────────────────────────────────────
+
+function menuItemInfo(item: { id: string; key: string; menu: string; title: string; icon?: string; command: string; owner: ContributionOwner; danger?: boolean }): MenuItemInfo {
+  return {
+    key: item.key,
+    id: item.id,
+    menu: item.menu as MenuItemInfo["menu"],
+    title: item.title,
+    ...(item.icon ? { icon: item.icon } : {}),
+    command: item.command,
+    ...(item.danger ? { danger: true } : {}),
+    owner: ownerInfo(item.owner),
+  };
+}
+
+/** The fields a plugin declared: what it published at runtime, else its manifest. */
+function settingFieldsOf(pluginId: string): SettingFieldInfo[] {
+  return (contributions.get({ kind: "plugin", id: pluginId })?.settings ?? []) as SettingFieldInfo[];
+}
+
+const MENU_HANDLERS: Record<string, Handler> = {
+  "menus.list": (p) => contributions.current().menuItems.filter((item) => !p.menu || item.menu === p.menu).map(menuItemInfo),
+  "menus.addItem": async (p, ctx) => {
+    const def = normalizeMenuItem(p);
+    if (!def) throw new Error("Menu items need an id (letters, digits, . - _), a menu (page, tree, block, tab, status), a title and a command.");
+    const target = contributionTarget(ctx, p.layer);
+    if (target.kind === "layer" && !def.command.includes(":") && !def.command.includes(".")) {
+      throw new Error(`"${def.command}" is not an app command id. Use commands.list to find one.`);
+    }
+    await editSet(target, ctx, (set) => {
+      set.menuItems = upsert(set.menuItems, def, (item) => item.id, LIMITS.menuItems, "menu items");
+    });
+    const owner = ownerOf(target);
+    return menuItemInfo({ ...def, key: keyOf(owner, def.id), owner });
+  },
+  "menus.removeItem": async (p, ctx) => {
+    const target = contributionTarget(ctx, p.layer);
+    let found = false;
+    await editSet(target, ctx, (set) => {
+      found = set.menuItems.some((item) => item.id === p.id);
+      set.menuItems = set.menuItems.filter((item) => item.id !== p.id);
+    });
+    if (!found) throw new Error(`No menu item "${p.id}" here. menus.list shows every item and its owner.`);
+  },
+  "settings.define": async (p, ctx) => {
+    if (!ctx.pluginId || ctx.caller !== "plugin") throw new Error("settings.define is only available to plugins.");
+    const fields = (Array.isArray(p.fields) ? p.fields : []).map(normalizeSettingField);
+    const bad = fields.findIndex((field) => !field);
+    if (bad >= 0) throw new Error(`Field ${bad + 1} is invalid: keys are letters, digits, . - _ and select fields need options.`);
+    const clean = fields.filter((field): field is NonNullable<typeof field> => Boolean(field)).slice(0, LIMITS.settings);
+    await editSet(contributionTarget(ctx, undefined), ctx, (set) => {
+      set.settings = clean;
+    });
+    return clean as SettingFieldInfo[];
+  },
+  "settings.options": async (_p, ctx) => {
+    if (!ctx.pluginId) throw new Error("settings.* is only available to plugins.");
+    return loadOptions(ctx.pluginId, settingFieldsOf(ctx.pluginId));
+  },
+};
+
 // ── blocks and nodes ──────────────────────────────────────────────────────
 
 function typeClash(kind: "blockTypes" | "nodeTypes", type: string, owner: ContributionOwner) {
@@ -487,6 +553,10 @@ function typeClash(kind: "blockTypes" | "nodeTypes", type: string, owner: Contri
 
 function blockTypeInfo(def: { type: string; title: string; description?: string; icon?: string }, owner: ContributionOwner): BlockTypeInfo {
   return { type: def.type, title: def.title, ...(def.description ? { description: def.description } : {}), ...(def.icon ? { icon: def.icon } : {}), owner: ownerInfo(owner) };
+}
+
+function nodeTypeInfo(def: NodeTypeDef, owner: ContributionOwner): NodeTypeInfo {
+  return { ...blockTypeInfo(def, owner), layout: def.layout ?? "full" };
 }
 
 interface NodeData {
@@ -560,7 +630,7 @@ const BLOCK_HANDLERS: Record<string, Handler> = {
     await editSet(target, ctx, (set) => {
       set.nodeTypes = upsert(set.nodeTypes, def, (item) => item.type, LIMITS.nodeTypes, "node types");
     });
-    return blockTypeInfo(def, owner) as NodeTypeInfo;
+    return nodeTypeInfo(def, owner);
   },
   "nodes.unregisterType": async (p, ctx) => {
     const target = contributionTarget(ctx, p.layer);
@@ -571,7 +641,7 @@ const BLOCK_HANDLERS: Record<string, Handler> = {
     });
     if (!found) throw new Error(`No node type "${p.type}" here. nodes.listTypes shows every type and its owner.`);
   },
-  "nodes.listTypes": (): NodeTypeInfo[] => contributions.current().nodeTypes.map((def) => blockTypeInfo(def, def.owner) as NodeTypeInfo),
+  "nodes.listTypes": (): NodeTypeInfo[] => contributions.current().nodeTypes.map((def) => nodeTypeInfo(def, def.owner)),
   "nodes.create": async (p) => {
     const def = contributions.current().nodeTypeMap.get(p.type);
     if (!def) {
@@ -710,6 +780,7 @@ export const UI_HANDLERS: Record<string, Handler> = {
   ...ASK_HANDLERS,
   ...SIDEBAR_HANDLERS,
   ...STATUS_HANDLERS,
+  ...MENU_HANDLERS,
   ...BLOCK_HANDLERS,
   ...VIEW_HANDLERS,
   ...PLUGIN_HANDLERS,

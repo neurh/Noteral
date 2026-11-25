@@ -40,7 +40,8 @@ export type Permission =
   | "network"
   | "blocks"
   | "nodes"
-  | "home";
+  | "home"
+  | "menus";
 
 /**
  * How far a method reaches. The assistant's modes are built from tiers:
@@ -113,6 +114,7 @@ export const PERMISSIONS: PermissionSpec[] = [
   { id: "blocks", title: "Custom blocks", description: "Add new kinds of blocks to the editor (rendered in a sandbox).", risk: "low" },
   { id: "nodes", title: "Custom page types", description: "Add new kinds of items to the page tree (rendered in a sandbox).", risk: "low" },
   { id: "home", title: "Home", description: "Create, change and remove Home views and widgets.", risk: "medium" },
+  { id: "menus", title: "Menu items", description: "Add items to page, tree, block, tab and status bar menus.", risk: "low" },
 ];
 
 const pageId = s.str("Page id. Defaults to the page open in the focused pane.");
@@ -152,6 +154,25 @@ const htmlView = s.str(
   { maxLength: 400_000 },
 );
 const iconParam = s.str("Icon: an emoji or a Lucide icon name such as \"chart-line\".", { maxLength: 60 });
+const menuSlot = s.str("Menu: page (the page \"…\" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu).", {
+  enum: ["page", "tree", "block", "tab", "status"],
+});
+const settingField = s.obj(
+  {
+    key: s.str("Option key (letters, digits, . - _).", { maxLength: 64, minLength: 1 }),
+    type: s.str("Control.", { enum: ["toggle", "text", "textarea", "number", "slider", "select", "color"] }),
+    label: s.str("Label.", { maxLength: 80 }),
+    description: s.str("Help text under the control.", { maxLength: 300 }),
+    section: s.str("Heading to group under.", { maxLength: 60 }),
+    placeholder: s.str("Placeholder (text fields).", { maxLength: 120 }),
+    default: s.any("Default value."),
+    options: s.arr("Choices (select).", s.obj({ value: s.str("Stored value.", { maxLength: 120 }), label: s.str("Label.", { maxLength: 120 }) }, ["value"]), 40),
+    min: s.num("Minimum (number, slider)."),
+    max: s.num("Maximum (number, slider)."),
+    step: s.num("Step (number, slider)."),
+  },
+  ["key", "type"],
+);
 const layerParam = s.str(
   "Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. \"base\" writes the base look.",
   { maxLength: 80 },
@@ -741,6 +762,25 @@ export const METHODS: MethodSpec[] = [
   // ── plugin settings ────────────────────────────────────────────────────
   { name: "settings.get", summary: "Read the plugin's saved settings.", permission: "settings.read", tier: "read", callers: ["plugin"], params: EMPTY, returns: "Record<string, unknown>" },
   { name: "settings.set", summary: "Merge a patch into the plugin's saved settings.", permission: "settings.write", tier: "content", callers: ["plugin"], params: s.obj({ patch: s.map("Keys to set; null removes.") }, ["patch"]), returns: "Record<string, unknown>" },
+  {
+    name: "settings.options",
+    summary: "The plugin's user options: saved values merged over the defaults of its declared fields.",
+    details: "Fields come from manifest contributes.settings and settings.define. The user edits them under Plugins → Installed → Options; each change raises settings:changed.",
+    permission: "settings.read",
+    tier: "read",
+    callers: ["plugin"],
+    params: EMPTY,
+    returns: "Record<string, unknown>",
+  },
+  {
+    name: "settings.define",
+    summary: "Declare (replace) the fields of the plugin's Options screen at runtime.",
+    permission: "settings.read",
+    tier: "app",
+    callers: ["plugin"],
+    params: s.obj({ fields: s.arr("Fields, in order.", settingField, 40) }, ["fields"]),
+    returns: "SettingFieldInfo[]",
+  },
 
   // ── preferences ────────────────────────────────────────────────────────
   { name: "preferences.get", summary: "Read app preferences (theme, fonts, page width, autosave, …).", permission: "preferences", tier: "read", params: EMPTY, returns: "Preferences" },
@@ -1095,6 +1135,34 @@ export const METHODS: MethodSpec[] = [
   },
   { name: "statusBar.removeWidget", summary: "Remove a status bar widget.", permission: "ui.status", tier: "app", params: s.obj({ id: s.str("Widget id."), layer: layerParam }, ["id"]), returns: "void" },
 
+  // ── menus ───────────────────────────────────────────────────────────────
+  { name: "menus.list", summary: "List custom items in app menus (optionally one menu).", permission: null, tier: "read", params: s.obj({ menu: menuSlot }), returns: "MenuItemInfo[]" },
+  {
+    name: "menus.addItem",
+    summary: "Add or update an item in an app menu: the page \"…\" menu, tree item menu, block menu, sidebar tab menu or status bar menu.",
+    details:
+      "Choosing the item runs `command`. For plugins it is one of the plugin's own command ids and the handler gets the menu context { menu, pageId, kind, nodeType, blockId, blockType, tabKey } (Plugin.addMenuItem does this for you). For assistant layers it is any app command id from commands.list.",
+    permission: "menus",
+    tier: "app",
+    params: s.obj(
+      {
+        id: s.str("Item id.", { maxLength: 64, minLength: 1 }),
+        menu: menuSlot,
+        title: s.str("Label.", { maxLength: 80, minLength: 1 }),
+        icon: iconParam,
+        command: s.str("Command to run (see details).", { maxLength: 200, minLength: 1 }),
+        kinds: s.arr("Only for these item kinds (page and tree menus).", s.str("Kind.", { enum: ["page", "folder", "database", "custom"] }), 4),
+        nodeTypes: s.arr("Only for these custom page types.", s.str("Type id."), 20),
+        blockTypes: s.arr("Only for these block types (block menu), e.g. paragraph, heading, or a custom type.", s.str("Block type."), 20),
+        danger: s.bool("Show in red (destructive).", { default: false }),
+        layer: layerParam,
+      },
+      ["id", "menu", "title", "command"],
+    ),
+    returns: "MenuItemInfo",
+  },
+  { name: "menus.removeItem", summary: "Remove a custom menu item.", permission: "menus", tier: "app", params: s.obj({ id: s.str("Item id."), layer: layerParam }, ["id"]), returns: "void" },
+
   // ── custom blocks ─────────────────────────────────────────────────────
   {
     name: "blocks.registerType",
@@ -1144,7 +1212,7 @@ export const METHODS: MethodSpec[] = [
     name: "nodes.registerType",
     summary: "Register a custom page type for the page tree, opened in a full-page HTML view.",
     details:
-      "Items of this type are created with nodes.create or from the tree's New menu. The view gets `noteral.props` = { pageId, title, data, editable } and saves with `noteral.setData(next)`. Items can have children like folders.",
+      "Items of this type are created with nodes.create or from the tree's New menu. The view gets `noteral.props` = { pageId, title, icon, data, editable, layout } and saves with `noteral.setData(next)`. Items can have children like folders.",
     permission: "nodes",
     tier: "app",
     params: s.obj(
@@ -1155,6 +1223,7 @@ export const METHODS: MethodSpec[] = [
         icon: iconParam,
         html: htmlView,
         defaultData: s.any("Data for new items."),
+        layout: s.str("\"full\" (default): the view is the whole page, edge to edge, and owns its scrolling; render your own header from noteral.props.title/icon. \"page\": a normal page head (icon, cover, title) above the view, which grows with its content so the page scrolls once.", { enum: ["full", "page"], default: "full" }),
         layer: layerParam,
       },
       ["type", "title", "html"],
@@ -1352,6 +1421,7 @@ export const EVENTS: EventSpec[] = [
   { name: "workspace:opened", summary: "A workspace was opened.", permission: null, payload: "WorkspaceInfo" },
   { name: "pages:changed", summary: "Pages were created, renamed, moved or trashed.", permission: "pages.read", payload: "{ count: number }" },
   { name: "panel:action", summary: "A button in one of the plugin's panels or Markdown tabs was pressed.", permission: "ui.panel", payload: "{ panelId: string; actionId: string }" },
+  { name: "settings:changed", summary: "The user changed the plugin's options.", permission: "settings.read", payload: "{ options: Record<string, unknown>; changed: string[] }" },
   { name: "view:message", summary: "One of the plugin's HTML views called noteral.post(name, payload).", permission: null, payload: "{ view: string; name: string; payload: unknown }" },
 ];
 

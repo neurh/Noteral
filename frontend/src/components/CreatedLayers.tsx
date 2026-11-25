@@ -32,6 +32,7 @@ export function layerSummary(layer: Layer): string[] {
     count(layer.statusWidgets.length, "status widget"),
     count(layer.blockTypes.length, "block type"),
     count(layer.nodeTypes.length, "page type"),
+    count(layer.menuItems.length, "menu item"),
   ].filter(Boolean);
 }
 
@@ -52,6 +53,7 @@ function LayerDetails({ layer }: { layer: Layer }) {
     ...layer.statusWidgets.map((item) => ({ kind: "Status widget", id: item.id, title: item.text || item.tooltip || item.id })),
     ...layer.blockTypes.map((item) => ({ kind: "Block type", id: item.type, title: item.title })),
     ...layer.nodeTypes.map((item) => ({ kind: "Page type", id: item.type, title: item.title })),
+    ...layer.menuItems.map((item) => ({ kind: `Menu item (${item.menu})`, id: item.id, title: item.title })),
   ];
   return (
     <div className="layer-details">

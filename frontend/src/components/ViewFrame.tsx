@@ -4,7 +4,7 @@ import { useCustomizations } from "../lib/customizations";
 import { devlog } from "../lib/devlog";
 import { openMarkdownLink } from "../lib/links";
 import { VIEW_PROTOCOL, currentTheme, themeTokens, viewHub, viewSrcdoc } from "../lib/viewFrame";
-import type { MountedView } from "../lib/viewFrame";
+import type { MountedView, ViewSurface } from "../lib/viewFrame";
 import { pluginRuntime } from "../plugins/runtime";
 import { ApiError, callMethod, hasPermission } from "../sdk-host/host";
 import { EVENTS } from "../sdk-host/spec";
@@ -38,6 +38,8 @@ interface ViewFrameProps {
   props?: Record<string, unknown>;
   /** Fill the container's height instead of growing with the content. */
   fill?: boolean;
+  /** Where the view is mounted; the kit adapts (e.g. the status bar is compact). */
+  surface?: ViewSurface;
   initialHeight?: number;
   minHeight?: number;
   maxHeight?: number;
@@ -53,7 +55,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function ViewFrame({ viewKey, html, owner, permissions, props, fill, initialHeight, minHeight = 0, maxHeight = 4000, onData, className, title }: ViewFrameProps) {
+export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surface, initialHeight, minHeight = 0, maxHeight = 4000, onData, className, title }: ViewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight ?? (fill ? 0 : 80));
   const [error, setError] = useState("");
@@ -64,7 +66,7 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, init
 
   // Rebuild the document only when the HTML changes; props travel by message.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const srcdoc = useMemo(() => viewSrcdoc({ html, props: props ?? {}, fill }), [html, fill]);
+  const srcdoc = useMemo(() => viewSrcdoc({ html, props: props ?? {}, fill, surface }), [html, fill, surface]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -186,7 +188,9 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, init
 
   return (
     <div className={`view-frame${fill ? " is-fill" : ""}${className ? ` ${className}` : ""}`} style={fill ? undefined : { height }}>
-      <iframe ref={iframeRef} title={title} sandbox="allow-scripts" srcDoc={srcdoc} />
+      {/* The frame's color-scheme must match the document's, or the browser paints an
+          opaque canvas behind a transparent view. */}
+      <iframe ref={iframeRef} title={title} sandbox="allow-scripts" srcDoc={srcdoc} style={{ colorScheme: theme === "dark" ? "dark" : "light" }} />
       {error ? (
         <div className="view-frame-error" role="status">
           <AlertTriangle size={12} />

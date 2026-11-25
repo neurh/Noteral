@@ -162,13 +162,44 @@ export function contextUsage(messages: ChatMessage[], draftTokens: number): { us
   return { used: usage.input + usage.output + after + draftTokens, exact: true };
 }
 
+export interface ContextSlice {
+  key: string;
+  label: string;
+  tokens: number;
+  color: string;
+}
+
+/** Roughly where the context goes, scaled to the measured total. */
+export function contextBreakdown(messages: ChatMessage[], draftTokens: number, used: number): ContextSlice[] {
+  const sums = { system: 6000, you: 0, replies: 0, tools: 0, mentions: 0, draft: draftTokens };
+  for (const message of messages) {
+    for (const mention of message.mentions ?? []) sums.mentions += Math.ceil(((mention.content?.length ?? 0) + 60) / 4);
+    for (const part of message.parts) {
+      if (part.type === "tool") sums.tools += Math.ceil((JSON.stringify(part.args ?? {}).length + (part.result?.length ?? 0) + (part.error?.length ?? 0)) / 4);
+      else if (message.role === "user") sums.you += Math.ceil(part.text.length / 4);
+      else sums.replies += Math.ceil(part.text.length / 4);
+    }
+  }
+  const raw = Object.values(sums).reduce((a, b) => a + b, 0) || 1;
+  const scale = used / raw;
+  const slices: ContextSlice[] = [
+    { key: "system", label: "Instructions & tools", tokens: sums.system, color: "var(--text-faint)" },
+    { key: "you", label: "Your messages", tokens: sums.you, color: "var(--accent)" },
+    { key: "replies", label: "Replies & thinking", tokens: sums.replies, color: "color-mix(in srgb, var(--accent) 50%, var(--bg-sunken))" },
+    { key: "tools", label: "Tool calls & results", tokens: sums.tools, color: "var(--warning)" },
+    { key: "mentions", label: "Attached pages", tokens: sums.mentions, color: "var(--success)" },
+    { key: "draft", label: "Draft", tokens: sums.draft, color: "var(--border-strong)" },
+  ];
+  return slices.map((slice) => ({ ...slice, tokens: Math.round(slice.tokens * scale) })).filter((slice) => slice.tokens > 0);
+}
+
 export function formatCount(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1).replace(/\.0$/, "")}k`;
   return String(n);
 }
 
-function ContextRing({ used, total, exact, canCompact, onCompact }: { used: number; total: number; exact: boolean; canCompact: boolean; onCompact: () => void }) {
+function ContextRing({ used, total, exact, slices, canCompact, onCompact }: { used: number; total: number; exact: boolean; slices: ContextSlice[]; canCompact: boolean; onCompact: () => void }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
   const close = useMemo(() => () => setOpen(false), []);
@@ -178,6 +209,7 @@ function ContextRing({ used, total, exact, canCompact, onCompact }: { used: numb
   const r = 6;
   const circumference = 2 * Math.PI * r;
   const level = ratio >= 0.9 ? "full" : ratio >= 0.7 ? "high" : "ok";
+  const free = Math.max(0, total - used);
   return (
     <div className="assistant-context" ref={root}>
       <button
@@ -195,32 +227,52 @@ function ContextRing({ used, total, exact, canCompact, onCompact }: { used: numb
         <span>{percent}%</span>
       </button>
       {open ? (
-        <div className="assistant-popover assistant-context-pop" role="dialog" aria-label="Context window">
-          <div className="assistant-context-head">
-            <strong>{percent}%</strong> of the context window used
+        <div className="assistant-popover assistant-context-pop context-window" role="dialog" aria-label="Context window">
+          <div className="pop-title">Context window</div>
+          <div className="context-head">
+            <strong>{percent}%</strong>
+            <span>
+              {exact ? "" : "≈ "}
+              {formatCount(used)} / {formatCount(total)} tokens
+            </span>
           </div>
-          <div className="assistant-context-bar" aria-hidden>
-            <span className={`level-${level}`} style={{ width: `${Math.max(2, percent)}%` }} />
+          <div className="context-bar" aria-hidden>
+            {slices.map((slice) => (
+              <span key={slice.key} style={{ width: `${(slice.tokens / Math.max(total, used)) * 100}%`, background: slice.color }} />
+            ))}
           </div>
-          <div className="assistant-context-meta">
-            {exact ? "" : "About "}
-            {used.toLocaleString()} / {total.toLocaleString()} tokens
-          </div>
+          <ul className="context-legend">
+            {slices.map((slice) => (
+              <li key={slice.key}>
+                <i style={{ background: slice.color }} />
+                <span>{slice.label}</span>
+                <b>{formatCount(slice.tokens)}</b>
+              </li>
+            ))}
+            <li>
+              <i style={{ background: "var(--bg-sunken)", boxShadow: "inset 0 0 0 1px var(--border)" }} />
+              <span>Free</span>
+              <b>{formatCount(free)}</b>
+            </li>
+          </ul>
           <p className="assistant-context-note">
-            {exact ? "From the provider's last count, plus anything added since." : "Estimated until the model replies."} Change a model's window in Settings → Models.
+            {exact ? "Total from the provider's last count, plus anything added since; the split is estimated." : "Estimated until the model replies."}
+            {level !== "ok" ? " Compacting keeps a summary and frees the rest." : ""} Change a model's window in Settings → Models.
           </p>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={!canCompact}
-            onClick={() => {
-              setOpen(false);
-              onCompact();
-            }}
-            title="Summarize this chat into a new one"
-          >
-            Compact chat
-          </button>
+          <div className="context-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={!canCompact}
+              onClick={() => {
+                setOpen(false);
+                onCompact();
+              }}
+              title="Summarize this chat into a new one"
+            >
+              Compact chat
+            </button>
+          </div>
         </div>
       ) : null}
     </div>
@@ -476,7 +528,9 @@ export function Composer() {
 
   const provider = providers.find((item) => item.id === settings.providerId);
   const resolved = resolveModel(settings.models, settings.discovered, settings.providerId, provider?.kind ?? "openai", settings.model);
-  const usage = contextUsage(messages, estimateTokens(draft) + mentions.reduce((sum, item) => sum + estimateTokens(item.content ?? "") + (item.content ? 0 : 400), 0));
+  const draftTokens = estimateTokens(draft) + mentions.reduce((sum, item) => sum + estimateTokens(item.content ?? "") + (item.content ? 0 : 400), 0);
+  const usage = contextUsage(messages, draftTokens);
+  const slices = useMemo(() => contextBreakdown(messages, draftTokens, usage.used), [messages, draftTokens, usage.used]);
 
   const slash = slashQuery(draft);
   const mention = slash ? null : mentionQuery(draft, caret);
@@ -715,7 +769,7 @@ export function Composer() {
               <Globe size={13} />
             </button>
             {running ? (
-              <button type="button" className="assistant-send stop" onClick={stop} title="Stop (Esc)" aria-label="Stop">
+              <button type="button" className="assistant-send stop" onClick={() => stop()} title="Stop (Esc)" aria-label="Stop">
                 <Square size={11} fill="currentColor" />
               </button>
             ) : (
@@ -733,7 +787,7 @@ export function Composer() {
         ) : null}
         <span className="assistant-foot-spacer" />
         {hasProvider && settings.model ? (
-          <ContextRing used={usage.used} total={resolved.contextWindow || DEFAULT_CONTEXT_WINDOW} exact={usage.exact} canCompact={slashCtx.canCompact} onCompact={() => void compact()} />
+          <ContextRing used={usage.used} total={resolved.contextWindow || DEFAULT_CONTEXT_WINDOW} exact={usage.exact} slices={slices} canCompact={slashCtx.canCompact} onCompact={() => void compact()} />
         ) : null}
       </div>
       <span className="visually-hidden" aria-live="polite">

@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowUpCircle,
+  SlidersHorizontal,
   Bot,
   Box,
   ExternalLink,
@@ -28,6 +29,7 @@ import { PERMISSIONS } from "../sdk-host/spec";
 import { useCustomizations } from "../lib/customizations";
 import { useAppStore } from "../store";
 import { CreatedLayers } from "./CreatedLayers";
+import { PluginOptions, usePluginOptionFields } from "./PluginOptions";
 import { Modal } from "./Modal";
 
 type Tab = "installed" | "community" | "created" | "bundled";
@@ -515,6 +517,8 @@ function InstalledRow({ plugin, busy, reviewing, runtimeError, update, onToggle,
   const { manifest } = plugin;
   const source = sourceLabel(plugin.source);
   const repo = manifest.repo || (plugin.source.startsWith("github:") ? plugin.source.slice(7) : "");
+  const optionFields = usePluginOptionFields(manifest);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   return (
     <article className={`plugin-row${plugin.enabled ? " enabled" : ""}${plugin.problem || runtimeError ? " has-problem" : ""}`}>
       <div className="plugin-row-main">
@@ -540,8 +544,21 @@ function InstalledRow({ plugin, busy, reviewing, runtimeError, update, onToggle,
             </button>
           ) : null}
         </div>
+        {optionsOpen && optionFields.length ? <PluginOptions manifest={manifest} /> : null}
       </div>
       <div className="plugin-row-side">
+        {optionFields.length ? (
+          <button
+            type="button"
+            className={`icon-button plugin-options-toggle${optionsOpen ? " active" : ""}`}
+            onClick={() => setOptionsOpen((open) => !open)}
+            aria-expanded={optionsOpen}
+            title={`${manifest.name} options`}
+            aria-label={`${manifest.name} options`}
+          >
+            <SlidersHorizontal size={14} />
+          </button>
+        ) : null}
         <label className="switch" title={plugin.enabled ? "Disable plugin" : "Enable plugin"}>
           <input type="checkbox" checked={plugin.enabled} disabled={Boolean(plugin.problem) || busy} onChange={onToggle} aria-label={`Enable ${manifest.name}`} />
           <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>

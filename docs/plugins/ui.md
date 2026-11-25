@@ -65,7 +65,16 @@ Every HTML view gets `window.noteral`:
 | `onMessage(fn)` | Receives `views.post(...)` messages from your plugin. |
 | `noteral.open(target)` | Opens a page id, `noteral://page/<id>` or an `https://` URL. |
 
-Views follow the app's theme automatically. Every token (`--bg`, `--text`, `--accent`, `--border`, `--radius-md`, `--font-ui`, …) is defined inside the frame. A small kit is also built in: `.n-card`, `.n-row`, `.n-col`, `.n-grid`, `.n-list`, `.n-chip`, `.n-muted`, `.n-faint`, and buttons with `.primary` / `.ghost`. Height follows the content unless the surface fills its space (custom page types).
+Views follow the app's theme automatically. Every token (`--bg`, `--text`, `--accent`, `--border`, `--radius-md`, `--font-ui`, …) is defined inside the frame. A small kit is also built in: `.n-card`, `.n-row`, `.n-col`, `.n-grid`, `.n-list`, `.n-chip`, `.n-muted`, `.n-faint`, and buttons with `.primary` / `.ghost`. Height follows the content (it grows and shrinks) unless the surface fills its space (full custom pages, Home widgets).
+
+**Your CSS always wins.** The kit lives in a cascade layer (`@layer noteral`) and uses zero-specificity `:where()` selectors, so any rule you write overrides it, with no `!important` needed. The frame itself is **transparent**: `html` and `body` have no background, and the iframe follows the app's color scheme, so the browser doesn't paint a white or black canvas behind a view. If you want a card, give it a background yourself (`background: var(--bg-elevated)`).
+
+**Surfaces.** `noteral.surface` (also `<html data-surface="…">`) tells a view where it is drawn: `page`, `block`, `sidebar`, `status`, `home` or `panel`. `noteral.fill` is `true` when the view should fill its box. Use them to adapt one view to several places:
+
+```css
+html[data-surface="status"] body { font-size: 12px; }   /* the kit is already compact there */
+html[data-surface="page"] main { max-width: 960px; margin: 0 auto; }
+```
 
 A view's iframe is `sandbox="allow-scripts"` and has a CSP with no network access. It can't reach the app's DOM, storage or the internet. Anything outside the frame goes through `noteral.app`.
 
@@ -92,7 +101,71 @@ The block shows up in the slash menu under its title. Its data is saved in the p
 
 ## Custom page types
 
-`nodes.registerType({ type, title, icon, html, defaultData })` adds an entry to the **New** menu in the page tree. Items of this type open full-height in your view, and `noteral.setData` persists their data (up to 1 MB). You can use this for boards, timers, sketches, dashboards, or anything that isn't a document.
+`nodes.registerType({ type, title, icon, html, defaultData, layout })` adds an entry to the **New** menu in the page tree. `noteral.setData` persists an item's data (up to 1 MB). You can use this for boards, timers, sketches, dashboards, or anything that isn't a document.
+
+| `layout` | What the item opens as |
+| --- | --- |
+| `"full"` (default) | Your view takes the **whole pane**: no title, cover or icon, and one scroll area (yours). `noteral.fill` is `true`. Size your root to `height: 100vh` and scroll inside it. |
+| `"page"` | A normal page head (title, icon, cover) with your view under it at its natural height, scrolling with the page. Use this when the item reads like a document. |
+
+```ts
+await this.app.nodes.registerType({
+  type: "kanban",
+  title: "Board",
+  icon: "lucide:kanban",
+  layout: "full",
+  defaultData: { columns: [{ title: "To do", cards: [] }] },
+  html: `<style>
+      body { margin: 0; height: 100vh; display: flex; gap: 12px; padding: 16px; overflow-x: auto; }
+      .col { flex: 0 0 260px; background: var(--bg-sunken); border-radius: var(--radius-md); padding: 10px; }
+    </style>
+    <div id="board"></div>
+    <script>/* render noteral.props.data, save with noteral.setData */</script>`,
+});
+```
+
+The item's title still shows in the page tree, tabs and search. In a `full` view you can show it yourself from `noteral.props.title`.
+
+## Menu items
+
+Plugins can add items to five app menus: `page` (the ⋯ menu in a page header), `tree` (right-click in the page tree), `block` (the block handle menu), `tab` (a tab's context menu) and `status` (right-click on the status bar). Each item runs one of the plugin's commands, which receives a `MenuContext` describing what the menu was opened on.
+
+```ts
+this.addMenuItem({
+  id: "word-count",
+  menu: "block",
+  title: "Count words in block",
+  icon: "lucide:hash",
+  blockTypes: ["paragraph", "heading"],
+  run: async ({ pageId, blockId }) => {
+    const text = await this.app.editor.getMarkdown({ pageId, blockIds: [blockId!] });
+    await this.app.ui.notify({ message: `${text.split(/\s+/).filter(Boolean).length} words` });
+  },
+});
+```
+
+| `MenuContext` field | Set for |
+| --- | --- |
+| `menu` | Always: which menu it was. |
+| `pageId`, `kind` (`page` · `folder` · `database` · `custom`) | Page, tree and tab menus; the page of a block. |
+| `nodeType` | When `kind` is `custom`. |
+| `blockId`, `blockType` | Block menu. A custom block's type is its registered `type`. |
+| `tabKey` | Tab menu. |
+
+Filter where an item appears with `kinds`, `nodeTypes` and `blockTypes`. Set `danger: true` for destructive actions (shown in red). Items can also be declared in the manifest (`contributes.menus`) so they show before the plugin loads. `menus.addItem` / `menus.removeItem` / `menus.list` do the same through the App API, which is what the assistant uses. Needs the `menus` permission.
+
+## Options
+
+Give users settings without building a screen. Declare fields in `contributes.settings` (or at runtime with `this.defineSettings([...])`) and they appear under **Plugins → Installed → Options** (the sliders button on the plugin's row), grouped by `section`, with a *Reset to defaults* button.
+
+```ts
+const options = await this.getOptions<{ format: string; notify: boolean }>();
+this.onOptionsChange((next, changed) => {
+  if (changed.includes("format")) this.refresh(next.format as string);
+});
+```
+
+Field types are `toggle`, `text`, `textarea`, `number`, `slider` (`min`/`max`/`step`), `select` (`options: [{ value, label }]`) and `color`. Values are saved with the plugin's data, coerced to the field's type, and missing values fall back to `default`. Each change raises the `settings:changed` event. `getOptions` needs `settings.read`.
 
 ## Status-bar widgets
 

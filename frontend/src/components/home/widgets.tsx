@@ -1187,6 +1187,7 @@ export function HtmlWidget({ widget, editing = false, onPatch }: WidgetProps) {
     <WidgetCard bare={!title || widget.hideTitle} title={widget.hideTitle ? undefined : title} className="hw-html">
       {widget.html ? (
         <ViewFrame
+          surface="home"
           viewKey={`app:home:${widget.id}`}
           html={widget.html}
           owner={HOME_VIEW_OWNER}

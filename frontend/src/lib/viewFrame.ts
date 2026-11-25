@@ -20,12 +20,23 @@ import { TOKEN_NAMES } from "./customizations";
 
 export const VIEW_PROTOCOL = 1;
 
-/** Small shared kit so views look native without writing much CSS. */
-const KIT_CSS = `
+/**
+ * Small shared kit so views look native without writing much CSS.
+ *
+ * Everything sits in the "noteral" cascade layer, so any CSS the author writes wins
+ * regardless of specificity. The page itself is always transparent: a view shows the
+ * surface it is placed on (status bar, sidebar, block, Home card) unless it paints one.
+ */
+const KIT_CSS = `@layer noteral{
 *,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:0;background:transparent;color:var(--text);font:13px/1.5 var(--font-ui);-webkit-font-smoothing:antialiased}
+html,body{margin:0;padding:0;color:var(--text);font:13px/1.5 var(--font-ui);-webkit-font-smoothing:antialiased}
 body{overflow-wrap:anywhere}
-html[data-fill] ,html[data-fill] body{height:100%}
+html[data-fill],html[data-fill] body{height:100%}
+html[data-fill] body{overflow:auto}
+html[data-surface=status],html[data-surface=status] body{height:100%;overflow:hidden}
+html[data-surface=status] body{display:flex;align-items:center;gap:6px;font-size:11.5px;line-height:1;white-space:nowrap;color:var(--text-muted)}
+html[data-surface=status] :where(button),html[data-surface=status] .n-btn{min-height:18px;padding:0 6px;border-color:transparent;background:transparent;font-size:11.5px}
+html[data-surface=status] :where(button):hover,html[data-surface=status] .n-btn:hover{background:var(--bg-hover);color:var(--text)}
 a{color:var(--accent-deep);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 h1,h2,h3,h4{margin:0 0 .4em;line-height:1.25;color:var(--text)}
 h1{font-size:20px}h2{font-size:16px}h3{font-size:14px}h4{font-size:13px}
@@ -34,12 +45,12 @@ code,pre{font-family:var(--font-mono);font-size:12px}
 pre{background:var(--bg-sunken);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;overflow:auto}
 hr{border:0;border-top:1px solid var(--border);margin:10px 0}
 button,input,select,textarea{font:inherit;color:inherit}
-.n-btn,button{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg-raised);color:var(--text);cursor:pointer}
-.n-btn:hover,button:hover{background:var(--bg-hover)}
-.n-btn.primary,button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.n-btn.ghost,button.ghost{border-color:transparent;background:transparent}
-.n-input,input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea{min-height:28px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg-sunken);outline:none}
-.n-input:focus,input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-softer)}
+.n-btn,:where(button){display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg-raised);color:var(--text);cursor:pointer}
+.n-btn:hover,:where(button):hover{background:var(--bg-hover)}
+.n-btn.primary,:where(button).primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.n-btn.ghost,:where(button).ghost{border-color:transparent;background:transparent}
+.n-input,:where(input:not([type=checkbox],[type=radio],[type=range],[type=color]),select,textarea){min-height:28px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--bg-sunken);outline:none}
+.n-input:focus,:where(input,select,textarea):focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-softer)}
 .n-card{background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius-md);padding:12px}
 .n-muted{color:var(--text-muted)}.n-faint{color:var(--text-faint)}
 .n-row{display:flex;align-items:center;gap:8px}.n-col{display:flex;flex-direction:column;gap:8px}
@@ -48,7 +59,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 .n-list{list-style:none;margin:0;padding:0}.n-list>li{padding:6px 8px;border-radius:var(--radius-sm)}.n-list>li:hover{background:var(--bg-hover)}
 table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--border);padding:5px 6px;text-align:left}th{color:var(--text-muted);font-weight:600;font-size:12px}
 ::selection{background:var(--selection)}
-`;
+}
+html,body{background:transparent}`;
 
 function bridgeScript(): string {
   // Plain ES5-ish so it runs anywhere; kept tiny.
@@ -58,7 +70,7 @@ var boot=JSON.parse(document.getElementById("noteral-boot").textContent);
 function send(m){m.__nv=${VIEW_PROTOCOL};P.postMessage(m,"*");}
 function fire(list,arg){for(var i=0;i<list.length;i++){try{list[i](arg)}catch(e){report(e)}}}
 function report(e){send({type:"error",message:String(e&&e.message||e).slice(0,400)});}
-var N={props:boot.props,theme:boot.theme,
+var N={props:boot.props,theme:boot.theme,surface:boot.surface,fill:boot.fill,
 call:function(method,params){return new Promise(function(res,rej){var id=++seq;pending[id]={res:res,rej:rej};send({type:"call",id:id,method:String(method),params:params||{}});});},
 setData:function(data){N.props=Object.assign({},N.props,{data:data});send({type:"setData",data:data});},
 onProps:function(f){H.props.push(f);return function(){H.props=H.props.filter(function(x){return x!==f})}},
@@ -81,7 +93,7 @@ else if(m.type==="event"){fire(subs[m.event]||[],m.data);}
 else if(m.type==="message"){fire(H.message,{name:m.name,payload:m.payload});}
 });
 function apply(tokens,theme){var r=document.documentElement;for(var k in tokens){r.style.setProperty("--"+k,tokens[k]);}r.dataset.theme=theme;r.style.colorScheme=theme;}
-var last=-1;function measure(force){var h=Math.ceil(Math.max(document.documentElement.scrollHeight,document.body?document.body.scrollHeight:0));if(force||Math.abs(h-last)>1){last=h;send({type:"resize",height:h});}}
+var last=-1;function measure(force){if(boot.fill)return;var b=document.body;if(!b)return;var cs=getComputedStyle(b);var h=Math.ceil(Math.max(b.scrollHeight,b.getBoundingClientRect().height)+(parseFloat(cs.marginTop)||0)+(parseFloat(cs.marginBottom)||0));if(force||Math.abs(h-last)>1){last=h;send({type:"resize",height:h});}}
 window.addEventListener("error",function(e){report(e.error||e.message)});
 window.addEventListener("unhandledrejection",function(e){report(e.reason)});
 document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var href=a.getAttribute("href");if(!href||href.charAt(0)==="#")return;e.preventDefault();N.open(href);},true);
@@ -108,27 +120,31 @@ export function currentTheme(): "light" | "dark" {
   return typeof document !== "undefined" && document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 }
 
+/** Where a view is mounted. Views read it as `noteral.surface` and `html[data-surface]`. */
+export type ViewSurface = "page" | "block" | "sidebar" | "status" | "home" | "panel";
+
 export interface ViewDocOptions {
   html: string;
   props: unknown;
   fill?: boolean;
+  surface?: ViewSurface;
 }
 
 /** The srcdoc for a view: CSP, theme tokens, the kit, the bridge, then the author's HTML. */
-export function viewSrcdoc({ html, props, fill }: ViewDocOptions): string {
+export function viewSrcdoc({ html, props, fill, surface = "panel" }: ViewDocOptions): string {
   const theme = currentTheme();
   const tokens = themeTokens();
   const vars = Object.entries(tokens)
     .map(([name, value]) => `--${name}:${value.replace(/[;{}<>]/g, "")};`)
     .join("");
-  const boot = JSON.stringify({ props, theme }).replace(/</g, "\\u003c");
+  const boot = JSON.stringify({ props, theme, fill: Boolean(fill), surface }).replace(/</g, "\\u003c");
   const isDocument = /<html[\s>]/i.test(html);
   const head = `<meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data:; media-src data: blob: https:;">
 <style>:root{${vars}color-scheme:${theme}}${KIT_CSS}</style>
 <script type="application/json" id="noteral-boot">${boot}</script>
 <script>${escapeScript(bridgeScript())}</script>`;
-  const fillAttr = fill ? " data-fill" : "";
+  const fillAttr = `${fill ? " data-fill" : ""} data-surface="${surface}"`;
   if (isDocument) {
     // Inject our head into the author's document.
     const withHtmlAttr = html.replace(/<html([\s>])/i, `<html data-theme="${theme}"${fillAttr}$1`);

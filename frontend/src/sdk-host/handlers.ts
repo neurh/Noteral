@@ -9,6 +9,7 @@ import { Clipboard } from "@wailsio/runtime";
 import { api } from "../lib/api";
 import type { Manifest, PageMeta } from "../lib/api";
 import { commandRegistry } from "../lib/commands";
+import { saveOptions } from "../lib/pluginOptions";
 import {
   COMPONENTS,
   TOKEN_NAMES,
@@ -920,7 +921,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "settings.set": async (p, ctx) => {
     if (!ctx.pluginId) throw new Error("settings.* is only available to plugins.");
-    return ((await api.savePluginSettings(ctx.pluginId, p.patch)) ?? {}) as Record<string, unknown>;
+    return saveOptions(ctx.pluginId, p.patch as Record<string, unknown>);
   },
 
   // preferences

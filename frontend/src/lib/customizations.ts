@@ -367,7 +367,7 @@ function syncContributions() {
   const keep = new Set<string>();
   for (const layer of state.layers) {
     if (!layerIsLive(layer)) continue;
-    const empty = !layer.sidebarTabs.length && !layer.statusWidgets.length && !layer.blockTypes.length && !layer.nodeTypes.length;
+    const empty = !layer.sidebarTabs.length && !layer.statusWidgets.length && !layer.blockTypes.length && !layer.nodeTypes.length && !layer.menuItems.length;
     if (empty) continue;
     keep.add(layer.id);
     contributions.set({
@@ -377,6 +377,8 @@ function syncContributions() {
       statusWidgets: layer.statusWidgets,
       blockTypes: layer.blockTypes,
       nodeTypes: layer.nodeTypes,
+      menuItems: layer.menuItems,
+      settings: [],
     });
   }
   contributions.retain("layer", keep);

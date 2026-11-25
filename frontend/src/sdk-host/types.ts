@@ -426,7 +426,34 @@ export interface NodeTypeInfo {
   title: string;
   description?: string;
   icon?: string;
+  /** "full": the view is the whole page. "page": a page head above the view. */
+  layout: "full" | "page";
   owner: ContributionOwnerInfo;
+}
+
+export interface MenuItemInfo {
+  key: string;
+  id: string;
+  menu: "page" | "tree" | "block" | "tab" | "status";
+  title: string;
+  icon?: string;
+  command: string;
+  danger?: boolean;
+  owner: ContributionOwnerInfo;
+}
+
+export interface SettingFieldInfo {
+  key: string;
+  type: "toggle" | "text" | "textarea" | "number" | "slider" | "select" | "color";
+  label: string;
+  description?: string;
+  default?: unknown;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+  placeholder?: string;
+  section?: string;
 }
 
 export interface HomeViewSummary {
@@ -494,7 +521,7 @@ export interface PluginTestResult {
   error?: string;
   logs: { level: string; message: string }[];
   commands: string[];
-  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; panels: string[]; statusItems: string[] };
+  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; menuItems: string[]; settings: string[]; panels: string[]; statusItems: string[] };
   /** App API methods the code called. */
   calls: string[];
   /** Write calls that were skipped during the test. */

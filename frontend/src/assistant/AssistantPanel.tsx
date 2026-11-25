@@ -1,13 +1,11 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent as ReactDragEvent, ReactNode } from "react";
+import type { DragEvent as ReactDragEvent } from "react";
 import { Clipboard } from "@wailsio/runtime";
 import {
   AtSign,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleAlert,
-  CircleHelp,
   Copy,
   FileText,
   History,
@@ -18,7 +16,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { AskForm } from "../components/AskForm";
 import { tabDragId } from "../lib/dragTab";
 import { relativeTime } from "../lib/format";
 import { openMarkdownLink } from "../lib/links";
@@ -28,10 +25,12 @@ import { toggleAssistant } from "./open";
 import { Composer, MentionChip, focusComposer, useComposer } from "./Composer";
 import { canMention, mentionsFromDrop } from "./mentions";
 import { displayModel } from "./models";
+import { LedgerButton } from "./Ledger";
 import { ProvidersView } from "./ProvidersView";
 import { useAssistant } from "./store";
-import { MODES, toolHint, toolLabel, toolSpec } from "./tools";
-import type { AssistantMode, ChatMessage, Part, ToolPart } from "./types";
+import { ApprovalCard, ChangeList, QuestionCard, SourceList, ThinkingLoader, Timeline, changesOf, formatTokens, layoutReply, sourcesOf } from "./Activity";
+import { MODES } from "./tools";
+import type { AssistantMode, ChatMessage } from "./types";
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -120,6 +119,7 @@ function AssistantHeader() {
       ) : null}
       <h3 title={label}>{label}</h3>
       <div className="assistant-head-actions">
+        <LedgerButton />
         <button type="button" className={`icon-button ${view === "history" ? "is-on" : ""}`} onClick={() => setView(view === "history" ? "chat" : "history")} title="Chat history" aria-label="Chat history" aria-pressed={view === "history"}>
           <History size={15} />
         </button>
@@ -148,11 +148,16 @@ function ChatView() {
   const pinned = useRef(true);
   const drop = useMentionDrop();
 
-  // Follow the stream unless the reader scrolled up.
+  // Follow the stream unless the reader scrolled up; a new message from the
+  // user always brings the view back to the bottom.
+  const userCount = messages.reduce((sum, message) => sum + (message.role === "user" ? 1 : 0), 0);
+  const lastUserCount = useRef(userCount);
   useLayoutEffect(() => {
     const el = scroller.current;
+    if (userCount > lastUserCount.current) pinned.current = true;
+    lastUserCount.current = userCount;
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, userCount]);
 
   // Content can also grow without new messages (a reasoning block opened, a card
   // expanded, an image loaded): stay at the bottom when the reader was there.
@@ -259,10 +264,11 @@ const AssistantMessage = memo(function AssistantMessage({ message, live, last }:
   const regenerate = useAssistant((state) => state.regenerate);
   const running = useAssistant((state) => state.running);
   const [copied, setCopied] = useState(false);
-  const text = message.parts.map((part) => (part.type === "text" ? part.text : "")).join("\n\n").trim();
-  const groups = useMemo(() => groupParts(message.parts), [message.parts]);
-  const waiting = message.parts.some((part) => part.type === "tool" && (part.status === "awaiting" || part.status === "asking"));
-  const working = live && !waiting && (!message.parts.length || message.parts[message.parts.length - 1].type === "tool");
+  const layout = useMemo(() => layoutReply(message.parts), [message.parts]);
+  const sources = useMemo(() => (live ? [] : sourcesOf(message)), [message, live]);
+  const changes = useMemo(() => (live ? [] : changesOf(message)), [message, live]);
+  const text = layout.answer.trim();
+  const started = !live || message.parts.some((part) => (part.type === "text" ? part.text.trim() : part.type === "tool" || part.text.trim()));
 
   const copy = async () => {
     try {
@@ -276,29 +282,18 @@ const AssistantMessage = memo(function AssistantMessage({ message, live, last }:
 
   return (
     <div className={`assistant-reply${live ? " live" : ""}`}>
-      {groups.map((group, index) =>
-        group.kind === "tools" ? (
-          <ToolGroup key={index} tools={group.tools} />
-        ) : group.kind === "thinking" ? (
-          <details key={index} className="assistant-thinking">
-            <summary>{live && index === groups.length - 1 ? "Thinking…" : "Reasoning"}</summary>
-            <p>{group.text}</p>
-          </details>
-        ) : (
-          <Markdown key={index} source={group.text} className="assistant-md" onLink={openMarkdownLink} />
-        ),
-      )}
-      {working ? (
-        <div className="assistant-working" aria-live="polite">
-          <span className="assistant-dots" aria-hidden="true"><i /><i /><i /></span> Working…
-        </div>
-      ) : null}
+      {!started ? <ThinkingLoader since={message.createdAt} /> : null}
+      <Timeline message={message} steps={layout.steps} live={live && !layout.pending.length && !text} waiting={live && layout.pending.length > 0} />
+      {layout.pending.map((tool) => (tool.status === "asking" ? <QuestionCard key={tool.id} tool={tool} /> : <ApprovalCard key={tool.id} tool={tool} />))}
+      {text ? <Markdown source={layout.answer} className={`assistant-md assistant-answer${live ? " is-streaming" : ""}`} onLink={openMarkdownLink} /> : null}
       {message.error ? (
         <div className="assistant-error" role="alert">
           <CircleAlert size={13} /> <span>{message.error}</span>
         </div>
       ) : null}
       {message.stopped ? <div className="assistant-stopped">Stopped</div> : null}
+      {!live ? <ChangeList changes={changes} /> : null}
+      {!live ? <SourceList sources={sources} /> : null}
       {!live && (text || message.error) ? (
         <div className="assistant-reply-foot">
           {text ? (
@@ -321,236 +316,6 @@ const AssistantMessage = memo(function AssistantMessage({ message, live, last }:
   );
 });
 
-function formatTokens(n: number) {
-  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
-}
-
-type Group = { kind: "text"; text: string } | { kind: "thinking"; text: string } | { kind: "tools"; tools: ToolPart[] };
-
-function groupParts(parts: Part[]): Group[] {
-  const groups: Group[] = [];
-  for (const part of parts) {
-    const last = groups[groups.length - 1];
-    if (part.type === "tool") {
-      if (last?.kind === "tools") last.tools.push(part);
-      else groups.push({ kind: "tools", tools: [part] });
-    } else if (part.text.trim()) {
-      if (last && last.kind === part.type) last.text += part.text;
-      else groups.push({ kind: part.type, text: part.text });
-    }
-  }
-  return groups;
-}
-
-// ── tools ──────────────────────────────────────────────────────────────────
-
-function ToolGroup({ tools }: { tools: ToolPart[] }) {
-  return (
-    <div className="assistant-tools">
-      {tools.map((tool) =>
-        tool.status === "awaiting" ? (
-          <ApprovalCard key={tool.id} tool={tool} />
-        ) : tool.status === "asking" ? (
-          <QuestionCard key={tool.id} tool={tool} />
-        ) : tool.name === "ui.ask" && tool.status === "done" ? (
-          <AnsweredRow key={tool.id} tool={tool} />
-        ) : (
-          <ToolRow key={tool.id} tool={tool} />
-        ),
-      )}
-    </div>
-  );
-}
-
-interface AskArgs {
-  question?: string;
-  options?: { label?: string; description?: string }[];
-  multiple?: boolean;
-  allowText?: boolean;
-  placeholder?: string;
-}
-
-/** The assistant asked a question (ui.ask): answer it right in the chat. */
-function QuestionCard({ tool }: { tool: ToolPart }) {
-  const answer = useAssistant((state) => state.answer);
-  const args = (tool.args ?? {}) as AskArgs;
-  const options = (args.options ?? []).filter((item) => item?.label).map((item, index) => ({ id: String(index), label: String(item.label), description: item.description ? String(item.description) : undefined }));
-  return (
-    <div className="assistant-question" role="group" aria-label="Question from the assistant">
-      <div className="assistant-question-title">
-        <CircleHelp size={13} aria-hidden /> <span>{args.question || "The assistant has a question"}</span>
-      </div>
-      <AskForm
-        compact
-        hideQuestion
-        question={args.question ?? ""}
-        options={options}
-        multiple={Boolean(args.multiple)}
-        allowText={args.allowText !== false || !options.length}
-        placeholder={args.placeholder ?? (options.length ? "Or type your own answer…" : "Type your answer…")}
-        onAnswer={(reply) => answer(tool.id, reply)}
-        onCancel={() => answer(tool.id, { answer: "", choices: [], cancelled: true })}
-        submitLabel="Send answer"
-      />
-    </div>
-  );
-}
-
-function AnsweredRow({ tool }: { tool: ToolPart }) {
-  const args = (tool.args ?? {}) as AskArgs;
-  let reply = "";
-  let cancelled = false;
-  try {
-    const parsed = JSON.parse(tool.result ?? "{}") as { answer?: string; cancelled?: boolean };
-    reply = parsed.answer ?? "";
-    cancelled = Boolean(parsed.cancelled);
-  } catch {
-    reply = tool.result ?? "";
-  }
-  return (
-    <div className="assistant-answered">
-      <span className="assistant-answered-q">
-        <CircleHelp size={12} aria-hidden /> {args.question}
-      </span>
-      <span className={`assistant-answered-a${cancelled ? " is-skipped" : ""}`}>{cancelled ? "Skipped" : reply || "—"}</span>
-    </div>
-  );
-}
-
-function StatusIcon({ status }: { status: ToolPart["status"] }) {
-  if (status === "running" || status === "pending") return <LoaderCircle size={12} className="spin" />;
-  if (status === "error") return <CircleAlert size={12} />;
-  if (status === "declined") return <X size={12} />;
-  return <Check size={12} />;
-}
-
-function ToolRow({ tool }: { tool: ToolPart }) {
-  const [open, setOpen] = useState(false);
-  const done = tool.status === "done";
-  const hint = toolHint(tool.name, tool.args);
-  const spec = toolSpec(tool.name);
-  const plain = (spec?.summary ?? tool.name).replace(/\.$/, "");
-  const label =
-    tool.status === "declined" ? `Declined · ${plain}` : tool.status === "error" ? `Failed · ${plain}` : toolLabel(tool.name, done);
-  const sources = tool.name === "web.search" && done ? searchResults(tool.result) : [];
-  return (
-    <div className={`assistant-tool status-${tool.status}`}>
-      <button type="button" className="assistant-tool-row" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span className="assistant-tool-icon"><StatusIcon status={tool.status} /></span>
-        <span className="assistant-tool-label">{label}</span>
-        {hint ? <span className="assistant-tool-hint">{hint}</span> : null}
-        {sources.length ? <span className="assistant-tool-count">{sources.length} results</span> : null}
-        <ChevronDown size={12} className="assistant-tool-caret" />
-      </button>
-      {open ? (
-        <div className="assistant-tool-detail">
-          {sources.length ? (
-            <ul className="assistant-sources">
-              {sources.map((item) => (
-                <li key={item.url}>
-                  <button type="button" onClick={() => openMarkdownLink(item.url)} title={item.url}>
-                    <span>{item.title || item.url}</span>
-                    <small>{hostOf(item.url)}</small>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <div className="assistant-tool-io">
-            <span>{tool.name}</span>
-            <pre>{JSON.stringify(tool.args, null, 2)}</pre>
-          </div>
-          {tool.error ? <div className="assistant-tool-io error"><span>Error</span><pre>{tool.error}</pre></div> : null}
-          {tool.result && !sources.length ? (
-            <div className="assistant-tool-io">
-              <span>Result</span>
-              <pre>{prettyResult(tool.result)}</pre>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ApprovalCard({ tool }: { tool: ToolPart }) {
-  const respond = useAssistant((state) => state.respond);
-  const spec = toolSpec(tool.name);
-  const destructive = Boolean(spec?.confirm);
-  const preview = describeCall(tool);
-  return (
-    <div className={`assistant-approval${destructive ? " danger" : ""}`} role="group" aria-label="Approve action">
-      <div className="assistant-approval-title">
-        <CircleAlert size={13} /> {(spec?.summary ?? tool.name).replace(/\.$/, "")}
-      </div>
-      {preview ? <div className="assistant-approval-body">{preview}</div> : null}
-      <details className="assistant-approval-args">
-        <summary>Details</summary>
-        <pre>{JSON.stringify(tool.args, null, 2)}</pre>
-      </details>
-      <div className="assistant-approval-actions">
-        <button type="button" className={destructive ? "primary-button primary-danger" : "primary-button"} onClick={() => respond(tool.id, true)} autoFocus>
-          Allow
-        </button>
-        {!destructive ? (
-          <button type="button" className="secondary-button" onClick={() => respond(tool.id, true, true)} title={`Don't ask again for ${tool.name} in this chat`}>
-            Allow for this chat
-          </button>
-        ) : null}
-        <button type="button" className="secondary-button" onClick={() => respond(tool.id, false)}>
-          Decline
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** A readable one-liner for what an approval-gated call will do. */
-function describeCall(tool: ToolPart): ReactNode {
-  const args = tool.args as Record<string, unknown>;
-  if (tool.name === "plugins.create") {
-    const manifest = (args.manifest ?? {}) as { name?: string; permissions?: string[]; description?: string };
-    const code = typeof args.code === "string" ? args.code : "";
-    return (
-      <>
-        <strong>{manifest.name ?? "Plugin"}</strong> — {manifest.description ?? ""}
-        <div className="assistant-approval-meta">
-          {(manifest.permissions ?? []).length ? `Permissions: ${(manifest.permissions ?? []).join(", ")}` : "No permissions"} · {code.split("\n").length} lines of code
-        </div>
-      </>
-    );
-  }
-  const hint = toolHint(tool.name, tool.args);
-  return hint ? <span>{hint}</span> : null;
-}
-
-function searchResults(result?: string): { title: string; url: string }[] {
-  if (!result) return [];
-  try {
-    const parsed = JSON.parse(result) as { results?: { title: string; url: string }[] };
-    return (parsed.results ?? []).filter((item) => item.url).slice(0, 10);
-  } catch {
-    return [];
-  }
-}
-
-function hostOf(url: string) {
-  try {
-    return new URL(url).host.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
-}
-
-function prettyResult(result: string) {
-  try {
-    const text = JSON.stringify(JSON.parse(result), null, 2);
-    return text.length > 4000 ? `${text.slice(0, 4000)}\n…` : text;
-  } catch {
-    return result.length > 4000 ? `${result.slice(0, 4000)}\n…` : result;
-  }
-}
-
 // ── history ────────────────────────────────────────────────────────────────
 
 function HistoryView() {
@@ -558,12 +323,17 @@ function HistoryView() {
   const currentId = useAssistant((state) => state.chat.id);
   const openChat = useAssistant((state) => state.openChat);
   const deleteChat = useAssistant((state) => state.deleteChat);
+  const runs = useAssistant((state) => state.runs);
+  const waiting = useAssistant((state) => state.waiting);
+  const stop = useAssistant((state) => state.stop);
   const [filter, setFilter] = useState("");
   const visible = chats.filter((chat) => !filter.trim() || chat.title.toLowerCase().includes(filter.trim().toLowerCase()));
 
   const remove = async (id: string, title: string) => {
     const ok = await dialogs.confirm({ title: "Delete this chat?", message: `“${title || "Untitled chat"}” is removed from this computer.`, confirmLabel: "Delete", danger: true });
-    if (ok) await deleteChat(id);
+    if (!ok) return;
+    if (runs[id]) stop(id);
+    await deleteChat(id);
   };
 
   return (
@@ -583,6 +353,11 @@ function HistoryView() {
               <button type="button" className="assistant-history-open" onClick={() => void openChat(chat.id)}>
                 <span className="assistant-history-title">{chat.title || "Untitled chat"}</span>
                 <span className="assistant-history-meta">
+                  {runs[chat.id] ? (
+                    <span className="history-running">
+                      <span className="ledger-run-dot" aria-hidden="true" /> {waiting[chat.id]?.length ? "Waiting for you" : "Working"} ·
+                    </span>
+                  ) : null}
                   <span className={`assistant-mode-dot mode-${chat.mode}`} /> {MODES.find((item) => item.id === chat.mode)?.label ?? chat.mode} · {chat.messages} messages · {relativeTime(iso(chat.updatedAt))}
                 </span>
               </button>

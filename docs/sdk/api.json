@@ -174,6 +174,12 @@
       "title": "Home",
       "description": "Create, change and remove Home views and widgets.",
       "risk": "medium"
+    },
+    {
+      "id": "menus",
+      "title": "Menu items",
+      "description": "Add items to page, tree, block, tab and status bar menus.",
+      "risk": "low"
     }
   ],
   "events": [
@@ -212,6 +218,12 @@
       "summary": "A button in one of the plugin's panels or Markdown tabs was pressed.",
       "permission": "ui.panel",
       "payload": "{ panelId: string; actionId: string }"
+    },
+    {
+      "name": "settings:changed",
+      "summary": "The user changed the plugin's options.",
+      "permission": "settings.read",
+      "payload": "{ options: Record<string, unknown>; changed: string[] }"
     },
     {
       "name": "view:message",
@@ -3093,6 +3105,158 @@
       "returns": "Record<string, unknown>"
     },
     {
+      "name": "settings.options",
+      "summary": "The plugin's user options: saved values merged over the defaults of its declared fields.",
+      "details": "Fields come from manifest contributes.settings and settings.define. The user edits them under Plugins → Installed → Options; each change raises settings:changed.",
+      "permission": "settings.read",
+      "tier": "read",
+      "callers": [
+        "plugin"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "returns": "Record<string, unknown>"
+    },
+    {
+      "name": "settings.define",
+      "summary": "Declare (replace) the fields of the plugin's Options screen at runtime.",
+      "permission": "settings.read",
+      "tier": "app",
+      "callers": [
+        "plugin"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "array",
+            "description": "Fields, in order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "Option key (letters, digits, . - _).",
+                  "maxLength": 64,
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "description": "Control.",
+                  "enum": [
+                    "toggle",
+                    "text",
+                    "textarea",
+                    "number",
+                    "slider",
+                    "select",
+                    "color"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Label.",
+                  "maxLength": 80
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Help text under the control.",
+                  "maxLength": 300
+                },
+                "section": {
+                  "type": "string",
+                  "description": "Heading to group under.",
+                  "maxLength": 60
+                },
+                "placeholder": {
+                  "type": "string",
+                  "description": "Placeholder (text fields).",
+                  "maxLength": 120
+                },
+                "default": {
+                  "description": "Default value.",
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "properties": {},
+                      "additionalProperties": true
+                    }
+                  ]
+                },
+                "options": {
+                  "type": "array",
+                  "description": "Choices (select).",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "description": "Stored value.",
+                        "maxLength": 120
+                      },
+                      "label": {
+                        "type": "string",
+                        "description": "Label.",
+                        "maxLength": 120
+                      }
+                    },
+                    "required": [
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 40
+                },
+                "min": {
+                  "type": "number",
+                  "description": "Minimum (number, slider)."
+                },
+                "max": {
+                  "type": "number",
+                  "description": "Maximum (number, slider)."
+                },
+                "step": {
+                  "type": "number",
+                  "description": "Step (number, slider)."
+                }
+              },
+              "required": [
+                "key",
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 40
+          }
+        },
+        "required": [
+          "fields"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "SettingFieldInfo[]"
+    },
+    {
       "name": "preferences.get",
       "summary": "Read app preferences (theme, fonts, page width, autosave, …).",
       "permission": "preferences",
@@ -4532,6 +4696,167 @@
       "returns": "void"
     },
     {
+      "name": "menus.list",
+      "summary": "List custom items in app menus (optionally one menu).",
+      "permission": null,
+      "tier": "read",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "menu": {
+            "type": "string",
+            "description": "Menu: page (the page \"…\" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu).",
+            "enum": [
+              "page",
+              "tree",
+              "block",
+              "tab",
+              "status"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "returns": "MenuItemInfo[]"
+    },
+    {
+      "name": "menus.addItem",
+      "summary": "Add or update an item in an app menu: the page \"…\" menu, tree item menu, block menu, sidebar tab menu or status bar menu.",
+      "details": "Choosing the item runs `command`. For plugins it is one of the plugin's own command ids and the handler gets the menu context { menu, pageId, kind, nodeType, blockId, blockType, tabKey } (Plugin.addMenuItem does this for you). For assistant layers it is any app command id from commands.list.",
+      "permission": "menus",
+      "tier": "app",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Item id.",
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "menu": {
+            "type": "string",
+            "description": "Menu: page (the page \"…\" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu).",
+            "enum": [
+              "page",
+              "tree",
+              "block",
+              "tab",
+              "status"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "description": "Label.",
+            "maxLength": 80,
+            "minLength": 1
+          },
+          "icon": {
+            "type": "string",
+            "description": "Icon: an emoji or a Lucide icon name such as \"chart-line\".",
+            "maxLength": 60
+          },
+          "command": {
+            "type": "string",
+            "description": "Command to run (see details).",
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "kinds": {
+            "type": "array",
+            "description": "Only for these item kinds (page and tree menus).",
+            "items": {
+              "type": "string",
+              "description": "Kind.",
+              "enum": [
+                "page",
+                "folder",
+                "database",
+                "custom"
+              ]
+            },
+            "maxItems": 4
+          },
+          "nodeTypes": {
+            "type": "array",
+            "description": "Only for these custom page types.",
+            "items": {
+              "type": "string",
+              "description": "Type id."
+            },
+            "maxItems": 20
+          },
+          "blockTypes": {
+            "type": "array",
+            "description": "Only for these block types (block menu), e.g. paragraph, heading, or a custom type.",
+            "items": {
+              "type": "string",
+              "description": "Block type."
+            },
+            "maxItems": 20
+          },
+          "danger": {
+            "type": "boolean",
+            "description": "Show in red (destructive).",
+            "default": false
+          },
+          "layer": {
+            "type": "string",
+            "description": "Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. \"base\" writes the base look.",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "id",
+          "menu",
+          "title",
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "MenuItemInfo"
+    },
+    {
+      "name": "menus.removeItem",
+      "summary": "Remove a custom menu item.",
+      "permission": "menus",
+      "tier": "app",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Item id."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. \"base\" writes the base look.",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "void"
+    },
+    {
       "name": "blocks.registerType",
       "summary": "Register a custom editor block type rendered by an HTML view; it appears in the slash menu.",
       "details": "Each block stores JSON data in the page. In the view, read it from `noteral.props.data` and save changes with `noteral.setData(next)`; `noteral.props.editable` says whether the page can be edited. Keep `type` stable: documents reference it.",
@@ -4784,7 +5109,7 @@
     {
       "name": "nodes.registerType",
       "summary": "Register a custom page type for the page tree, opened in a full-page HTML view.",
-      "details": "Items of this type are created with nodes.create or from the tree's New menu. The view gets `noteral.props` = { pageId, title, data, editable } and saves with `noteral.setData(next)`. Items can have children like folders.",
+      "details": "Items of this type are created with nodes.create or from the tree's New menu. The view gets `noteral.props` = { pageId, title, icon, data, editable, layout } and saves with `noteral.setData(next)`. Items can have children like folders.",
       "permission": "nodes",
       "tier": "app",
       "callers": [
@@ -4846,6 +5171,15 @@
                 "additionalProperties": true
               }
             ]
+          },
+          "layout": {
+            "type": "string",
+            "description": "\"full\" (default): the view is the whole page, edge to edge, and owns its scrolling; render your own header from noteral.props.title/icon. \"page\": a normal page head (icon, cover, title) above the view, which grows with its content so the page scrolls once.",
+            "enum": [
+              "full",
+              "page"
+            ],
+            "default": "full"
           },
           "layer": {
             "type": "string",

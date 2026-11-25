@@ -1,8 +1,10 @@
+import { ContributedMenuItems } from "./ContributedMenuItems";
+import { parseNodeData } from "./CustomNodeView";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Copy, Download, FilePlus2, Maximize2, MoreHorizontal, Pencil, Star, Trash2 } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
 import { editorBridge } from "../lib/editorBridge";
-import { useAppStore } from "../store";
+import { kindOf, useAppStore } from "../store";
 
 export function PageHeader({ pageId }: { pageId?: string }) {
   const activeId = useAppStore((state) => state.activePageId);
@@ -151,6 +153,7 @@ export function PageHeader({ pageId }: { pageId?: string }) {
                   <div className="menu-separator" />
                   <button type="button" role="menuitem" onClick={() => void exportPage("markdown")}><Download size={14} /> Export Markdown</button>
                   <button type="button" role="menuitem" onClick={() => void exportPage("json")}><Download size={14} /> Export JSON</button>
+                  <ContributedMenuItems context={{ menu: "page", pageId: page.id, kind: kindOf(page), nodeType: page.kind === "custom" ? parseNodeData(page.data).type : undefined }} onDone={() => setMenuOpen(false)} />
                   <div className="menu-separator" />
                   <button
                     type="button"

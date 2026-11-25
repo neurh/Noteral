@@ -31,6 +31,7 @@ All methods take one params object and return a promise.
 - [`network`](#network)
 - [`sidebar`](#sidebar)
 - [`statusBar`](#statusBar)
+- [`menus`](#menus)
 - [`blocks`](#blocks)
 - [`nodes`](#nodes)
 - [`home`](#home)
@@ -936,6 +937,26 @@ Merge a patch into the plugin's saved settings.
 | --- | --- | --- | --- |
 | `patch` | `Record<string, unknown>` | yes | Keys to set; null removes. |
 
+### `settings.options`
+
+The plugin's user options: saved values merged over the defaults of its declared fields.
+
+Fields come from manifest contributes.settings and settings.define. The user edits them under Plugins → Installed → Options; each change raises settings:changed.
+
+**Permission:** `settings.read` · **Returns:** `Record<string, unknown>` · **Callers:** plugins
+
+No parameters.
+
+### `settings.define`
+
+Declare (replace) the fields of the plugin's Options screen at runtime.
+
+**Permission:** `settings.read` · **Returns:** `SettingFieldInfo[]` · **Callers:** plugins
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `fields` | `{ /** Option key (letters, digits, . - _). */ key: string; /** Control. */ type: "toggle" \| "text" \| "textarea" \| "number" \| "slider" \| "select" \| "color"; /** Label. */ label?: string; /** Help text under the control. */ description?: string; /** Heading to group under. */ section?: string; /** Placeholder (text fields). */ placeholder?: string; /** Default value. */ default?: unknown; /** Choices (select). */ options?: { /** Stored value. */ value: string; /** Label. */ label?: string; }[]; /** Minimum (number, slider). */ min?: number; /** Maximum (number, slider). */ max?: number; /** Step (number, slider). */ step?: number; }[]` | yes | Fields, in order. |
+
 ## preferences
 
 ### `preferences.get`
@@ -1420,6 +1441,50 @@ Remove a status bar widget.
 | `id` | `string` | yes | Widget id. |
 | `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
 
+## menus
+
+### `menus.list`
+
+List custom items in app menus (optionally one menu).
+
+**Permission:** none · **Returns:** `MenuItemInfo[]` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `menu` | `"page" \| "tree" \| "block" \| "tab" \| "status"` |  | Menu: page (the page "…" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu). |
+
+### `menus.addItem`
+
+Add or update an item in an app menu: the page "…" menu, tree item menu, block menu, sidebar tab menu or status bar menu.
+
+Choosing the item runs `command`. For plugins it is one of the plugin's own command ids and the handler gets the menu context { menu, pageId, kind, nodeType, blockId, blockType, tabKey } (Plugin.addMenuItem does this for you). For assistant layers it is any app command id from commands.list.
+
+**Permission:** `menus` · **Returns:** `MenuItemInfo` · **Callers:** plugins, assistant · **Assistant modes:** Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `string` | yes | Item id. |
+| `menu` | `"page" \| "tree" \| "block" \| "tab" \| "status"` | yes | Menu: page (the page "…" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu). |
+| `title` | `string` | yes | Label. |
+| `icon` | `string` |  | Icon: an emoji or a Lucide icon name such as "chart-line". |
+| `command` | `string` | yes | Command to run (see details). |
+| `kinds` | `Array<"page" \| "folder" \| "database" \| "custom">` |  | Only for these item kinds (page and tree menus). |
+| `nodeTypes` | `string[]` |  | Only for these custom page types. |
+| `blockTypes` | `string[]` |  | Only for these block types (block menu), e.g. paragraph, heading, or a custom type. |
+| `danger` | `boolean` |  | Show in red (destructive). Default `false`. |
+| `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
+
+### `menus.removeItem`
+
+Remove a custom menu item.
+
+**Permission:** `menus` · **Returns:** `void` · **Callers:** plugins, assistant · **Assistant modes:** Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `string` | yes | Item id. |
+| `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
+
 ## blocks
 
 ### `blocks.registerType`
@@ -1494,7 +1559,7 @@ Replace the data of a custom block in the open page.
 
 Register a custom page type for the page tree, opened in a full-page HTML view.
 
-Items of this type are created with nodes.create or from the tree's New menu. The view gets `noteral.props` = { pageId, title, data, editable } and saves with `noteral.setData(next)`. Items can have children like folders.
+Items of this type are created with nodes.create or from the tree's New menu. The view gets `noteral.props` = { pageId, title, icon, data, editable, layout } and saves with `noteral.setData(next)`. Items can have children like folders.
 
 **Permission:** `nodes` · **Returns:** `NodeTypeInfo` · **Callers:** plugins, assistant · **Assistant modes:** Creator
 
@@ -1506,6 +1571,7 @@ Items of this type are created with nodes.create or from the tree's New menu. Th
 | `icon` | `string` |  | Icon: an emoji or a Lucide icon name such as "chart-line". |
 | `html` | `string` | yes | HTML for a sandboxed view (a fragment or a full document; inline <style> and <script> are fine, no remote scripts). The script gets a global `noteral` (props, setData, call, on, open, notify — see the View API guide). Theme tokens are available as CSS variables, and the kit classes n-btn, n-input, n-card, n-row, n-col, n-grid, n-chip, n-list, n-muted are predefined. |
 | `defaultData` | `unknown` |  | Data for new items. |
+| `layout` | `"full" \| "page"` |  | "full" (default): the view is the whole page, edge to edge, and owns its scrolling; render your own header from noteral.props.title/icon. "page": a normal page head (icon, cover, title) above the view, which grows with its content so the page scrolls once. Default `"full"`. |
 | `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
 
 ### `nodes.unregisterType`
@@ -1853,6 +1919,7 @@ Subscribe with `this.registerEvent(name, handler)`. Events are only computed whi
 | `workspace:opened` | `WorkspaceInfo` | none | A workspace was opened. |
 | `pages:changed` | `{ count: number }` | `pages.read` | Pages were created, renamed, moved or trashed. |
 | `panel:action` | `{ panelId: string; actionId: string }` | `ui.panel` | A button in one of the plugin's panels or Markdown tabs was pressed. |
+| `settings:changed` | `{ options: Record<string, unknown>; changed: string[] }` | `settings.read` | The user changed the plugin's options. |
 | `view:message` | `{ view: string; name: string; payload: unknown }` | none | One of the plugin's HTML views called noteral.post(name, payload). |
 
 ## Permissions
@@ -1887,6 +1954,7 @@ Subscribe with `this.registerEvent(name, handler)`. Events are only computed whi
 | `blocks` | low | **Custom blocks.** Add new kinds of blocks to the editor (rendered in a sandbox). |
 | `nodes` | low | **Custom page types.** Add new kinds of items to the page tree (rendered in a sandbox). |
 | `home` | medium | **Home.** Create, change and remove Home views and widgets. |
+| `menus` | low | **Menu items.** Add items to page, tree, block, tab and status bar menus. |
 
 ## Types
 
@@ -2314,7 +2382,34 @@ export interface NodeTypeInfo {
   title: string;
   description?: string;
   icon?: string;
+  /** "full": the view is the whole page. "page": a page head above the view. */
+  layout: "full" | "page";
   owner: ContributionOwnerInfo;
+}
+
+export interface MenuItemInfo {
+  key: string;
+  id: string;
+  menu: "page" | "tree" | "block" | "tab" | "status";
+  title: string;
+  icon?: string;
+  command: string;
+  danger?: boolean;
+  owner: ContributionOwnerInfo;
+}
+
+export interface SettingFieldInfo {
+  key: string;
+  type: "toggle" | "text" | "textarea" | "number" | "slider" | "select" | "color";
+  label: string;
+  description?: string;
+  default?: unknown;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+  placeholder?: string;
+  section?: string;
 }
 
 export interface HomeViewSummary {
@@ -2382,7 +2477,7 @@ export interface PluginTestResult {
   error?: string;
   logs: { level: string; message: string }[];
   commands: string[];
-  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; panels: string[]; statusItems: string[] };
+  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; menuItems: string[]; settings: string[]; panels: string[]; statusItems: string[] };
   /** App API methods the code called. */
   calls: string[];
   /** Write calls that were skipped during the test. */

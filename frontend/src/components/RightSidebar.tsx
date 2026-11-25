@@ -344,6 +344,7 @@ function TabBody({ tabKey, contribution }: { tabKey: string; contribution?: Side
   if (view.html) {
     return (
       <ViewFrame
+        surface="sidebar"
         key={contribution.key}
         viewKey={contribution.key}
         html={view.html}

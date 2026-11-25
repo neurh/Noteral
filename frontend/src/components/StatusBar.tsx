@@ -1,5 +1,8 @@
 import { CloudOff, LockKeyhole } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { ContributedMenuItems, useMenuItems } from "./ContributedMenuItems";
 import { commandRegistry } from "../lib/commands";
 import { BUILTIN_STATUS_WIDGETS, useContributions } from "../lib/contributions";
 import type { StatusWidgetContribution } from "../lib/contributions";
@@ -29,6 +32,7 @@ function ContributedWidget({ widget }: { widget: StatusWidgetContribution }) {
     return (
       <span className="status-widget status-widget-html" style={{ width: widget.width ?? 120 }}>
         <ViewFrame
+          surface="status"
           viewKey={widget.key}
           html={widget.html}
           owner={widget.owner}
@@ -68,6 +72,20 @@ export function StatusBar() {
   const statuses = usePluginStatuses();
   const notify = useAppStore((state) => state.notify);
   const { statusWidgets } = useContributions();
+  const statusMenu = useMenuItems({ menu: "status" });
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!menuAt) return;
+    const close = () => setMenuAt(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [menuAt]);
 
   const state = document?.saveState ?? "idle";
   const label =
@@ -104,7 +122,7 @@ export function StatusBar() {
       </>
     ),
     stats:
-      document && showStats ? (
+      document && showStats && (document.kind ?? "page") === "page" ? (
         <span className="status-stats">
           {liveWords.toLocaleString()} words
           <span className="status-divider" aria-hidden="true">·</span>
@@ -147,9 +165,30 @@ export function StatusBar() {
       ));
 
   return (
-    <footer className="status-bar" aria-label="Status">
+    <footer
+      className="status-bar"
+      aria-label="Status"
+      onContextMenu={(event) => {
+        if (!statusMenu.length) return;
+        event.preventDefault();
+        setMenuAt({ x: event.clientX, y: event.clientY });
+      }}
+    >
       <div className="status-left">{side("left")}</div>
       <div className="status-right">{side("right")}</div>
+      {menuAt
+        ? createPortal(
+            <div
+              className="menu status-menu"
+              role="menu"
+              style={{ position: "fixed", left: Math.min(menuAt.x, window.innerWidth - 240), bottom: Math.max(8, window.innerHeight - menuAt.y + 4) }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <ContributedMenuItems context={{ menu: "status" }} onDone={() => setMenuAt(null)} separator={<></>} />
+            </div>,
+            window.document.body,
+          )
+        : null}
     </footer>
   );
 }

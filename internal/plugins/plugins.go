@@ -79,7 +79,51 @@ type Contributions struct {
 	Commands    []CommandContribution `json:"commands,omitempty"`
 	StatusItems []StatusContribution  `json:"statusItems,omitempty"`
 	Panels      []PanelContribution   `json:"panels,omitempty"`
+	// Menus adds items to app menus; choosing one runs one of the plugin's commands.
+	Menus []MenuContribution `json:"menus,omitempty"`
+	// Settings are options the user edits on the plugin's Options screen.
+	Settings []SettingContribution `json:"settings,omitempty"`
 }
+
+// MenuContribution is an item in an app menu (page, tree, block, tab or status).
+type MenuContribution struct {
+	ID         string   `json:"id"`
+	Menu       string   `json:"menu"`
+	Title      string   `json:"title"`
+	Icon       string   `json:"icon,omitempty"`
+	Command    string   `json:"command"`
+	Kinds      []string `json:"kinds,omitempty"`
+	NodeTypes  []string `json:"nodeTypes,omitempty"`
+	BlockTypes []string `json:"blockTypes,omitempty"`
+	Danger     bool     `json:"danger,omitempty"`
+}
+
+// SettingOption is one choice of a "select" setting.
+type SettingOption struct {
+	Value string `json:"value"`
+	Label string `json:"label,omitempty"`
+}
+
+// SettingContribution is one user-editable option.
+type SettingContribution struct {
+	Key         string          `json:"key"`
+	Type        string          `json:"type"`
+	Label       string          `json:"label,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Section     string          `json:"section,omitempty"`
+	Placeholder string          `json:"placeholder,omitempty"`
+	Default     json.RawMessage `json:"default,omitempty"`
+	Options     []SettingOption `json:"options,omitempty"`
+	Min         *float64        `json:"min,omitempty"`
+	Max         *float64        `json:"max,omitempty"`
+	Step        *float64        `json:"step,omitempty"`
+}
+
+var (
+	menuSlots    = map[string]bool{"page": true, "tree": true, "block": true, "tab": true, "status": true}
+	settingTypes = map[string]bool{"toggle": true, "text": true, "textarea": true, "number": true, "slider": true, "select": true, "color": true}
+	settingKeyRe = regexp.MustCompile(`^[a-zA-Z][\w.-]{0,63}$`)
+)
 
 // CommandContribution is a command palette/slash-menu entry.
 type CommandContribution struct {
@@ -216,6 +260,7 @@ var allowedPermissions = map[string]bool{
 	"blocks":           true,
 	"nodes":            true,
 	"home":             true,
+	"menus":            true,
 }
 
 // AllowedPermissions returns the sorted permission vocabulary.
@@ -326,6 +371,38 @@ func validateManifest(m Manifest) (Manifest, error) {
 			return m, fmt.Errorf("duplicate panel %q", panel.ID)
 		}
 		panelSeen[panel.ID] = true
+	}
+	if len(m.Contributes.Menus) > 24 || len(m.Contributes.Settings) > 40 {
+		return m, fmt.Errorf("plugin contributes too many menu items or settings")
+	}
+	menuSeen := map[string]bool{}
+	for i := range m.Contributes.Menus {
+		item := &m.Contributes.Menus[i]
+		item.ID = strings.TrimSpace(item.ID)
+		item.Title = strings.TrimSpace(item.Title)
+		item.Command = strings.TrimSpace(item.Command)
+		if !cmdIDRe.MatchString(item.ID) || item.Title == "" || !menuSlots[item.Menu] || !cmdIDRe.MatchString(item.Command) {
+			return m, fmt.Errorf("invalid menu item %q (needs id, title, a menu of page/tree/block/tab/status and a command id)", item.ID)
+		}
+		if menuSeen[item.ID] {
+			return m, fmt.Errorf("duplicate menu item %q", item.ID)
+		}
+		menuSeen[item.ID] = true
+	}
+	settingSeen := map[string]bool{}
+	for i := range m.Contributes.Settings {
+		field := &m.Contributes.Settings[i]
+		field.Key = strings.TrimSpace(field.Key)
+		if !settingKeyRe.MatchString(field.Key) || !settingTypes[field.Type] {
+			return m, fmt.Errorf("invalid setting %q (needs a key and a type of toggle/text/textarea/number/slider/select/color)", field.Key)
+		}
+		if field.Type == "select" && len(field.Options) == 0 {
+			return m, fmt.Errorf("setting %q is a select and needs options", field.Key)
+		}
+		if settingSeen[field.Key] {
+			return m, fmt.Errorf("duplicate setting %q", field.Key)
+		}
+		settingSeen[field.Key] = true
 	}
 	return m, nil
 }

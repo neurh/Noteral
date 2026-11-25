@@ -19,6 +19,9 @@ export interface ThinkingPart {
   signature?: string;
   /** Claude: encrypted reasoning (redacted_thinking), echoed back as is. */
   redacted?: string;
+  /** When the model started and stopped thinking (stamped by the app, for the timer). */
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface ToolPart {
@@ -36,6 +39,34 @@ export interface ToolPart {
   signature?: string;
   startedAt?: number;
   endedAt?: number;
+  /** agents.run: the sub-agent's progress and report. */
+  agent?: AgentRun;
+}
+
+/** One tool call a sub-agent made (what the timeline shows of it). */
+export interface AgentStep {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  status: ToolStatus;
+  error?: string;
+  startedAt?: number;
+  endedAt?: number;
+  /** web.search: sources it found, for the source list. */
+  sources?: { title: string; url: string }[];
+}
+
+/** A sub-agent started with agents.run: an independent read-only worker. */
+export interface AgentRun {
+  title: string;
+  task: string;
+  status: "running" | "done" | "error" | "stopped";
+  steps: AgentStep[];
+  /** What it is writing right now (live), then its final report. */
+  text: string;
+  startedAt: number;
+  endedAt?: number;
+  usage?: Usage;
 }
 
 export type Part = TextPart | ThinkingPart | ToolPart;
@@ -57,6 +88,8 @@ export interface ChatMessage {
   error?: string;
   /** Set when the user stopped the response. */
   stopped?: boolean;
+  /** When the response finished (for "worked for …"). */
+  endedAt?: number;
   /** Older chats: the open page and selection sent with the message. */
   context?: { pageId?: string; pageTitle?: string; selection?: string };
   /** User messages: things the user mentioned with @ or by dragging, with the content read at send time. */
@@ -93,6 +126,10 @@ export interface AssistantSettings {
   models: Record<string, ModelConfig>;
   /** Context windows reported by providers, keyed like `models`. */
   discovered: Record<string, number>;
+  /** Let the assistant start read-only sub-agents (agents.run) that work in parallel. */
+  agents: boolean;
+  /** How many sub-agents (and read-only lookups) run at the same time. */
+  parallel: number;
 }
 
 export const DEFAULT_SETTINGS: AssistantSettings = {
@@ -108,6 +145,8 @@ export const DEFAULT_SETTINGS: AssistantSettings = {
   thinking: "auto",
   models: {},
   discovered: {},
+  agents: true,
+  parallel: 4,
 };
 
 /** A tool in provider-neutral form. */

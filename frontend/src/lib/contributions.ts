@@ -72,6 +72,55 @@ export interface NodeTypeDef {
   icon?: string;
   html: string;
   defaultData?: unknown;
+  /**
+   * "full" (default): the view is the whole page, edge to edge, and owns its scrolling.
+   * "page": a normal page head (icon, cover, title) with the view below it, growing with
+   * its content so the page scrolls once.
+   */
+  layout?: "full" | "page";
+}
+
+/** App menus a plugin or layer can add items to. */
+export const MENU_SLOTS = ["page", "tree", "block", "tab", "status"] as const;
+export type MenuSlot = (typeof MENU_SLOTS)[number];
+export const MENU_ITEM_KINDS = ["page", "folder", "database", "custom"] as const;
+
+/**
+ * An item in one of the app's menus. Choosing it runs `command`: for plugins a command id of
+ * the plugin itself (its handler gets the menu context), for layers any app command id.
+ */
+export interface MenuItemDef {
+  id: string;
+  menu: MenuSlot;
+  title: string;
+  icon?: string;
+  command: string;
+  /** Only show for these item kinds (page, tree menus). Empty = all. */
+  kinds?: (typeof MENU_ITEM_KINDS)[number][];
+  /** Only show for these custom page types (tree/page menus on custom items). */
+  nodeTypes?: string[];
+  /** Only show for these block types (block menu). Empty = all. */
+  blockTypes?: string[];
+  danger?: boolean;
+}
+
+export const SETTING_TYPES = ["toggle", "text", "textarea", "number", "slider", "select", "color"] as const;
+export type SettingType = (typeof SETTING_TYPES)[number];
+
+/** One user-editable option, shown on the plugin's Options screen. */
+export interface SettingFieldDef {
+  key: string;
+  type: SettingType;
+  label: string;
+  description?: string;
+  default?: unknown;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+  placeholder?: string;
+  /** Group heading the field appears under. */
+  section?: string;
 }
 
 export interface ContributionSet {
@@ -79,6 +128,9 @@ export interface ContributionSet {
   statusWidgets: StatusWidgetDef[];
   blockTypes: BlockTypeDef[];
   nodeTypes: NodeTypeDef[];
+  menuItems: MenuItemDef[];
+  /** Options a plugin lets the user edit (plugins only). */
+  settings: SettingFieldDef[];
 }
 
 export interface Source extends ContributionSet {
@@ -98,12 +150,14 @@ export type SidebarTabContribution = SidebarTabDef & Owned;
 export type StatusWidgetContribution = StatusWidgetDef & Owned;
 export type BlockTypeContribution = BlockTypeDef & Owned;
 export type NodeTypeContribution = NodeTypeDef & Owned;
+export type MenuItemContribution = MenuItemDef & Owned;
 
 export interface ContributionSnapshot {
   sidebarTabs: SidebarTabContribution[];
   statusWidgets: StatusWidgetContribution[];
   blockTypes: BlockTypeContribution[];
   nodeTypes: NodeTypeContribution[];
+  menuItems: MenuItemContribution[];
   blockTypeMap: ReadonlyMap<string, BlockTypeContribution>;
   nodeTypeMap: ReadonlyMap<string, NodeTypeContribution>;
 }
@@ -113,6 +167,8 @@ export const LIMITS = {
   statusWidgets: 12,
   blockTypes: 40,
   nodeTypes: 20,
+  menuItems: 24,
+  settings: 40,
   html: 400_000,
   markdown: 40_000,
 } as const;
@@ -121,7 +177,7 @@ export const TYPE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const LOCAL_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
 
 export function emptySet(): ContributionSet {
-  return { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [] };
+  return { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [], menuItems: [], settings: [] };
 }
 
 // ── normalization (stored data and SDK input both go through here) ──────────
@@ -219,7 +275,88 @@ export function normalizeNodeType(value: unknown): NodeTypeDef | undefined {
   const icon = optStr(value.icon, 32);
   if (icon) def.icon = icon;
   if (value.defaultData !== undefined) def.defaultData = jsonClone(value.defaultData);
+  if (value.layout === "page") def.layout = "page";
   return def;
+}
+
+const SETTING_KEY = /^[a-zA-Z][\w.-]{0,63}$/;
+
+function strList(value: unknown, max: number, re: RegExp): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter((item): item is string => typeof item === "string" && re.test(item)).slice(0, max);
+  return out.length ? out : undefined;
+}
+
+export function normalizeMenuItem(value: unknown): MenuItemDef | undefined {
+  if (!isObject(value)) return undefined;
+  const id = str(value.id, 64).trim();
+  const command = str(value.command, 160).trim();
+  const title = optStr(value.title, 80);
+  const menu = MENU_SLOTS.find((slot) => slot === value.menu);
+  if (!LOCAL_ID.test(id) || !command || !title || !menu) return undefined;
+  const item: MenuItemDef = { id, menu, title, command };
+  const icon = optStr(value.icon, 32);
+  if (icon) item.icon = icon;
+  const kinds = Array.isArray(value.kinds) ? MENU_ITEM_KINDS.filter((kind) => (value.kinds as unknown[]).includes(kind)) : [];
+  if (kinds.length) item.kinds = kinds;
+  const nodeTypes = strList(value.nodeTypes, 20, TYPE_ID);
+  if (nodeTypes) item.nodeTypes = nodeTypes;
+  const blockTypes = strList(value.blockTypes, 40, /^[a-zA-Z0-9][\w.:-]{0,63}$/);
+  if (blockTypes) item.blockTypes = blockTypes;
+  if (value.danger === true) item.danger = true;
+  return item;
+}
+
+function num(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function normalizeSettingField(value: unknown): SettingFieldDef | undefined {
+  if (!isObject(value)) return undefined;
+  const key = str(value.key, 64).trim();
+  const type = SETTING_TYPES.find((item) => item === value.type);
+  if (!SETTING_KEY.test(key) || !type) return undefined;
+  const field: SettingFieldDef = { key, type, label: optStr(value.label, 80) ?? key };
+  const description = optStr(value.description, 300);
+  if (description) field.description = description;
+  const section = optStr(value.section, 60);
+  if (section) field.section = section;
+  const placeholder = optStr(value.placeholder, 120);
+  if (placeholder) field.placeholder = placeholder;
+  for (const name of ["min", "max", "step"] as const) {
+    const n = num(value[name]);
+    if (n !== undefined) field[name] = n;
+  }
+  if (type === "select") {
+    const options = (Array.isArray(value.options) ? value.options : [])
+      .map((option) => {
+        if (typeof option === "string") return { value: option.slice(0, 120), label: option.slice(0, 80) };
+        if (!isObject(option)) return undefined;
+        const v = str(option.value, 120);
+        return v ? { value: v, label: optStr(option.label, 80) ?? v } : undefined;
+      })
+      .filter((option): option is { value: string; label: string } => Boolean(option))
+      .slice(0, 50);
+    if (!options.length) return undefined;
+    field.options = options;
+  }
+  if (value.default !== undefined) {
+    const d = value.default;
+    const ok =
+      type === "toggle" ? typeof d === "boolean" : type === "number" || type === "slider" ? num(d) !== undefined : typeof d === "string" && d.length <= 20_000;
+    if (ok) field.default = d;
+  }
+  return field;
+}
+
+/** Each field's default, for fields that have one. */
+export function settingDefaults(fields: readonly SettingFieldDef[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (field.default !== undefined) out[field.key] = field.default;
+    else if (field.type === "toggle") out[field.key] = false;
+  }
+  return out;
 }
 
 function uniqueBy<T>(items: T[], key: (item: T) => string, max: number): T[] {
@@ -244,6 +381,8 @@ export function normalizeSet(value: unknown): ContributionSet {
     statusWidgets: uniqueBy(list(v.statusWidgets, normalizeStatusWidget), (t) => t.id, LIMITS.statusWidgets),
     blockTypes: uniqueBy(list(v.blockTypes, normalizeBlockType), (t) => t.type, LIMITS.blockTypes),
     nodeTypes: uniqueBy(list(v.nodeTypes, normalizeNodeType), (t) => t.type, LIMITS.nodeTypes),
+    menuItems: uniqueBy(list(v.menuItems, normalizeMenuItem), (t) => t.id, LIMITS.menuItems),
+    settings: uniqueBy(list(v.settings, normalizeSettingField), (t) => t.key, LIMITS.settings),
   };
 }
 
@@ -278,12 +417,14 @@ function build(): ContributionSnapshot {
   const statusWidgets: StatusWidgetContribution[] = [];
   const blockTypeMap = new Map<string, BlockTypeContribution>();
   const nodeTypeMap = new Map<string, NodeTypeContribution>();
+  const menuItems: MenuItemContribution[] = [];
   for (const [key, source] of sources) {
     const owned = { owner: source.owner, permissions: source.permissions };
     for (const tab of source.sidebarTabs) sidebarTabs.push({ ...tab, ...owned, key: `${key}:${tab.id}` });
     for (const widget of source.statusWidgets) statusWidgets.push({ ...widget, ...owned, key: `${key}:${widget.id}` });
     // First registration of a type wins; later duplicates are ignored.
     for (const block of source.blockTypes) if (!blockTypeMap.has(block.type)) blockTypeMap.set(block.type, { ...block, ...owned, key: `${key}:${block.type}` });
+    for (const item of source.menuItems ?? []) menuItems.push({ ...item, ...owned, key: `${key}:${item.id}` });
     for (const node of source.nodeTypes) if (!nodeTypeMap.has(node.type)) nodeTypeMap.set(node.type, { ...node, ...owned, key: `${key}:${node.type}` });
   }
   statusWidgets.sort((a, b) => a.order - b.order);
@@ -292,6 +433,7 @@ function build(): ContributionSnapshot {
     statusWidgets,
     blockTypes: [...blockTypeMap.values()],
     nodeTypes: [...nodeTypeMap.values()],
+    menuItems,
     blockTypeMap,
     nodeTypeMap,
   };
