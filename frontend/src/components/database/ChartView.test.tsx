@@ -90,6 +90,21 @@ describe("chart engine", () => {
 });
 
 describe("ChartView", () => {
+  it("keeps drawing when switching to another chart view (new openRow each view)", async () => {
+    const flush = () => act(async () => {
+      await import("./chartEngine");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    const { container, rerender } = render(<ChartView db={{ ...api(), openRow: () => {} }} view={viewWith({ kind: "column", x: "status" })} rows={rows} inline />);
+    await flush();
+    expect(container.querySelector(".db-chart-canvas svg")).not.toBeNull();
+    rerender(<ChartView db={{ ...api(), openRow: () => {} }} view={{ ...viewWith({ kind: "pie", x: "status" }), id: "v2" }} rows={rows} inline />);
+    await flush();
+    expect(container.querySelector(".db-chart-loading")).toBeNull();
+    const svg = container.querySelector(".db-chart-canvas svg");
+    expect(svg).not.toBeNull();
+    expect(svg!.querySelectorAll("path").length).toBeGreaterThan(0);
+  });
   it("renders a column chart after the engine loads", async () => {
     const { container } = render(<ChartView db={api()} view={viewWith({ kind: "column", x: "status" })} rows={rows} inline />);
     expect(container.querySelector(".db-chart-head")?.textContent).toContain("24 total");

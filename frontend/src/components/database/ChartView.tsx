@@ -138,9 +138,14 @@ function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows
   const [failed, setFailed] = useState(false);
   const [pick, setPick] = useState<ChartPick | null>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const lastSize = useRef<{ width: number; height: number } | null>(null);
   // Re-read tokens whenever the theme flips (custom accents too, through the store).
   const theme = useMemo<ChartTheme>(() => readChartTheme(plotRef.current), [themeKey, ready]); // eslint-disable-line react-hooks/exhaustive-deps
   const openRow = db.openRow;
+  // The click handler reads the latest openRow, so a new one (each view has
+  // its own) never re-creates the chart.
+  const openRowRef = useRef(openRow);
+  openRowRef.current = openRow;
 
   // Track the plot's size.
   useLayoutEffect(() => {
@@ -156,16 +161,18 @@ function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows
     return () => observer.disconnect();
   }, [height]);
 
-  // Mount the engine once.
+  // Mount the engine once per plot.
   useEffect(() => {
     let cancelled = false;
     loadEngine()
       .then((mod) => {
         if (cancelled || !canvasRef.current) return;
         handle.current = mod.mountChart(canvasRef.current, (next) => {
-          if (next.rowId) openRow(next.rowId);
+          if (next.rowId) openRowRef.current(next.rowId);
           else if (next.rowIds.length) setPick(next);
         });
+        // A fresh instance has drawn nothing yet; make the draw effect run.
+        lastSize.current = null;
         setReady(true);
       })
       .catch(() => !cancelled && setFailed(true));
@@ -173,11 +180,11 @@ function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows
       cancelled = true;
       handle.current?.dispose();
       handle.current = null;
+      setReady(false);
     };
-  }, [openRow]);
+  }, []);
 
   // Draw (animated) when data, theme or size change.
-  const lastSize = useRef<{ width: number; height: number } | null>(null);
   useEffect(() => {
     const chart = handle.current;
     if (!ready || !chart || !size) return;
