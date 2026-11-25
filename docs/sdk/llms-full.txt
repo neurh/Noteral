@@ -47,6 +47,7 @@ Rules for agents writing plugins:
 - pages.trash({}) → PageInfo[] [pages.read] — List trashed pages.
 - pages.create({title?, parentId?, kind?, markdown?, icon?, open?}) → PageInfo [pages.write] — Create a page or folder, optionally with Markdown content.
 - pages.write({pageId, markdown}) → void [pages.write] — Replace a page's whole content with Markdown.
+- pages.edit({pageId?, edits}) → { replaced: number; blocksChanged?: number } [pages.write] — Change part of a page by find-and-replace, without resending the whole page.
 - pages.append({pageId, markdown}) → void [pages.write] — Append Markdown to the end of a page.
 - pages.rename({pageId, title}) → void [pages.write] — Rename a page.
 - pages.setIcon({pageId, icon}) → void [pages.write] — Set a page's icon (an emoji, or "" to clear).
@@ -59,18 +60,23 @@ Rules for agents writing plugins:
 - databases.list({}) → DatabaseInfo[] [databases.read] — List databases with their row counts.
 - databases.getSchema({databaseId}) → DatabaseSchemaInfo [databases.read] — Get a database's properties (columns) and views.
 - databases.queryRows({databaseId, where?, limit?}) → DatabaseRowInfo[] [databases.read] — Read a database's rows with values keyed by property name.
-- databases.create({title, parentId?, properties?, view?, open?}) → { databaseId: string } [databases.write] — Create a database with properties.
-- databases.addProperty({databaseId, name, type, options?}) → { propertyId: string } [databases.write] — Add a property (column) to a database.
+- databases.create({title, parentId?, properties?, view?, open?}) → { databaseId: string } [databases.write] — Create a database (a page in the tree) with properties and a first view.
+- databases.embed({pageId?, databaseId?, title?, properties?, view?, position?, blockId?, anchor?}) → { databaseId: string; pageId: string; created: boolean } [databases.write] — Put a database inside a page's content: a new inline database, or a linked view of an existing one.
+- databases.addProperty({databaseId, name, type, options?, formula?, format?, dateFormat?}) → { propertyId: string } [databases.write] — Add a property (column) to a database.
 - databases.addRow({databaseId, title?, values?}) → { rowId: string } [databases.write] — Add a row; values are keyed by property name.
+- databases.addRows({databaseId, rows}) → { rowIds: string[]; count: number } [databases.write] — Add many rows in one call (up to 500). Prefer this over repeated addRow.
+- databases.updateRows({updates}) → { count: number } [databases.write] — Change many rows in one call (up to 500).
 - databases.updateRow({rowId, title?, values?}) → void [databases.write] — Change a row's title and/or values (keyed by property name).
 - databases.getView({databaseId, viewId?}) → DatabaseViewInfo [databases.read] — Get one view with its filters, sorts, grouping, visible properties and calculations.
-- databases.queryView({databaseId, viewId?, search?, filters?, filterMode?, sorts?, limit?}) → DatabaseRowInfo[] [databases.read] — Read rows the way a view shows them (its filters and sorts applied), optionally with a search.
-- databases.addView({databaseId, name?, type?, filters?, filterMode?, sorts?, groupBy?, hiddenGroups?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, wrap?}) → DatabaseViewInfo [databases.write] — Add a view (table, board, gallery, list or calendar) with optional filters, sorts and grouping.
-- databases.updateView({databaseId, viewId, name?, type?, filters?, filterMode?, sorts?, groupBy?, hiddenGroups?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, wrap?}) → DatabaseViewInfo [databases.write] — Change a view: name, layout, filters, sorts, grouping, visible properties, order, widths, calculations.
+- databases.queryView({databaseId, viewId?, search?, filters?, filterMode?, advanced?, sorts?, limit?}) → DatabaseRowInfo[] [databases.read] — Read rows the way a view shows them (its filters and sorts applied), optionally with a search.
+- databases.addView({databaseId, name?, type?, filters?, filterMode?, advanced?, sorts?, groupBy?, hiddenGroups?, collapsedGroups?, hideEmptyGroups?, colorColumns?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, cardSize?, wrap?, rowNumbers?, showFilterBar?, showIcons?, limit?, openIn?, chart?, custom?}) → DatabaseViewInfo [databases.write] — Add a view (table, board, gallery, list, calendar, chart or custom) with optional filters, sorts, grouping and settings.
+- databases.updateView({databaseId, viewId, name?, type?, filters?, filterMode?, advanced?, sorts?, groupBy?, hiddenGroups?, collapsedGroups?, hideEmptyGroups?, colorColumns?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, cardSize?, wrap?, rowNumbers?, showFilterBar?, showIcons?, limit?, openIn?, chart?, custom?}) → DatabaseViewInfo [databases.write] — Change a view: layout, filters (simple and advanced), sorts, grouping, visible properties, calculations, chart or custom settings, where rows open.
 - databases.removeView({databaseId, viewId}) → void [databases.write] — Remove a view (a database keeps at least one).
 - databases.duplicateView({databaseId, viewId, name?}) → DatabaseViewInfo [databases.write] — Copy a view with all its settings.
 - databases.moveView({databaseId, viewId, index}) → void [databases.write] — Move a view to another position in the view tabs.
-- databases.updateProperty({databaseId, property, name?, type?, format?, options?}) → DatabaseSchemaInfo [databases.write] — Rename a property, change its type, number format or select options.
+- databases.updateProperty({databaseId, property, name?, type?, formula?, format?, dateFormat?, options?}) → DatabaseSchemaInfo [databases.write] — Rename a property, change its type, formula, number/date format or select options.
+- databases.formulaFunctions({}) → string [databases.read] — The formula language: syntax and every function, one line each.
+- databases.checkFormula({databaseId, formula, property?}) → { ok: boolean; error?: string; resultType?: string; sample?: { title: string; value: unknown; error?: string }[] } [databases.read] — Check a formula against a database without saving: errors, result type and sample results.
 - databases.removeProperty({databaseId, property}) → void [databases.write] — Delete a property and its values from every row.
 - databases.deleteRows({rowIds}) → { deleted: number } [databases.write] — Move rows to the trash.
 - databases.rename({databaseId, title?, titleColumn?}) → void [databases.write] — Rename a database or its title column.
@@ -218,6 +224,7 @@ Noteral plugins are small JavaScript bundles that run in a sandboxed iframe and 
 - **[Manifest](manifest.md)**: every `manifest.json` field
 - **[Extending the interface](ui.md)**: sidebar tabs, status-bar widgets, custom blocks, custom page types, Home, appearance layers, testing
 - **[Publishing](publishing.md)**: `npm run release` and `npm run submit`, using the GitHub CLI, GitHub Releases and the community registry
+- **[Databases](../databases.md)**: views, filters, formulas, charts, custom views and embedding from code
 - **[API reference](../sdk/api-reference.md)**: every method, event, permission and type, generated from the source
 - **[llms.txt](../sdk/llms.txt)** / **[llms-full.txt](../sdk/llms-full.txt)**: the same material for coding agents
 
@@ -517,7 +524,7 @@ SDK 2 lets a plugin add real interface rather than only Markdown panels: right-s
 | Page-tree item type | `nodes.registerType`, `unregisterType`, `listTypes`, `create`, `getData`, `setData` | `nodes` (`create`/`setData`: `pages.write`) |
 | Home | `home.listViews`, `createView`, `updateView`, `setBackground`, `addWidget`, `updateWidget`, … | `home` |
 | Appearance | `appearance.setTokens`, `styleComponent`, `addCss`, `removeCss`, `reset`, `listLayers`, `setLayer` | `appearance` |
-| Database views | `databases.addView`, `updateView`, `queryView`, `updateProperty`, … | `databases.read` / `databases.write` |
+| Databases | `databases.embed`, `addView`, `updateView`, `queryView`, `addProperty`, `updateProperty`, `checkFormula`, … | `databases.read` / `databases.write` |
 
 Everything a plugin contributes belongs to it. Disabling or uninstalling the plugin removes all of it, and none of it can touch another plugin's contributions.
 
@@ -698,6 +705,33 @@ await this.app.appearance.styleComponent({ component: "sidebar", rules: { backgr
 ```
 
 `appearance.listTokens()` and `appearance.listComponents()` return the names you can target.
+
+## Databases
+
+Everything about a database is addressed by **name**: properties, options and view settings take the names the user sees (ids work too), and reads return names.
+
+**Embedding.** `databases.embed({ pageId, databaseId?, title?, properties?, view?, position?, blockId? })` puts a database block in a page. With `databaseId` it links an existing database (any database in the workspace); without it, it creates a new database inside the page. `position` is `start`, `end` (default), `before` or `after` a `blockId` (or `anchor` text). It works whether or not the page is open. In the Markdown that `pages.get`, `pages.read` and `editor.getMarkdown` return, an embedded database is a line `<!-- database:<id> Title -->` and a custom block is `<!-- block:<blockId> kind -->`. Keep those lines when you write the Markdown back and the blocks survive; move them to move the blocks, delete them to remove them. A new `<!-- database:<id> -->` line also embeds that database.
+
+**Views.** `addView` / `updateView` take `type` (`table`, `board`, `list`, `gallery`, `calendar`, `chart`, `custom`) and only the settings you pass:
+
+- `filters` + `filterMode` (simple rules) and `advanced` (`{ mode: "and" | "or", items }`, where items are rules `{ property, op, value }` or nested groups, up to 4 levels). Both apply together. Date rules accept ISO dates, relative dates (`@today`, `@weekAgo`, …) and `within` ranges (`pastWeek`, `thisMonth`, …).
+- `groupBy` on boards (select, multi-select, status, checkbox) and on tables, lists and galleries (any property), with `hiddenGroups`, `collapsedGroups`, `hideEmptyGroups`, `colorColumns`.
+- `show` / `hide` / `order` / `widths` / `calcs`, `rowNumbers`, `wrap`, `showIcons`, `cardPreview`, `cardSize` (`small`, `medium`, `large`), `showFilterBar`, `limit` (rows before *Load more*), and `openIn` — where a row opens: `modal` (default), `side`, `tab` or `current`.
+- `chart` for chart views: `{ kind, x, dateBucket, aggregate, y, series, stacked, normalize, cumulative, sort, limit, omitEmpty, smooth, labels, legend, grid, palette, height, goal, yMin, yMax, format, title }`. `kind` is bar, column, line, area, pie, donut, scatter, funnel, radar, heatmap or number; `aggregate` is count, countValues, countUnique, sum, average, median, min or max (the last five need a numeric `y`). `x` can also be `createdTime` or `lastEdited`. Passed fields merge into the current chart.
+- `custom` for custom views: `{ html, height? }`, a fully custom HTML/CSS/JS view in a sandboxed frame. Its script reads `window.noteral.database`:
+
+```js
+const db = window.noteral.database;
+// db.schema, db.view, db.rows — rows have id, title, icon, values (by property name) and cells (display text)
+db.onChange((data) => render(data.rows));    // called with fresh { schema, view, rows } when the database changes
+db.openRow(rowId);                            // open a row
+await db.setValue(rowId, "Status", "Done");   // change one value (by property name)
+await db.addRow({ Name: "New", Status: "Todo" });
+```
+
+`getView` returns every setting with property names, and `queryView` reads rows the way a view shows them (plus optional extra `filters`, `advanced`, `sorts`, `search`).
+
+**Formulas.** A property of type `formula` computes its value from the row: `addProperty({ databaseId, name: "Left", type: "formula", formula: 'dateBetween(prop("Due"), now(), "days")', format?, dateFormat? })`. Refer to properties with `prop("Name")`. Formulas are checked when saved; an error names the problem and the offending part. `checkFormula({ databaseId, formula })` tries one without saving and returns its result type and sample values, and `formulaFunctions()` lists every function, one per line. Row reads include formula results (with `errors` per row when one fails); setting a formula value is an error. Renaming a property updates the formulas that use it, and `updateProperty({ type: "formula", formula })` turns an existing property into a formula.
 
 ## Testing before you ship
 
@@ -891,7 +925,7 @@ Connect a model under **Assistant → Settings** (the sliders icon). You bring y
 
 - Keys are stored only on this computer, in `<data dir>/ai/providers.json` (file mode `0600`). The UI only ever sees a hint (`sk-…a1b2`), never the key.
 - Requests go from the app's backend straight to the provider. Noteral has no server in between.
-- **Load models** asks the provider for its model list. You can also type any model id in the model picker.
+- **Load models** asks the provider for its model list and shows it as a list in the provider editor. Click a model to make it the default. Its pencil opens **model options**: display name, context window, max reply tokens, temperature, whether it reads images and PDFs (*Auto* guesses from the model id), which thinking levels the picker offers, and whether it shows in the model picker. *Reset* goes back to the detected values. You can also add any model id by hand.
 
 ## Modes
 
@@ -924,9 +958,35 @@ Work and answer are kept apart:
 - **Changes.** If the reply changed anything (pages created, blocks rewritten, styles set, plugins installed), a *Changes* list follows the answer, with links to the pages it touched.
 - **Sources.** Every web page the assistant searched or read is listed as a source card (pages it actually read come first), with the site and title. Search steps show the hosts as chips.
 
+### When a request fails
+
+- **Automatic retry.** If a stream fails for a passing reason (connection lost or timed out, provider rate-limited, overloaded or returning a 5xx, or a stream that ends empty), the same request is sent again after *Seconds between retries*, up to *Retry failed requests* times. The reply shows the countdown ("Connection lost — retrying in 8s (retry 1 of 3)") with **Retry now**; **Stop** cancels the wait. Stopping, bad requests (400/401/403/404, invalid keys, context too long, blocked content) and the output limit are never retried. Sub-agents and compaction summaries retry the same way.
+- **Retry.** When a reply failed or was stopped after finishing some steps, **Retry** continues from the last step: finished tool calls and the text and thinking before them are kept, the failed step (and any calls that never ran) is dropped, and the model picks up from there. **Start over** (or **Regenerate**, when there is nothing to keep) runs the reply again from your message. `/retry` continues when it can.
+
 ## Sub-agents
 
 For broad research the assistant can start **sub-agents** with `agents.run({ title, task })`. Each agent is a separate, read-only run of the same model with its own short context: it can read and search your pages and databases and use the web, but it can't change anything, open UI or ask you questions. Several agents run at the same time (up to *Run at once*, default 4), and each appears in the timeline as a card with its title, timer, current activity and progress. When they finish, the assistant combines their reports into one answer. Agents are limited to 12 steps each.
+
+## Editing what's already there
+
+The assistant changes existing things with small find-and-replace edits instead of rewriting them:
+
+- **Pages**: `pages.edit({ pageId, edits: [{ find, replace, all? }] })`. Only the blocks an edit touches are replaced in an open page; the rest keep their ids, and one undo reverts the edit.
+- **Things it built**: `source.list` lists the HTML/CSS behind sidebar tabs, status widgets, block and page types, Home widgets and views, CSS snippets and component styles. `source.get` reads one (or a line range), and `source.edit` patches it.
+- **Plugins**: `plugins.edit({ id, file: "code" | "styles", edits })` patches a plugin's code, tests it in the sandbox, bumps the patch version and reinstalls it after your approval.
+
+Each `find` must match once (whitespace differences are tolerated). If any edit misses, nothing changes and the error points at the closest line.
+
+**Databases** take rows in bulk: `databases.addRows` adds up to 500 rows in one transaction, and `databases.updateRows` changes up to 500 rows in one call.
+
+**Databases in pages**: `databases.embed` adds a database to a page, either a link to an existing database or a new one created inside the page. When the assistant reads a page, an embedded database appears as a `<!-- database:<id> Title -->` line (custom blocks as `<!-- block:<id> kind -->`), so edits keep them in place. The assistant can also build chart and custom views, nested and/or filters, formula properties (checked before they are saved) and choose how rows open; see [Databases](plugins/ui.md#databases).
+
+## Token efficiency
+
+- **Tools on demand** (*Settings → Behaviour → Load tools on demand*, on by default). Each request sends a small core set of tools for the mode (reading, editing, databases, web, source) plus `tools.load`. The system prompt lists the rest as a one-line-per-namespace catalog, and the model loads what it needs ("home", "databases.addView"). Loaded tools stay for the rest of the chat. In Creator mode this sends roughly a quarter of the tool schema.
+- **Lean history.** Long tool results from earlier turns are cut to their first 1,200 characters, with a note that the model can call the tool again. Images and PDFs are only resent for the last three messages. The saved chat keeps everything.
+- **Prompt caching.** On Anthropic, the system prompt, tools and the conversation so far are marked cacheable, so each step re-reads them at the cache rate.
+- **Auto-compact** (*Settings → Behaviour*, default **80%**). When a chat fills that share of the model's context window, the messages before your latest one are summarized in place. A divider (*Auto-compacted 14 messages*) marks where it happened and opens to show the summary. Only the summary and later messages are sent from then on. `/compact` or *Compact chat* does the same by hand. Set the switch off to disable it.
 
 Independent read-only tool calls in one turn (several page reads, searches) also run in parallel; anything that changes the app runs one at a time, in order.
 
@@ -961,7 +1021,8 @@ Plugins the assistant made are listed on the same tab. `appearance.reset` (alway
 ## The composer
 
 - **@ mentions**: type `@` (or press the @ button) to attach the open page (listed first), other open tabs, any page, database or row, or the current selection. Mentioned content is sent with the message as context. You can also drag things onto the chat to mention them: pages from the tree, tabs, sidebar tabs, editor blocks (the six-dots handle), and database rows or cards.
-- **/ commands**: `/new`, `/retry`, `/compact` (summarise the chat so far into a fresh one), `/model`, `/think <level>`, `/web`, `/history`, `/settings`, `/ask`, `/edit`, `/creator`, and prompt shortcuts such as `/summarize`, `/explain`, `/todos`, `/fix`, `/rewrite`, `/translate <language>`, `/outline`, `/table`, `/theme`, `/plugin`, `/widget`, `/home`.
+- **Files**: the **+** button (or paste, or drag from your computer) attaches images, PDFs and text or code files, up to 8 per message. Images are downscaled to 1568 px. Text files are sent as text. Images and PDFs go to the model as native image/document parts. If the model can't read them (see its options), only their names are sent and the chip shows a warning.
+- **/ commands**: `/new`, `/retry`, `/compact` (summarise the chat so far, in place), `/model`, `/think <level>`, `/web`, `/history`, `/settings`, `/ask`, `/edit`, `/creator`, and prompt shortcuts such as `/summarize`, `/explain`, `/todos`, `/fix`, `/rewrite`, `/translate <language>`, `/outline`, `/table`, `/theme`, `/plugin`, `/widget`, `/home`.
 - **Model and thinking**: the model button shows just the model name (the provider is in its tooltip and menu). The thinking chip next to it picks a level (Auto, Off, Low, Medium, High, Max) from the ones the model supports. It is sent as adaptive thinking + effort for current Claude models, a thinking budget for older Claude and Gemini 2.5, `thinkingLevel` for Gemini 3, and `reasoning_effort` for OpenAI reasoning models.
 - **Context ring**: shows how much of the model's context window the chat uses, from the provider's own token count plus an estimate for anything added since. Click it for the numbers and a *Compact chat* button.
 - **Questions**: with `ui.ask`, the assistant can stop and ask you to choose between options (or type an answer) inside the chat, and then continue.
@@ -984,9 +1045,13 @@ Both are free and need no API key:
 | Max steps | 24 | Tool-call rounds per reply before the assistant pauses and asks you to continue. |
 | Max output tokens | 8192 | Per step. |
 | Temperature | provider default | |
+| Auto-compact | 80% | Summarize older turns when the context is this full (50–95%, or off). |
+| Retry failed requests (`retries`) | 3 | Automatic retries when a request fails for a passing reason (0–10, 0 = off). |
+| Seconds between retries (`retryDelay`) | 10 | Wait before each automatic retry (1–120). |
+| Load tools on demand | on | Core tools + `tools.load` instead of every tool on every request. |
 | Custom instructions | – | Appended to the system prompt in every mode. |
 
-**Settings → Models** lists the selected model, any you've customised, and the provider's models. For each one you can set the context window (default: what the provider reports, or a known size, otherwise 200k) and which thinking levels the picker offers. **Detect sizes** asks the provider for its context windows.
+Per-model options (context window, max reply, temperature, files, thinking levels, visibility) live in each provider's model list. See [Providers](#providers). A model's max reply and temperature override the global values.
 
 Chats are saved as JSON in `<data dir>/ai/chats/` and listed under *History*.
 
@@ -1044,6 +1109,7 @@ All methods take one params object and return a promise.
 - [`nodes`](#nodes)
 - [`home`](#home)
 - [`views`](#views)
+- [`source`](#source)
 - [`plugins`](#plugins)
 - [Events](#events)
 - [Permissions](#permissions)
@@ -1358,6 +1424,23 @@ Replace a page's whole content with Markdown.
 | `pageId` | `string` | yes | Page id. |
 | `markdown` | `string` | yes | Markdown. Headings, lists, checklists (- [ ]), quotes, code fences, tables and images are supported. |
 
+### `pages.edit`
+
+Change part of a page by find-and-replace, without resending the whole page.
+
+Each edit's find must match the page's Markdown exactly once (copy it from pages.read or editor.getMarkdown); whitespace differences are tolerated. Set all: true to replace every match. Edits apply in order; if one fails nothing changes. Open pages keep untouched blocks. Prefer this over pages.write / editor.setMarkdown for anything smaller than a rewrite.
+
+**Permission:** `pages.write` · **Returns:** `{ replaced: number; blocksChanged?: number }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `pageId` | `string` |  | Page id. Defaults to the page open in the focused pane. |
+| `edits` | `{ /** Exact text to replace (include enough context to be unique). */ find: string; /** Replacement text ("" deletes). */ replace: string; /** Replace every occurrence. */ all?: boolean; }[]` | yes | Edits, applied in order. |
+
+```ts
+await app.pages.edit({ pageId, edits: [{ find: "Due: Friday", replace: "Due: Monday" }] });
+```
+
 ### `pages.append`
 
 Append Markdown to the end of a page.
@@ -1496,9 +1579,9 @@ const rows = await app.databases.queryRows({ databaseId, where: { Status: "Done"
 
 ### `databases.create`
 
-Create a database with properties.
+Create a database (a page in the tree) with properties and a first view.
 
-Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited.
+To put a database inside a page's content, use databases.embed instead. Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited, formula (give `formula`).
 
 **Permission:** `databases.write` · **Returns:** `{ databaseId: string }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -1506,9 +1589,32 @@ Property types: text, number, select, multiSelect, status, date, checkbox, url, 
 | --- | --- | --- | --- |
 | `title` | `string` | yes | Database title. |
 | `parentId` | `string` |  | Parent page/folder id. |
-| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited"; /** Options for select / multiSelect / status. */ options?: string[]; }[]` |  | Columns besides the title. |
-| `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar"` |  | First view type. Default `"table"`. |
+| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; }[]` |  | Columns besides the title. |
+| `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | First view type. Default `"table"`. |
 | `open` | `boolean` |  | Open it in a tab. Default `true`. |
+
+### `databases.embed`
+
+Put a database inside a page's content: a new inline database, or a linked view of an existing one.
+
+With databaseId the block links that database (it stays where it is). Without it a new database is created as a child of the page (title, properties, view as in databases.create). Inserts at the end unless position says otherwise; before/after need blockId (from editor.getBlocks) or anchor (text of a block). Works whether or not the page is open. In page Markdown an embedded database is the line <!-- database:ID Title -->; keep it when editing.
+
+**Permission:** `databases.write` · **Returns:** `{ databaseId: string; pageId: string; created: boolean }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `pageId` | `string` |  | Page to insert into. Defaults to the page open in the focused pane. |
+| `databaseId` | `string` |  | Existing database to link. Omit to create a new inline database. |
+| `title` | `string` |  | New database title. |
+| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; }[]` |  | Columns besides the title. |
+| `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | First view type of a new database. Default `"table"`. |
+| `position` | `"start" \| "end" \| "before" \| "after"` |  | Where in the page. Default `"end"`. |
+| `blockId` | `string` |  | Anchor block for before/after. |
+| `anchor` | `string` |  | Or: text from the anchor block (first block containing it). |
+
+```ts
+await app.databases.embed({ pageId, title: "Tasks", properties: [{ name: "Status", type: "status" }, { name: "Due", type: "date" }], view: "board" });
+```
 
 ### `databases.addProperty`
 
@@ -1520,8 +1626,11 @@ Add a property (column) to a database.
 | --- | --- | --- | --- |
 | `databaseId` | `string` | yes | Database id. |
 | `name` | `string` | yes | Property name. |
-| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited"` | yes | Property type. |
+| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"` | yes | Property type. |
 | `options` | `string[]` |  | Options for select / multiSelect / status. |
+| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. |
+| `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format (number and formula properties). |
+| `dateFormat` | `"relative" \| "short" \| "long" \| "iso"` |  | How date results of a formula show. |
 
 ### `databases.addRow`
 
@@ -1536,6 +1645,33 @@ Dates: ISO "2026-03-01". Selects: option name (created if missing). Multi-select
 | `databaseId` | `string` | yes | Database id. |
 | `title` | `string` |  | Row title. |
 | `values` | `Record<string, unknown>` |  | Property name → value. |
+
+### `databases.addRows`
+
+Add many rows in one call (up to 500). Prefer this over repeated addRow.
+
+Each row is { title?, values? } with values keyed by property name, same rules as addRow. All rows are created in one transaction, in order.
+
+**Permission:** `databases.write` · **Returns:** `{ rowIds: string[]; count: number }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `databaseId` | `string` | yes | Database id. |
+| `rows` | `{ /** Row title. */ title?: string; /** Property name → value. */ values?: Record<string, unknown>; }[]` | yes | Rows to add. |
+
+```ts
+await app.databases.addRows({ databaseId, rows: [{ title: "Ship v2", values: { Status: "Doing" } }, { title: "Write docs" }] });
+```
+
+### `databases.updateRows`
+
+Change many rows in one call (up to 500).
+
+**Permission:** `databases.write` · **Returns:** `{ count: number }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `updates` | `{ /** Row (page) id. */ rowId: string; /** New title. */ title?: string; /** Property name → value. null clears. */ values?: Record<string, unknown>; }[]` | yes | Row changes. |
 
 ### `databases.updateRow`
 
@@ -1571,8 +1707,9 @@ Read rows the way a view shows them (its filters and sorts applied), optionally 
 | `databaseId` | `string` | yes | Database id. |
 | `viewId` | `string` |  | View id (defaults to the first view). |
 | `search` | `string` |  | Text search across all properties. |
-| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO. |
+| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | and \| or for `filters`. |
+| `advanced` | `{ /** and: every item matches; or: any. */ mode?: "and" \| "or"; /** Rules { property, op, value } and nested groups { mode, items } (up to 4 levels). */ items: Record<string, unknown>[]; }` |  | Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear. |
 | `sorts` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Direction. */ direction?: "asc" \| "desc"; }[]` |  | Sort rules, first wins (replaces the view's sorts). |
 | `limit` | `number` |  | Maximum rows. Default `200`. |
 
@@ -1582,7 +1719,7 @@ const late = await app.databases.queryView({ databaseId, filters: [{ property: "
 
 ### `databases.addView`
 
-Add a view (table, board, gallery, list or calendar) with optional filters, sorts and grouping.
+Add a view (table, board, gallery, list, calendar, chart or custom) with optional filters, sorts, grouping and settings.
 
 **Permission:** `databases.write` · **Returns:** `DatabaseViewInfo` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -1590,12 +1727,16 @@ Add a view (table, board, gallery, list or calendar) with optional filters, sort
 | --- | --- | --- | --- |
 | `databaseId` | `string` | yes | Database id. |
 | `name` | `string` |  | View name. |
-| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar"` |  | Layout. Default `"table"`. |
-| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO. |
+| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | Layout. Default `"table"`. |
+| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | Match all rules (and) or any (or). |
+| `advanced` | `{ /** and: every item matches; or: any. */ mode?: "and" \| "or"; /** Rules { property, op, value } and nested groups { mode, items } (up to 4 levels). */ items: Record<string, unknown>[]; }` |  | Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear. |
 | `sorts` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Direction. */ direction?: "asc" \| "desc"; }[]` |  | Sort rules, first wins (replaces the view's sorts). |
-| `groupBy` | `string` |  | Board/table grouping property (select, multi-select, status, checkbox). "" removes grouping. |
-| `hiddenGroups` | `string[]` |  | Group values (option names) to hide on a board. |
+| `groupBy` | `string` |  | Grouping property. Boards: select, multi-select, status or checkbox; tables, lists and galleries: any property but the title. "" removes grouping. |
+| `hiddenGroups` | `string[]` |  | Groups to hide (option names, true/false, or "none"). |
+| `collapsedGroups` | `string[]` |  | Groups shown collapsed (table/list/gallery). |
+| `hideEmptyGroups` | `boolean` |  | Hide groups with no rows. |
+| `colorColumns` | `boolean` |  | Colour board columns / groups by option colour. |
 | `show` | `string[]` |  | Properties to show, in order (others are hidden). |
 | `hide` | `string[]` |  | Properties to hide. |
 | `order` | `string[]` |  | Property order (names or ids). |
@@ -1603,17 +1744,25 @@ Add a view (table, board, gallery, list or calendar) with optional filters, sort
 | `calcs` | `Record<string, "none" \| "countAll" \| "countValues" \| "countUnique" \| "countEmpty" \| "countNotEmpty" \| "percentEmpty" \| "percentNotEmpty" \| "checked" \| "unchecked" \| "percentChecked" \| "sum" \| "average" \| "median" \| "min" \| "max" \| "range" \| "earliest" \| "latest">` |  | Property → footer calculation (table). |
 | `dateProperty` | `string` |  | Date property for calendar views. |
 | `cardPreview` | `"cover" \| "none"` |  | Card preview for board/gallery. |
+| `cardSize` | `"small" \| "medium" \| "large"` |  | Gallery card size. |
 | `wrap` | `boolean` |  | Wrap long cell text. |
+| `rowNumbers` | `boolean` |  | Table row numbers. |
+| `showFilterBar` | `boolean` |  | Show the filter/sort chip bar (default true). |
+| `showIcons` | `boolean` |  | Show page icons beside titles (default true). |
+| `limit` | `number` |  | Rows shown before "Load more" (0 = default). |
+| `openIn` | `"modal" \| "side" \| "tab" \| "current"` |  | Where row pages open: modal (center peek, default), side (side peek), tab, current. |
+| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; }` |  | Chart settings (chart views); merged into the current ones. |
+| `custom` | `{ /** HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined. */ html?: string; /** Frame height in px (inline databases). */ height?: number; }` |  | Custom view settings (custom views). |
 
 ```ts
-await app.databases.addView({ databaseId, type: "board", name: "By status", groupBy: "Status", filters: [{ property: "Done", op: "is", value: false }] });
+await app.databases.addView({ databaseId, type: "chart", name: "Spend by month", chart: { kind: "column", x: "Date", dateBucket: "month", aggregate: "sum", y: "Amount" } });
 ```
 
 ### `databases.updateView`
 
-Change a view: name, layout, filters, sorts, grouping, visible properties, order, widths, calculations.
+Change a view: layout, filters (simple and advanced), sorts, grouping, visible properties, calculations, chart or custom settings, where rows open.
 
-Only the fields you pass change. `filters` and `sorts` replace the existing lists; pass [] to clear.
+Only the fields you pass change. `filters`, `sorts` and `advanced` replace the existing ones; pass [] / { items: [] } to clear. `chart` merges into the current chart settings.
 
 **Permission:** `databases.write` · **Returns:** `DatabaseViewInfo` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -1622,12 +1771,16 @@ Only the fields you pass change. `filters` and `sorts` replace the existing list
 | `databaseId` | `string` | yes | Database id. |
 | `viewId` | `string` | yes | View id. |
 | `name` | `string` |  | View name. |
-| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar"` |  | Layout. |
-| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO. |
+| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | Layout. |
+| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | Match all rules (and) or any (or). |
+| `advanced` | `{ /** and: every item matches; or: any. */ mode?: "and" \| "or"; /** Rules { property, op, value } and nested groups { mode, items } (up to 4 levels). */ items: Record<string, unknown>[]; }` |  | Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear. |
 | `sorts` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Direction. */ direction?: "asc" \| "desc"; }[]` |  | Sort rules, first wins (replaces the view's sorts). |
-| `groupBy` | `string` |  | Board/table grouping property (select, multi-select, status, checkbox). "" removes grouping. |
-| `hiddenGroups` | `string[]` |  | Group values (option names) to hide on a board. |
+| `groupBy` | `string` |  | Grouping property. Boards: select, multi-select, status or checkbox; tables, lists and galleries: any property but the title. "" removes grouping. |
+| `hiddenGroups` | `string[]` |  | Groups to hide (option names, true/false, or "none"). |
+| `collapsedGroups` | `string[]` |  | Groups shown collapsed (table/list/gallery). |
+| `hideEmptyGroups` | `boolean` |  | Hide groups with no rows. |
+| `colorColumns` | `boolean` |  | Colour board columns / groups by option colour. |
 | `show` | `string[]` |  | Properties to show, in order (others are hidden). |
 | `hide` | `string[]` |  | Properties to hide. |
 | `order` | `string[]` |  | Property order (names or ids). |
@@ -1635,7 +1788,15 @@ Only the fields you pass change. `filters` and `sorts` replace the existing list
 | `calcs` | `Record<string, "none" \| "countAll" \| "countValues" \| "countUnique" \| "countEmpty" \| "countNotEmpty" \| "percentEmpty" \| "percentNotEmpty" \| "checked" \| "unchecked" \| "percentChecked" \| "sum" \| "average" \| "median" \| "min" \| "max" \| "range" \| "earliest" \| "latest">` |  | Property → footer calculation (table). |
 | `dateProperty` | `string` |  | Date property for calendar views. |
 | `cardPreview` | `"cover" \| "none"` |  | Card preview for board/gallery. |
+| `cardSize` | `"small" \| "medium" \| "large"` |  | Gallery card size. |
 | `wrap` | `boolean` |  | Wrap long cell text. |
+| `rowNumbers` | `boolean` |  | Table row numbers. |
+| `showFilterBar` | `boolean` |  | Show the filter/sort chip bar (default true). |
+| `showIcons` | `boolean` |  | Show page icons beside titles (default true). |
+| `limit` | `number` |  | Rows shown before "Load more" (0 = default). |
+| `openIn` | `"modal" \| "side" \| "tab" \| "current"` |  | Where row pages open: modal (center peek, default), side (side peek), tab, current. |
+| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; }` |  | Chart settings (chart views); merged into the current ones. |
+| `custom` | `{ /** HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined. */ html?: string; /** Frame height in px (inline databases). */ height?: number; }` |  | Custom view settings (custom views). |
 
 ### `databases.removeView`
 
@@ -1674,9 +1835,9 @@ Move a view to another position in the view tabs.
 
 ### `databases.updateProperty`
 
-Rename a property, change its type, number format or select options.
+Rename a property, change its type, formula, number/date format or select options.
 
-`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible.
+`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible (a formula turned into another type keeps its current results). Renaming updates references in other formulas.
 
 **Permission:** `databases.write` · **Returns:** `DatabaseSchemaInfo` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -1685,9 +1846,31 @@ Rename a property, change its type, number format or select options.
 | `databaseId` | `string` | yes | Database id. |
 | `property` | `string` | yes | Property name or id ("title" or the title column's name for the title). |
 | `name` | `string` |  | New name. |
-| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited"` |  | New type. |
-| `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format. |
+| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"` |  | New type. |
+| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. |
+| `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format (number and formula properties). |
+| `dateFormat` | `"relative" \| "short" \| "long" \| "iso"` |  | How date results of a formula show. |
 | `options` | `{ /** Option name. */ name: string; /** Color name. */ color?: "default" \| "gray" \| "brown" \| "orange" \| "yellow" \| "green" \| "blue" \| "purple" \| "pink" \| "red"; /** Status group. */ group?: "todo" \| "inProgress" \| "complete"; }[]` |  | Options (select / multi-select / status). |
+
+### `databases.formulaFunctions`
+
+The formula language: syntax and every function, one line each.
+
+**Permission:** `databases.read` · **Returns:** `string` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+No parameters.
+
+### `databases.checkFormula`
+
+Check a formula against a database without saving: errors, result type and sample results.
+
+**Permission:** `databases.read` · **Returns:** `{ ok: boolean; error?: string; resultType?: string; sample?: { title: string; value: unknown; error?: string }[] }` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `databaseId` | `string` | yes | Database id. |
+| `formula` | `string` | yes | Formula source. |
+| `property` | `string` |  | Formula property it is for (so it may use the others). |
 
 ### `databases.removeProperty`
 
@@ -2833,6 +3016,51 @@ Send a message to the plugin's HTML views (tabs, widgets, blocks, pages); they r
 | `payload` | `unknown` |  | JSON payload. |
 | `view` | `string` |  | Only this view key (from the view:message event). |
 
+## source
+
+### `source.list`
+
+List everything with editable text (HTML, CSS, Markdown, plugin code) and its target id.
+
+Covers sidebar tabs, status widgets, block and page types, CSS snippets, component styles, Home widgets/views and plugins. Use the target with source.get / source.edit (plugins: plugins.edit).
+
+**Permission:** none · **Returns:** `SourceEntry[]` · **Callers:** assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `kind` | `"sidebar" \| "status" \| "block" \| "node" \| "css" \| "component" \| "home" \| "homeview" \| "plugin"` |  | Only this kind. |
+
+### `source.get`
+
+Read the current text of a target (e.g. a widget's HTML) before editing it.
+
+Pass startLine/endLine to read part of a long file. Fields: sidebar html|markdown, status html|text, block/node html, css css, component css|rules, home html|css|text, homeview css, plugin code|styles.
+
+**Permission:** none · **Returns:** `{ target: string; owner: string; field: string; lines: number; length: number; text: string }` · **Callers:** assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `target` | `string` | yes | Target from source.list, e.g. status:pomodoro, home:<viewId>/<widgetId>, plugin:<id>. |
+| `field` | `string` |  | Which text (defaults to the main one). |
+| `layer` | `string` |  | Layer id when the same id exists in several layers. |
+| `startLine` | `number` |  | First line (1-based). |
+| `endLine` | `number` |  | Last line. |
+
+### `source.edit`
+
+Change part of a widget, tab, block/page type, CSS or Home widget by find-and-replace.
+
+Read it with source.get first; each find must match exactly once (whitespace differences tolerated) unless all: true. Edits apply in order and are all-or-nothing. Far cheaper than resending the whole HTML with setWidget/setTab/registerType — use it for every change to something that exists. Plugin code: use plugins.edit.
+
+**Permission:** none · **Returns:** `{ target: string; field: string; replaced: number; length: number; owner?: string }` · **Callers:** assistant · **Assistant modes:** Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `target` | `string` | yes | Target from source.list. |
+| `field` | `string` |  | Which text (defaults to the main one). |
+| `layer` | `string` |  | Layer id when ambiguous. |
+| `edits` | `{ /** Exact text to replace (include enough context to be unique). */ find: string; /** Replacement text ("" deletes). */ replace: string; /** Replace every occurrence. */ all?: boolean; }[]` | yes | Edits, applied in order. |
+
 ## plugins
 
 ### `plugins.list`
@@ -2852,6 +3080,24 @@ Read an installed plugin's manifest, code and styles.
 | Param | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | `string` | yes | Plugin id. |
+
+### `plugins.edit`
+
+Change an installed plugin's code or styles by find-and-replace, then test and reinstall it.
+
+Read it with plugins.getSource (or source.get plugin:<id>) first. The patch version is bumped automatically. Can also update permissions or description. Same test run and health check as plugins.create.
+
+**Permission:** none · **Returns:** `PluginInstallResult & { version: string; replaced: number }` · **Callers:** assistant · **Assistant modes:** Creator · **Asks first**
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `string` | yes | Plugin id. |
+| `file` | `"code" \| "styles"` |  | Which file the edits change. Default `"code"`. |
+| `edits` | `{ /** Exact text to replace (include enough context to be unique). */ find: string; /** Replacement text ("" deletes). */ replace: string; /** Replace every occurrence. */ all?: boolean; }[]` |  | Edits, applied in order. |
+| `permissions` | `string[]` |  | Replace the permission list. |
+| `description` | `string` |  | New description. |
+| `version` | `string` |  | Explicit new version (default: bump patch). |
+| `skipTest` | `boolean` |  | Install even if the test run reports errors. Default `false`. |
 
 ### `plugins.create`
 
@@ -3053,6 +3299,16 @@ export interface DatabasePropertyInfo {
   name: string;
   type: string;
   options?: { id: string; name: string; color: string }[];
+  /** Number properties (and number formulas): number | commas | percent | dollar | euro | pound | yen. */
+  format?: string;
+  /** Formula properties: the formula source. */
+  formula?: string;
+  /** Formula properties: the type the results have (number, text, checkbox, date). */
+  resultType?: string;
+  /** Date and date-formula display: relative | short | long | iso. */
+  dateFormat?: string;
+  /** Formula properties: why the formula fails, if it does. */
+  error?: string;
 }
 
 export interface DatabaseSchemaInfo {
@@ -3063,32 +3319,82 @@ export interface DatabaseSchemaInfo {
   views: { id: string; name: string; type: string }[];
 }
 
+/** A filter rule, or a nested and/or group of rules (advanced filters). */
+export type DatabaseFilterNode =
+  | { id: string; property: string; op: string; value?: unknown }
+  | { id: string; mode: "and" | "or"; items: DatabaseFilterNode[] };
+
+/** Chart view settings; property ids are returned as names. */
+export interface DatabaseChartInfo {
+  kind?: "bar" | "column" | "line" | "area" | "pie" | "donut" | "scatter" | "funnel" | "radar" | "heatmap" | "number";
+  x?: string;
+  dateBucket?: "day" | "week" | "month" | "quarter" | "year";
+  aggregate?: "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+  y?: string;
+  series?: string;
+  stacked?: boolean;
+  normalize?: boolean;
+  cumulative?: boolean;
+  sort?: "default" | "label" | "labelDesc" | "value" | "valueDesc";
+  limit?: number;
+  omitEmpty?: boolean;
+  smooth?: boolean;
+  labels?: boolean;
+  legend?: boolean;
+  grid?: boolean;
+  palette?: string;
+  height?: number;
+  goal?: number;
+  yMin?: number;
+  yMax?: number;
+  format?: string;
+  title?: string;
+}
+
 export interface DatabaseViewInfo {
   databaseId: string;
   id: string;
   name: string;
-  type: "table" | "board" | "gallery" | "list" | "calendar";
+  type: "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
   filters: { id: string; property: string; op: string; value?: unknown }[];
   filterMode: "and" | "or";
+  /** Advanced filter tree, combined (AND) with `filters`. */
+  advanced?: { mode: "and" | "or"; items: DatabaseFilterNode[] };
   sorts: { property: string; direction: "asc" | "desc" }[];
   /** Visible properties, in order (the title column first). */
   visible: string[];
   hidden: string[];
   groupBy?: string;
   hiddenGroups?: string[];
+  collapsedGroups?: string[];
+  hideEmptyGroups?: boolean;
+  colorColumns?: boolean;
   dateProperty?: string;
   cardPreview?: "cover" | "none";
+  cardSize?: "small" | "medium" | "large";
   wrap?: boolean;
   widths?: Record<string, number>;
   calcs?: Record<string, string>;
+  showFilterBar?: boolean;
+  /** Rows shown before "Load more". */
+  limit?: number;
+  showIcons?: boolean;
+  /** Where row pages open: modal (default) | side | tab | current. */
+  openIn?: "modal" | "side" | "tab" | "current";
+  rowNumbers?: boolean;
+  chart?: DatabaseChartInfo;
+  /** Custom views: the HTML/CSS/JS rendered in a sandboxed frame. */
+  custom?: { html: string; height?: number };
 }
 
 export interface DatabaseRowInfo {
   id: string;
   title: string;
-  /** Values keyed by property name; select options are returned by name. */
+  /** Values keyed by property name; select options are returned by name; formulas hold their result. */
   values: Record<string, unknown>;
   updatedAt: string;
+  /** Formula errors for this row, by property name. */
+  errors?: Record<string, string>;
 }
 
 export interface WorkspaceInfo {
@@ -3495,5 +3801,19 @@ export interface PluginTestResult {
 export interface PluginInstallResult extends PluginInfo {
   test?: PluginTestResult;
   health: { status: "ready" | "failed" | "starting" | "stopped"; error?: string; logs: { level: string; message: string }[] };
+}
+
+/** Something with editable text, from source.list (assistant). */
+export interface SourceEntry {
+  /** Pass to source.get / source.edit, e.g. "status:pomodoro", "home:<viewId>/<widgetId>". */
+  target: string;
+  kind: "sidebar" | "status" | "block" | "node" | "css" | "component" | "home" | "homeview" | "plugin";
+  title: string;
+  /** Layer id ("base" = the app's own customizations), plugin id, or "home". */
+  owner: string;
+  /** Text fields and their length in characters. */
+  fields: Record<string, number>;
+  /** False for plugin-owned items: change them with plugins.edit. */
+  editable: boolean;
 }
 ```

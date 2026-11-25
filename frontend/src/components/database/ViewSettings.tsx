@@ -1,16 +1,43 @@
-import { Copy, Eye, EyeOff, GripVertical, Trash2 } from "lucide-react";
-import { useState } from "react";
 import {
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  Code2,
+  Copy,
+  Eye,
+  EyeOff,
+  Filter,
+  GripVertical,
+  LayoutGrid,
+  ListTree,
+  Plus,
+  Rows3,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  BOARD_GROUP_TYPES,
+  OPEN_MODES,
   TITLE_ID,
   VIEW_TYPES,
+  canGroupBy,
+  countRules,
+  defaultFilter,
+  groupRows,
   newView,
   orderedPropertyIds,
   propertyById,
   uid,
+  valueType,
   type DatabaseView,
+  type OpenMode,
   type Property,
   type ViewType,
 } from "../../lib/database";
+import { ChartSettings } from "./ChartSettings";
+import { CustomViewEditor } from "./CustomView";
+import { FilterRuleEditor, PropertyPicker, SortList, filterSummary, starterGroup } from "./FilterSort";
 import { PropertyIcon, ViewIcon } from "./parts";
 import { Popover } from "./Popover";
 import { findView, movePropertyInView, setPropertyHidden, updateView } from "./ops";
@@ -23,9 +50,14 @@ export function switchLayout(db: DatabaseApi, viewId: string, type: ViewType) {
     if (!view || view.type === type) return;
     const fresh = newView(type, schema);
     view.type = type;
-    if (type === "board" && !view.groupBy) view.groupBy = fresh.groupBy;
+    if (type === "board") {
+      const current = view.groupBy ? schema.properties.find((p) => p.id === view.groupBy) : undefined;
+      if (!current || !BOARD_GROUP_TYPES.includes(valueType(current))) view.groupBy = fresh.groupBy;
+    }
     if (type === "calendar" && !view.dateProperty) view.dateProperty = fresh.dateProperty;
     if (type === "gallery" && !view.cardPreview) view.cardPreview = "cover";
+    if (type === "chart" && !view.chart) view.chart = fresh.chart;
+    if (type === "custom" && !view.custom) view.custom = fresh.custom;
     if (VIEW_TYPES.some((item) => item.name === view.name)) view.name = VIEW_TYPES.find((item) => item.type === type)?.name ?? view.name;
   });
 }
@@ -48,10 +80,19 @@ export function deleteView(db: DatabaseApi, viewId: string) {
   });
 }
 
-function Select<T extends string>({ value, options, onChange, label }: { value: T | undefined; options: { id: T; name: string }[]; onChange: (value: T) => void; label: string }) {
+/** Layouts that can be grouped, and by what. */
+export function groupablePropertiesFor(view: DatabaseView, properties: Property[]): Property[] {
+  if (view.type === "board") return properties.filter((p) => BOARD_GROUP_TYPES.includes(valueType(p)));
+  if (view.type === "table" || view.type === "list" || view.type === "gallery") return properties.filter(canGroupBy);
+  return [];
+}
+
+export const ROW_LIMITS = [10, 25, 50, 100, 250, 0];
+
+function Select<T extends string>({ value, options, onChange, label, none }: { value: T | undefined; options: { id: T; name: string }[]; onChange: (value: T) => void; label: string; none?: string }) {
   return (
     <select className="db-select" aria-label={label} value={value ?? ""} onChange={(event) => onChange(event.target.value as T)}>
-      {value === undefined ? <option value="">None</option> : null}
+      {value === undefined || none ? <option value="">{none ?? "None"}</option> : null}
       {options.map((option) => (
         <option key={option.id} value={option.id}>
           {option.name}
@@ -61,33 +102,93 @@ function Select<T extends string>({ value, options, onChange, label }: { value: 
   );
 }
 
+function Switch({ on, onToggle, label }: { on: boolean; onToggle: () => void; label: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} className={`db-switch ${on ? "is-on" : ""}`} onClick={onToggle}>
+      <span />
+    </button>
+  );
+}
+
+function Row({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+  return (
+    <label className="db-settings-row">
+      <span className="db-settings-row-label">
+        {label}
+        {hint ? <small>{hint}</small> : null}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function NavRow({ icon: Icon, label, value, onClick }: { icon: LucideIcon; label: string; value?: string; onClick: () => void }) {
+  return (
+    <button type="button" className="db-menu-item db-settings-nav" onClick={onClick}>
+      <Icon size={14} />
+      <span className="db-settings-nav-label">{label}</span>
+      {value ? <span className="db-settings-nav-value">{value}</span> : null}
+      <ChevronRight size={14} className="db-settings-nav-chevron" />
+    </button>
+  );
+}
+
+function PageHead({ title, onBack }: { title: string; onBack: () => void }) {
+  return (
+    <div className="db-settings-head">
+      <button type="button" className="icon-button tiny" aria-label="Back" onClick={onBack}>
+        <ChevronLeft size={15} />
+      </button>
+      <span>{title}</span>
+    </div>
+  );
+}
+
+type Page = "root" | "layout" | "properties" | "filter" | "sort" | "group";
+
 interface ViewSettingsProps {
   db: DatabaseApi;
   view: DatabaseView;
   anchor: HTMLElement;
   onClose: () => void;
   onSelectView: (viewId: string) => void;
+  /** Opens the advanced filter editor (the popover closes first). */
+  onOpenAdvanced?: () => void;
+  /** Page to open on (e.g. the board's "Group" button opens "group"). */
+  initialPage?: Page;
 }
 
-export function ViewSettings({ db, view, anchor, onClose, onSelectView }: ViewSettingsProps) {
+export function ViewSettings({ db, view, anchor, onClose, onSelectView, onOpenAdvanced, initialPage = "root" }: ViewSettingsProps) {
   const { schema } = db;
+  const [page, setPage] = useState<Page>(initialPage);
   const [name, setName] = useState(view.name);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
-  const ids = orderedPropertyIds(schema, view);
-  const properties = ids.map((id) => propertyById(schema, id)).filter((p): p is Property => !!p);
-  const hidden = new Set(view.hidden);
-  const groupable = schema.properties.filter((p) => p.type === "status" || p.type === "select" || p.type === "multiSelect" || p.type === "checkbox");
-  const dated = schema.properties.filter((p) => p.type === "date" || p.type === "createdTime" || p.type === "lastEdited");
+  const [editingCode, setEditingCode] = useState(false);
+  const set = (change: (target: DatabaseView) => void) => updateView(db, view.id, change);
+  const typeName = VIEW_TYPES.find((item) => item.type === view.type)?.name ?? view.type;
+  const shownCount = schema.properties.filter((p) => !view.hidden.includes(p.id)).length;
+  const filterCount = view.filters.length + countRules(view.advanced);
+  const groupable = groupablePropertiesFor(view, schema.properties);
+  const groupProperty = view.groupBy ? propertyById(schema, view.groupBy) : undefined;
 
   const commitName = () => {
     const clean = name.trim();
-    if (clean && clean !== view.name) updateView(db, view.id, (target) => { target.name = clean; });
+    if (clean && clean !== view.name) set((target) => { target.name = clean; });
   };
 
-  return (
-    <Popover anchor={anchor} onClose={() => { commitName(); onClose(); }} width={290} placement="bottom-end" label="View settings">
-      <div className="db-menu db-settings">
+  let body: ReactNode;
+  if (page === "layout") body = <LayoutPage db={db} view={view} onBack={() => setPage("root")} onEditCode={() => setEditingCode(true)} onGroup={() => setPage("group")} />;
+  else if (page === "properties") body = <PropertiesPage db={db} view={view} onBack={() => setPage("root")} />;
+  else if (page === "filter") body = <FilterPage db={db} view={view} onBack={() => setPage("root")} onOpenAdvanced={onOpenAdvanced} />;
+  else if (page === "sort") body = (
+    <>
+      <PageHead title="Sort" onBack={() => setPage("root")} />
+      <SortList db={db} view={view} />
+    </>
+  );
+  else if (page === "group") body = <GroupPage db={db} view={view} onBack={() => setPage("root")} />;
+  else
+    body = (
+      <>
         <div className="db-settings-name">
           <ViewIcon type={view.type} />
           <input
@@ -97,141 +198,22 @@ export function ViewSettings({ db, view, anchor, onClose, onSelectView }: ViewSe
             onChange={(event) => setName(event.target.value)}
             onBlur={commitName}
             onKeyDown={(event) => {
+              event.stopPropagation();
               if (event.key === "Enter") commitName();
             }}
           />
         </div>
-        <div className="db-menu-label">Layout</div>
-        <div className="db-layouts" role="radiogroup" aria-label="Layout">
-          {VIEW_TYPES.map((item) => (
-            <button
-              key={item.type}
-              type="button"
-              role="radio"
-              aria-checked={view.type === item.type}
-              className={`db-layout ${view.type === item.type ? "is-active" : ""}`}
-              onClick={() => switchLayout(db, view.id, item.type)}
-            >
-              <ViewIcon type={item.type} />
-              <span>{item.name}</span>
-            </button>
-          ))}
-        </div>
-        {view.type === "board" ? (
-          <label className="db-settings-row">
-            <span>Group by</span>
-            <Select
-              label="Group by"
-              value={view.groupBy}
-              options={groupable.map((p) => ({ id: p.id, name: p.name }))}
-              onChange={(value) => updateView(db, view.id, (target) => { target.groupBy = value; target.hiddenGroups = []; })}
-            />
-          </label>
+        <NavRow icon={LayoutGrid} label="Layout" value={typeName} onClick={() => setPage("layout")} />
+        {view.type !== "custom" ? <NavRow icon={Eye} label="Properties" value={`${shownCount} shown`} onClick={() => setPage("properties")} /> : null}
+        <NavRow icon={Filter} label="Filter" value={filterCount ? `${filterCount} ${filterCount === 1 ? "rule" : "rules"}` : "None"} onClick={() => setPage("filter")} />
+        <NavRow icon={ArrowUpDown} label="Sort" value={view.sorts.length ? `${view.sorts.length} ${view.sorts.length === 1 ? "sort" : "sorts"}` : "None"} onClick={() => setPage("sort")} />
+        {groupable.length || view.type === "board" ? (
+          <NavRow icon={Rows3} label="Group" value={groupProperty?.name ?? "None"} onClick={() => setPage("group")} />
         ) : null}
-        {view.type === "calendar" ? (
-          <label className="db-settings-row">
-            <span>Show calendar by</span>
-            <Select
-              label="Calendar date property"
-              value={view.dateProperty}
-              options={dated.map((p) => ({ id: p.id, name: p.name }))}
-              onChange={(value) => updateView(db, view.id, (target) => { target.dateProperty = value; })}
-            />
-          </label>
-        ) : null}
-        {view.type === "gallery" ? (
-          <label className="db-settings-row">
-            <span>Card preview</span>
-            <Select
-              label="Card preview"
-              value={view.cardPreview ?? "cover"}
-              options={[
-                { id: "cover", name: "Page cover" },
-                { id: "none", name: "None" },
-              ]}
-              onChange={(value) => updateView(db, view.id, (target) => { target.cardPreview = value as "cover" | "none"; })}
-            />
-          </label>
-        ) : null}
-        {view.type === "table" ? (
-          <label className="db-settings-row">
-            <span>Wrap cell content</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={!!view.wrap}
-              className={`db-switch ${view.wrap ? "is-on" : ""}`}
-              onClick={() => updateView(db, view.id, (target) => { target.wrap = !target.wrap; })}
-            >
-              <span />
-            </button>
-          </label>
-        ) : null}
-        {view.type !== "calendar" ? (
-          <>
-            <div className="db-menu-label db-settings-props-head">
-              <span>Properties</span>
-              <button
-                type="button"
-                className="db-ghost"
-                onClick={() =>
-                  updateView(db, view.id, (target) => {
-                    const anyShown = schema.properties.some((p) => !target.hidden.includes(p.id));
-                    target.hidden = anyShown ? schema.properties.map((p) => p.id) : [];
-                  })
-                }
-              >
-                {schema.properties.some((p) => !hidden.has(p.id)) ? "Hide all" : "Show all"}
-              </button>
-            </div>
-            <div className="db-settings-props">
-              {properties.map((property) => {
-                const isTitle = property.id === TITLE_ID;
-                const isHidden = hidden.has(property.id);
-                return (
-                  <div
-                    key={property.id}
-                    className={`db-settings-prop ${dragId === property.id ? "is-dragging" : ""} ${overId === property.id && dragId !== property.id ? "is-over" : ""}`}
-                    draggable={!isTitle}
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = "move";
-                      setDragId(property.id);
-                    }}
-                    onDragOver={(event) => {
-                      if (!dragId || isTitle) return;
-                      event.preventDefault();
-                      setOverId(property.id);
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      if (dragId && dragId !== property.id) movePropertyInView(db, view.id, dragId, property.id);
-                      setDragId(null);
-                      setOverId(null);
-                    }}
-                    onDragEnd={() => {
-                      setDragId(null);
-                      setOverId(null);
-                    }}
-                  >
-                    <span className="db-grip" aria-hidden>{isTitle ? null : <GripVertical size={13} />}</span>
-                    <PropertyIcon property={property} />
-                    <span className={`db-settings-prop-name ${isHidden ? "is-muted" : ""}`}>{property.name}</span>
-                    {isTitle ? null : (
-                      <button
-                        type="button"
-                        className="icon-button tiny"
-                        aria-label={isHidden ? `Show ${property.name}` : `Hide ${property.name}`}
-                        onClick={() => setPropertyHidden(db, view.id, property.id, !isHidden)}
-                      >
-                        {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        ) : null}
+        <div className="db-menu-sep" />
+        <Row label="Show filter bar">
+          <Switch on={view.showFilterBar !== false} label="Show filter bar" onToggle={() => set((target) => { target.showFilterBar = target.showFilterBar === false; })} />
+        </Row>
         <div className="db-menu-sep" />
         <button
           type="button"
@@ -258,7 +240,441 @@ export function ViewSettings({ db, view, anchor, onClose, onSelectView }: ViewSe
             <Trash2 size={14} /> Delete view
           </button>
         ) : null}
+      </>
+    );
+
+  return (
+    <>
+      <Popover anchor={anchor} onClose={() => { commitName(); onClose(); }} width={page === "sort" ? 340 : 300} placement="bottom-end" label="View settings">
+        <div className={`db-menu db-settings is-${page}`} key={page}>
+          {body}
+        </div>
+      </Popover>
+      {editingCode ? <CustomViewEditor db={db} view={view} onClose={() => setEditingCode(false)} /> : null}
+    </>
+  );
+}
+
+function LayoutPage({ db, view, onBack, onEditCode, onGroup }: { db: DatabaseApi; view: DatabaseView; onBack: () => void; onEditCode: () => void; onGroup: () => void }) {
+  const { schema } = db;
+  const set = (change: (target: DatabaseView) => void) => updateView(db, view.id, change);
+  const dated = schema.properties.filter((p) => ["date", "createdTime", "lastEdited"].includes(valueType(p)));
+  const groupProperty = view.groupBy ? propertyById(schema, view.groupBy) : undefined;
+  const paged = view.type === "table" || view.type === "list" || view.type === "gallery";
+  const hasRows = view.type !== "chart" && view.type !== "custom";
+  return (
+    <>
+      <PageHead title="Layout" onBack={onBack} />
+      <div className="db-layouts" role="radiogroup" aria-label="Layout">
+        {VIEW_TYPES.map((item) => (
+          <button
+            key={item.type}
+            type="button"
+            role="radio"
+            aria-checked={view.type === item.type}
+            className={`db-layout ${view.type === item.type ? "is-active" : ""}`}
+            onClick={() => switchLayout(db, view.id, item.type)}
+          >
+            <ViewIcon type={item.type} />
+            <span>{item.name}</span>
+          </button>
+        ))}
       </div>
-    </Popover>
+      <div className="db-menu-sep" />
+      {view.type === "table" ? (
+        <>
+          <Row label="Wrap cell content">
+            <Switch on={!!view.wrap} label="Wrap cell content" onToggle={() => set((target) => { target.wrap = !target.wrap; })} />
+          </Row>
+          <Row label="Row numbers">
+            <Switch on={!!view.rowNumbers} label="Row numbers" onToggle={() => set((target) => { target.rowNumbers = !target.rowNumbers; })} />
+          </Row>
+        </>
+      ) : null}
+      {view.type === "board" ? (
+        <>
+          <button type="button" className="db-menu-item db-settings-nav" onClick={onGroup}>
+            <Rows3 size={14} />
+            <span className="db-settings-nav-label">Group by</span>
+            <span className="db-settings-nav-value">{groupProperty?.name ?? "None"}</span>
+            <ChevronRight size={14} className="db-settings-nav-chevron" />
+          </button>
+          <Row label="Colour columns">
+            <Switch on={!!view.colorColumns} label="Colour columns" onToggle={() => set((target) => { target.colorColumns = !target.colorColumns; })} />
+          </Row>
+        </>
+      ) : null}
+      {view.type === "gallery" ? (
+        <>
+          <Row label="Card preview">
+            <Select
+              label="Card preview"
+              value={view.cardPreview ?? "cover"}
+              options={[
+                { id: "cover", name: "Page cover" },
+                { id: "none", name: "None" },
+              ]}
+              onChange={(value) => set((target) => { target.cardPreview = value as "cover" | "none"; })}
+            />
+          </Row>
+          <Row label="Card size">
+            <div className="db-segmented" role="radiogroup" aria-label="Card size">
+              {(["small", "medium", "large"] as const).map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  role="radio"
+                  aria-checked={(view.cardSize ?? "medium") === size}
+                  className={(view.cardSize ?? "medium") === size ? "is-active" : ""}
+                  onClick={() => set((target) => { target.cardSize = size; })}
+                >
+                  {size[0].toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </Row>
+        </>
+      ) : null}
+      {view.type === "calendar" ? (
+        <Row label="Show calendar by">
+          <Select
+            label="Calendar date property"
+            value={view.dateProperty}
+            options={dated.map((p) => ({ id: p.id, name: p.name }))}
+            onChange={(value) => set((target) => { target.dateProperty = value; })}
+          />
+        </Row>
+      ) : null}
+      {view.type === "chart" ? <ChartSettings db={db} view={view} /> : null}
+      {view.type === "custom" ? (
+        <button type="button" className="db-menu-item" onClick={onEditCode}>
+          <Code2 size={14} /> Edit view code
+        </button>
+      ) : null}
+      {hasRows ? (
+        <Row label="Show page icons">
+          <Switch on={view.showIcons !== false} label="Show page icons" onToggle={() => set((target) => { target.showIcons = target.showIcons === false; })} />
+        </Row>
+      ) : null}
+      {paged ? (
+        <Row label="Load limit" hint="Rows before “Load more”">
+          <Select
+            label="Load limit"
+            value={String(view.limit ?? 0)}
+            options={ROW_LIMITS.map((limit) => ({ id: String(limit), name: limit ? `${limit} rows` : "Default" }))}
+            onChange={(value) => set((target) => { target.limit = Number(value) || undefined; })}
+          />
+        </Row>
+      ) : null}
+      {view.type !== "custom" ? (
+        <>
+          <div className="db-menu-label">Open pages in</div>
+          <div className="db-open-modes" role="radiogroup" aria-label="Open pages in">
+            {OPEN_MODES.map((mode) => {
+              const active = (view.openIn ?? "modal") === mode.id;
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={`db-open-mode ${active ? "is-active" : ""}`}
+                  onClick={() => set((target) => { target.openIn = mode.id as OpenMode; })}
+                  title={mode.description}
+                >
+                  <OpenModeGlyph mode={mode.id} />
+                  <span>{mode.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+/** A tiny drawing of where the page opens. */
+export function OpenModeGlyph({ mode }: { mode: OpenMode }) {
+  return (
+    <svg className="db-open-glyph" viewBox="0 0 36 24" aria-hidden>
+      <rect x="0.5" y="0.5" width="35" height="23" rx="3" className="frame" />
+      {mode === "modal" ? <rect x="9" y="5" width="18" height="14" rx="2" className="fill" /> : null}
+      {mode === "side" ? <rect x="21" y="2.5" width="12.5" height="19" rx="1.5" className="fill" /> : null}
+      {mode === "tab" ? (
+        <>
+          <rect x="3" y="3" width="10" height="4" rx="1" className="line" />
+          <rect x="14.5" y="3" width="10" height="4" rx="1" className="fill" />
+          <rect x="3" y="9" width="30" height="12" rx="1.5" className="line" />
+        </>
+      ) : null}
+      {mode === "current" ? <rect x="3" y="3" width="30" height="18" rx="1.5" className="fill" /> : null}
+    </svg>
+  );
+}
+
+function PropertiesPage({ db, view, onBack }: { db: DatabaseApi; view: DatabaseView; onBack: () => void }) {
+  const { schema } = db;
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const ids = orderedPropertyIds(schema, view);
+  const needle = query.trim().toLowerCase();
+  const properties = ids
+    .map((id) => propertyById(schema, id))
+    .filter((p): p is Property => !!p)
+    .filter((p) => !needle || p.name.toLowerCase().includes(needle));
+  const hidden = new Set(view.hidden);
+  const anyShown = schema.properties.some((p) => !hidden.has(p.id));
+  return (
+    <>
+      <PageHead title="Properties" onBack={onBack} />
+      <input
+        className="db-input db-settings-search"
+        placeholder="Search properties…"
+        value={query}
+        aria-label="Search properties"
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => event.stopPropagation()}
+      />
+      <div className="db-menu-label db-settings-props-head">
+        <span>Shown in view</span>
+        <button
+          type="button"
+          className="db-ghost"
+          onClick={() => updateView(db, view.id, (target) => { target.hidden = anyShown ? schema.properties.map((p) => p.id) : []; })}
+        >
+          {anyShown ? "Hide all" : "Show all"}
+        </button>
+      </div>
+      <div className="db-settings-props">
+        {properties.map((property) => {
+          const isTitle = property.id === TITLE_ID;
+          const isHidden = hidden.has(property.id);
+          return (
+            <div
+              key={property.id}
+              className={`db-settings-prop ${dragId === property.id ? "is-dragging" : ""} ${overId === property.id && dragId !== property.id ? "is-over" : ""}`}
+              draggable={!isTitle && !needle}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                setDragId(property.id);
+              }}
+              onDragOver={(event) => {
+                if (!dragId || isTitle) return;
+                event.preventDefault();
+                setOverId(property.id);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (dragId && dragId !== property.id) movePropertyInView(db, view.id, dragId, property.id);
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+            >
+              <span className="db-grip" aria-hidden>{isTitle || needle ? null : <GripVertical size={13} />}</span>
+              <PropertyIcon property={property} />
+              <span className={`db-settings-prop-name ${isHidden ? "is-muted" : ""}`}>{property.name}</span>
+              {isTitle ? null : (
+                <button
+                  type="button"
+                  className="icon-button tiny"
+                  aria-label={isHidden ? `Show ${property.name}` : `Hide ${property.name}`}
+                  onClick={() => setPropertyHidden(db, view.id, property.id, !isHidden)}
+                >
+                  {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {!properties.length ? <div className="db-menu-empty">No matching properties</div> : null}
+      </div>
+    </>
+  );
+}
+
+function FilterPage({ db, view, onBack, onOpenAdvanced }: { db: DatabaseApi; view: DatabaseView; onBack: () => void; onOpenAdvanced?: () => void }) {
+  const { schema } = db;
+  const [editing, setEditing] = useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const [adding, setAdding] = useState<HTMLElement | null>(null);
+  const set = (change: (target: DatabaseView) => void) => updateView(db, view.id, change);
+  const advanced = countRules(view.advanced);
+  return (
+    <>
+      <PageHead title="Filter" onBack={onBack} />
+      {view.filters.length > 1 ? (
+        <Row label="Match">
+          <div className="db-segmented" role="radiogroup" aria-label="Match">
+            {(["and", "or"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={(view.filterMode ?? "and") === mode}
+                className={(view.filterMode ?? "and") === mode ? "is-active" : ""}
+                onClick={() => set((target) => { target.filterMode = mode; })}
+              >
+                {mode === "and" ? "All" : "Any"}
+              </button>
+            ))}
+          </div>
+        </Row>
+      ) : null}
+      {view.filters.map((rule) => {
+        const summary = filterSummary(schema, rule);
+        const property = propertyById(schema, rule.propertyId);
+        return (
+          <div key={rule.id} className="db-settings-rule">
+            <button type="button" className="db-menu-item" onClick={(event) => setEditing({ id: rule.id, anchor: event.currentTarget })}>
+              {property ? <PropertyIcon property={property} /> : <Filter size={14} />}
+              <span className="db-settings-rule-text">
+                <strong>{summary.name}</strong> {summary.detail}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="icon-button tiny"
+              aria-label="Remove filter"
+              onClick={() => set((target) => { target.filters = target.filters.filter((item) => item.id !== rule.id); })}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        );
+      })}
+      {!view.filters.length ? <div className="db-menu-empty">No simple filters</div> : null}
+      <button type="button" className="db-menu-item" onClick={(event) => setAdding(event.currentTarget)}>
+        <Plus size={14} /> Add filter
+      </button>
+      <div className="db-menu-sep" />
+      <button
+        type="button"
+        className="db-menu-item db-settings-nav"
+        onClick={() => {
+          if (!view.advanced) set((target) => { target.advanced = starterGroup(schema); });
+          onOpenAdvanced?.();
+        }}
+      >
+        <ListTree size={14} />
+        <span className="db-settings-nav-label">Advanced filter</span>
+        <span className="db-settings-nav-value">{view.advanced ? `${advanced} ${advanced === 1 ? "rule" : "rules"}` : "Add"}</span>
+        <ChevronRight size={14} className="db-settings-nav-chevron" />
+      </button>
+      {view.filters.length || view.advanced ? (
+        <button
+          type="button"
+          className="db-menu-item danger"
+          onClick={() => set((target) => { target.filters = []; target.advanced = undefined; })}
+        >
+          <Trash2 size={14} /> Clear all filters
+        </button>
+      ) : null}
+      {editing ? <FilterRuleEditor db={db} view={view} ruleId={editing.id} anchor={editing.anchor} onClose={() => setEditing(null)} /> : null}
+      {adding ? (
+        <Popover anchor={adding} onClose={() => setAdding(null)} width={240} label="Filter by">
+          <PropertyPicker
+            schema={schema}
+            onPick={(property) => {
+              const rule = defaultFilter(property);
+              setAdding(null);
+              set((target) => { target.filters = [...target.filters, rule]; });
+            }}
+          />
+        </Popover>
+      ) : null}
+    </>
+  );
+}
+
+function GroupPage({ db, view, onBack }: { db: DatabaseApi; view: DatabaseView; onBack: () => void }) {
+  const { schema } = db;
+  const set = (change: (target: DatabaseView) => void) => updateView(db, view.id, change);
+  const groupable = groupablePropertiesFor(view, schema.properties);
+  const property = view.groupBy ? propertyById(schema, view.groupBy) : undefined;
+  const groups = property ? groupRows(db.rows, property) : [];
+  const hidden = new Set(view.hiddenGroups ?? []);
+  const board = view.type === "board";
+  return (
+    <>
+      <PageHead title="Group" onBack={onBack} />
+      <Row label="Group by">
+        <Select
+          label="Group by"
+          value={property?.id}
+          none={board ? undefined : "None"}
+          options={groupable.map((p) => ({ id: p.id, name: p.name }))}
+          onChange={(value) =>
+            set((target) => {
+              target.groupBy = value || undefined;
+              target.hiddenGroups = [];
+              target.collapsedGroups = [];
+            })
+          }
+        />
+      </Row>
+      {board && !groupable.length ? <div className="db-menu-empty">Add a select, status or checkbox property to build a board.</div> : null}
+      {property ? (
+        <>
+          <Row label="Hide empty groups">
+            <Switch on={!!view.hideEmptyGroups} label="Hide empty groups" onToggle={() => set((target) => { target.hideEmptyGroups = !target.hideEmptyGroups; })} />
+          </Row>
+          {!board ? (
+            <div className="db-settings-pair">
+              <button type="button" className="db-ghost" onClick={() => set((target) => { target.collapsedGroups = groups.map((g) => g.id); })}>
+                Collapse all
+              </button>
+              <button type="button" className="db-ghost" onClick={() => set((target) => { target.collapsedGroups = []; })}>
+                Expand all
+              </button>
+            </div>
+          ) : null}
+          <div className="db-menu-label db-settings-props-head">
+            <span>Groups</span>
+            <span className="db-settings-count">{groups.length - groups.filter((g) => hidden.has(g.id)).length} shown</span>
+          </div>
+          <div className="db-settings-props">
+            {groups.map((group) => {
+              const isHidden = hidden.has(group.id);
+              return (
+                <div key={group.id} className="db-settings-prop">
+                  <span className={`db-group-dot tone-${group.color}`} aria-hidden />
+                  <span className={`db-settings-prop-name ${isHidden ? "is-muted" : ""}`}>{group.name}</span>
+                  <span className="db-settings-count">{group.rows.length}</span>
+                  <button
+                    type="button"
+                    className="icon-button tiny"
+                    aria-label={isHidden ? `Show ${group.name}` : `Hide ${group.name}`}
+                    onClick={() =>
+                      set((target) => {
+                        const list = new Set(target.hiddenGroups ?? []);
+                        if (list.has(group.id)) list.delete(group.id);
+                        else list.add(group.id);
+                        target.hiddenGroups = [...list];
+                      })
+                    }
+                  >
+                    {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          {!board ? (
+            <button
+              type="button"
+              className="db-menu-item danger"
+              onClick={() => set((target) => { target.groupBy = undefined; target.hiddenGroups = []; target.collapsedGroups = []; })}
+            >
+              <Trash2 size={14} /> Remove grouping
+            </button>
+          ) : null}
+        </>
+      ) : null}
+    </>
   );
 }

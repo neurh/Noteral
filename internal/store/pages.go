@@ -313,6 +313,82 @@ func (s *Store) CreateItem(workspaceID, parentID, kind, title, data string) (Pag
 	return PageDocument{PageMeta: meta, DocJSON: hydrateAssetURLs(doc, workspaceID), Revision: 1}, nil
 }
 
+// NewItem is one item for CreateItems.
+type NewItem struct {
+	Title string `json:"title"`
+	Data  string `json:"data"`
+}
+
+// MaxBatchItems caps one CreateItems call.
+const MaxBatchItems = 1000
+
+// CreateItems creates many items of one kind under parentID in a single transaction
+// (database rows in bulk). They keep the given order after any existing children.
+func (s *Store) CreateItems(workspaceID, parentID, kind string, items []NewItem) ([]PageMeta, error) {
+	if kind == "" {
+		kind = KindPage
+	}
+	if !validKind(kind) {
+		return nil, fmt.Errorf("unknown page kind %q", kind)
+	}
+	if len(items) == 0 {
+		return []PageMeta{}, nil
+	}
+	if len(items) > MaxBatchItems {
+		return nil, fmt.Errorf("at most %d items per batch", MaxBatchItems)
+	}
+	for i, item := range items {
+		if err := checkData(item.Data); err != nil {
+			return nil, fmt.Errorf("item %d: %w", i+1, err)
+		}
+	}
+	ws, err := s.workspace(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if parentID != "" {
+		if _, err := pageMetaByID(ws.DB, parentID); err != nil {
+			return nil, fmt.Errorf("parent page not found")
+		}
+	}
+	tx, err := ws.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var maxPos float64
+	_ = tx.QueryRow(`SELECT COALESCE(MAX(position),0) FROM pages WHERE parent_id=? AND deleted_at IS NULL`, parentID).Scan(&maxPos)
+	stmt, err := tx.Prepare(`INSERT INTO pages(id,parent_id,title,icon,cover,position,doc_json,text_content,revision,created_at,updated_at,kind,data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	now := nowString()
+	doc := emptyDocument()
+	out := make([]PageMeta, 0, len(items))
+	for i, item := range items {
+		title := item.Title
+		if strings.TrimSpace(title) == "" {
+			if kind == KindFolder {
+				title = "New folder"
+			} else {
+				title = "Untitled"
+			}
+		}
+		title = cleanTitle(title)
+		id := "pg_" + randomHex(8)
+		pos := maxPos + float64(i+1)*1024
+		if _, err := stmt.Exec(id, parentID, title, "", "", pos, doc, "", 1, now, now, kind, item.Data); err != nil {
+			return nil, err
+		}
+		out = append(out, PageMeta{ID: id, ParentID: parentID, Title: title, Position: pos, UpdatedAt: now, Kind: kind, Data: item.Data, CreatedAt: now})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func checkData(data string) error {
 	if len(data) > maxDataBytes {
 		return fmt.Errorf("structured page data is too large")

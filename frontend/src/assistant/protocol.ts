@@ -7,7 +7,7 @@ import { mentionContext } from "./mentions";
 import { thinkingPatch } from "./models";
 import type { ThinkingLevel } from "./models";
 import type { ProviderKind } from "./providers";
-import type { ChatMessage, Part, StepResult, ThinkingPart, ToolDef, ToolPart, Usage } from "./types";
+import type { Attachment, ChatMessage, Part, StepResult, ThinkingPart, ToolDef, ToolPart, Usage } from "./types";
 
 export interface BuildInput {
   kind: ProviderKind;
@@ -21,6 +21,8 @@ export interface BuildInput {
   preset?: string;
   /** Thinking level to request, or null when the model has no thinking control. */
   thinking?: ThinkingLevel | null;
+  /** Whether the model reads images and PDFs (otherwise they're described in text). */
+  vision?: boolean;
 }
 
 export const toWireName = (method: string) => method.replace(/\./g, "__");
@@ -69,7 +71,23 @@ function toolResultText(tool: ToolPart): { text: string; isError: boolean } {
   return { text: "Not run: the user stopped the response.", isError: true };
 }
 
-export function userText(message: ChatMessage): string {
+/** Text attachments go inline; binary ones are listed so the model knows they're there. */
+function attachmentText(files: Attachment[], vision: boolean): string {
+  const out: string[] = [];
+  for (const file of files) {
+    if (file.kind === "text") out.push(`<file name="${file.name}">\n${file.data}\n</file>`);
+    else if (!file.data) out.push(`[${file.kind === "pdf" ? "PDF" : "Image"} "${file.name}" was attached earlier in the chat.]`);
+    else if (!vision) out.push(`[${file.kind === "pdf" ? "PDF" : "Image"} "${file.name}" is attached, but this model can't read ${file.kind === "pdf" ? "PDFs" : "images"}. Say so if it matters.]`);
+  }
+  return out.join("\n");
+}
+
+/** Images/PDFs that go to the model as binary parts. */
+function binaryFiles(message: ChatMessage, vision: boolean): Attachment[] {
+  return vision ? (message.attachments ?? []).filter((file) => file.kind !== "text" && file.data) : [];
+}
+
+export function userText(message: ChatMessage, vision = true): string {
   const text = message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
   const blocks: string[] = [];
   const ctx = message.context;
@@ -81,7 +99,50 @@ export function userText(message: ChatMessage): string {
     blocks.push(lines.join("\n"));
   }
   if (message.mentions?.length) blocks.push(mentionContext(message.mentions));
+  if (message.attachments?.length) {
+    const files = attachmentText(message.attachments, vision);
+    if (files) blocks.push(files);
+  }
   return blocks.length ? `${blocks.join("\n")}\n\n${text}` : text;
+}
+
+const KEEP_RESULT = 1200;
+
+/**
+ * Token-saving view of the history sent with a request. Tool results from earlier turns
+ * (before the latest user message) are cut to a short head, and images/PDFs are only
+ * resent for the last few user messages. The current turn is sent whole. Stored chats are
+ * never changed.
+ */
+export function leanHistory(messages: ChatMessage[], keepFilesFor = 3): ChatMessage[] {
+  let lastUser = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      lastUser = index;
+      break;
+    }
+  }
+  let usersSeen = 0;
+  const out = messages.slice();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user") {
+      usersSeen += 1;
+      if (usersSeen > keepFilesFor && message.attachments?.some((file) => file.kind !== "text" && file.data)) {
+        out[index] = { ...message, attachments: message.attachments.map((file) => (file.kind === "text" ? file : { ...file, data: "" })) };
+      }
+      continue;
+    }
+    if (index > lastUser) continue;
+    let changed = false;
+    const parts = message.parts.map((part) => {
+      if (part.type !== "tool" || part.status !== "done" || !part.result || part.result.length <= KEEP_RESULT * 1.5) return part;
+      changed = true;
+      return { ...part, result: `${part.result.slice(0, KEEP_RESULT)}\n…[${part.result.length - KEEP_RESULT} more characters from an earlier turn were left out to save context; call the tool again if you need them]` };
+    });
+    if (changed) out[index] = { ...message, parts };
+  }
+  return out;
 }
 
 // ── OpenAI-compatible ──────────────────────────────────────────────────────
@@ -90,7 +151,23 @@ function openaiBody(input: BuildInput) {
   const messages: Record<string, unknown>[] = [{ role: "system", content: input.system }];
   for (const message of input.messages) {
     if (message.role === "user") {
-      messages.push({ role: "user", content: userText(message) });
+      const files = binaryFiles(message, input.vision !== false);
+      const text = userText(message, input.vision !== false);
+      if (!files.length) {
+        messages.push({ role: "user", content: text });
+        continue;
+      }
+      messages.push({
+        role: "user",
+        content: [
+          ...files.map((file) =>
+            file.kind === "pdf"
+              ? { type: "file", file: { filename: file.name, file_data: `data:${file.mime};base64,${file.data}` } }
+              : { type: "image_url", image_url: { url: `data:${file.mime};base64,${file.data}` } },
+          ),
+          { type: "text", text: text || "…" },
+        ],
+      });
       continue;
     }
     for (const round of roundsOf(message)) {
@@ -130,7 +207,12 @@ function anthropicBody(input: BuildInput) {
   };
   for (const message of input.messages) {
     if (message.role === "user") {
-      push("user", [{ type: "text", text: userText(message) || "…" }]);
+      const files = binaryFiles(message, input.vision !== false).map((file) =>
+        file.kind === "pdf"
+          ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: file.data }, title: file.name }
+          : { type: "image", source: { type: "base64", media_type: file.mime, data: file.data } },
+      );
+      push("user", [...files, { type: "text", text: userText(message, input.vision !== false) || "…" }]);
       continue;
     }
     for (const round of roundsOf(message)) {
@@ -150,6 +232,12 @@ function anthropicBody(input: BuildInput) {
         }),
       );
     }
+  }
+  // Cache the conversation so far too: each step of a turn re-reads it at the cached rate.
+  const tail = messages[messages.length - 1]?.content;
+  const lastBlock = tail?.[tail.length - 1];
+  if (tail && lastBlock && lastBlock.type !== "thinking" && lastBlock.type !== "redacted_thinking") {
+    tail[tail.length - 1] = { ...lastBlock, cache_control: { type: "ephemeral" } };
   }
   const thinking = thinkingPatch("anthropic", input.model, input.thinking ?? null, input.maxTokens, input.preset);
   // Cache the long, stable prefix (system prompt + tools) across turns.
@@ -196,7 +284,8 @@ function geminiBody(input: BuildInput) {
   };
   for (const message of input.messages) {
     if (message.role === "user") {
-      push("user", [{ text: userText(message) || "…" }]);
+      const files = binaryFiles(message, input.vision !== false).map((file) => ({ inlineData: { mimeType: file.mime, data: file.data } }));
+      push("user", [...files, { text: userText(message, input.vision !== false) || "…" }]);
       continue;
     }
     for (const round of roundsOf(message)) {

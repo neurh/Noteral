@@ -6,7 +6,7 @@
  * the zustand store, the editor bridge and the Go service — never the DOM.
  */
 import { Clipboard } from "@wailsio/runtime";
-import { api } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import type { Manifest, PageMeta } from "../lib/api";
 import { commandRegistry } from "../lib/commands";
 import { saveOptions } from "../lib/pluginOptions";
@@ -22,11 +22,10 @@ import type { Customizations } from "../lib/customizations";
 import type { ContributionSet } from "../lib/contributions";
 import {
   OPTION_COLORS,
-  defaultSchema,
+  TITLE_ID,
   defaultStatusOptions,
   hasOptions,
   isComputed,
-  newView,
   nextOptionColor,
   parseRowValues,
   parseSchema,
@@ -36,12 +35,18 @@ import {
   uid,
   uniquePropertyName,
 } from "../lib/database";
-import type { DatabaseRow, DatabaseSchema, Property, PropertyType, RowValues, SelectOption, ViewType } from "../lib/database";
+import type { DatabaseRow, DatabaseSchema, Property, PropertyType, RowValues, SelectOption } from "../lib/database";
 import { dialogs } from "../lib/dialogs";
 import { editorBridge } from "../lib/editorBridge";
 import type { EditorHandle } from "../lib/editorBridge";
 import { appendMarkdown, docJsonToMarkdown, docJsonToText, markdownToDocJson } from "../lib/markdownDoc";
+import { databaseMarkerIds } from "../lib/markdownEmbeds";
+import { withFormulas } from "../lib/databaseFormulas";
+import type { FormulaResult } from "../lib/databaseFormulas";
+import { compileFormula } from "../lib/formula";
 import { paneList } from "../lib/panes";
+import { applyEdits } from "./textEdits";
+import type { TextEdit } from "./textEdits";
 import type { LayoutNode } from "../lib/panes";
 import { isHomeTab, useAppStore } from "../store";
 import type { Caller } from "./spec";
@@ -201,8 +206,9 @@ function need<T>(value: T | undefined, method: string): T {
 }
 
 /** Rewrites a page's document whether or not it is open in an editor. */
-async function writeDocument(pageId: string, markdown: string, mode: "replace" | "append"): Promise<void> {
+async function writeDocument(pageId: string, markdown: string, mode: "replace" | "append", previous = ""): Promise<void> {
   const meta = requireMeta(pageId);
+  checkEmbeds(markdown, previous);
   if (meta.deletedAt) throw new Error(`"${displayTitle(pageId)}" is in the trash. Restore it first.`);
   if (meta.kind !== "page") throw new Error(`"${displayTitle(pageId)}" is a ${meta.kind}; only pages have a document.`);
   const handle = editorBridge.get(pageId);
@@ -215,9 +221,57 @@ async function writeDocument(pageId: string, markdown: string, mode: "replace" |
   const workspace = requireWorkspace();
   const doc = await state.ensurePageLoaded(pageId);
   if (!doc) throw new Error(`Could not load "${displayTitle(pageId)}".`);
-  const next = mode === "replace" ? markdownToDocJson(markdown) : appendMarkdown(doc.docJson, markdown);
+  const next = mode === "replace" ? markdownToDocJson(markdown, doc.docJson) : appendMarkdown(doc.docJson, markdown);
   await api.savePage(workspace.id, pageId, next, doc.revision);
   await store().reloadPage(pageId);
+}
+
+type StoredBlock = { id?: string; type?: string; props?: Record<string, unknown>; content?: unknown; children?: StoredBlock[] };
+
+function storedText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content.map((item) => (item && typeof item === "object" ? String((item as { text?: string }).text ?? storedText((item as { content?: unknown }).content)) : "")).join("");
+}
+
+/**
+ * Inserts a block into a page's stored document (for pages not open in an editor).
+ * The anchor is a block id or text from a block; nested anchors insert beside them.
+ */
+export async function insertStoredBlock(pageId: string, block: StoredBlock, position: "start" | "end" | "before" | "after", anchor?: { blockId?: string; text?: string }): Promise<string> {
+  const workspace = requireWorkspace();
+  const doc = await store().ensurePageLoaded(pageId);
+  if (!doc) throw new Error(`Could not load "${displayTitle(pageId)}".`);
+  let blocks: StoredBlock[] = [];
+  try {
+    const parsed = JSON.parse(doc.docJson || "[]");
+    blocks = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    blocks = [];
+  }
+  const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : uid("blk");
+  const added = { ...block, id };
+  const isEmpty = (item: StoredBlock | undefined) => !!item && item.type === "paragraph" && !storedText(item.content).trim() && !(item.children ?? []).length;
+  if (position === "start" || position === "end") {
+    if (position === "start") blocks.unshift(added);
+    else if (isEmpty(blocks[blocks.length - 1])) blocks.splice(blocks.length - 1, 1, added);
+    else blocks.push(added);
+  } else {
+    const wanted = anchor?.text?.trim().toLowerCase();
+    const find = (list: StoredBlock[]): boolean => {
+      const index = list.findIndex((item) => (anchor?.blockId ? item.id === anchor.blockId : !!wanted && storedText(item.content).toLowerCase().includes(wanted)));
+      if (index >= 0) {
+        list.splice(position === "before" ? index : index + 1, 0, added);
+        return true;
+      }
+      return list.some((item) => find(item.children ?? []));
+    };
+    if (!find(blocks)) throw new Error(anchor?.blockId ? `No block ${anchor.blockId} on "${displayTitle(pageId)}". Use editor.getBlocks or pages.read.` : `No block on "${displayTitle(pageId)}" contains "${anchor?.text ?? ""}".`);
+  }
+  // Content-less blocks need a paragraph after them for the caret.
+  if (blocks[blocks.length - 1] === added) blocks.push({ type: "paragraph", content: [], children: [] });
+  await api.savePage(workspace.id, pageId, JSON.stringify(blocks), doc.revision);
+  await store().reloadPage(pageId);
+  return id;
 }
 
 async function readDocument(pageId: string, format: "markdown" | "text"): Promise<string> {
@@ -229,6 +283,90 @@ async function readDocument(pageId: string, format: "markdown" | "text"): Promis
   const doc = await store().ensurePageLoaded(pageId);
   if (!doc) throw new Error(`Could not load "${displayTitle(pageId)}".`);
   return format === "text" ? docJsonToText(doc.docJson, displayTitle) : docJsonToMarkdown(doc.docJson, displayTitle);
+}
+
+/**
+ * Marker lines (`<!-- database:ID -->`) must name a database that exists; ones already in
+ * `previous` (the page's current Markdown) are kept as they are.
+ */
+export function checkEmbeds(markdown: string, previous = ""): void {
+  const known = new Set(databaseMarkerIds(previous));
+  for (const id of databaseMarkerIds(markdown)) {
+    if (known.has(id)) continue;
+    const meta = findMeta(id);
+    if (!meta) throw new Error(`<!-- database:${id} --> names no database. Use databases.list for ids, or databases.embed to add one.`);
+    if (meta.kind !== "database") throw new Error(`<!-- database:${id} --> points at "${displayTitle(id)}", a ${meta.kind}, not a database. Link pages with [[Title]] instead.`);
+  }
+}
+
+/**
+ * Block types Markdown round-trips safely; an edit that would rewrite anything else is refused.
+ * Databases and custom blocks round-trip as marker lines (lib/markdownEmbeds).
+ */
+const MARKDOWN_BLOCKS = new Set(["paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "quote", "codeBlock", "table", "image", "divider", "database", "custom"]);
+
+/**
+ * Which blocks an edit touched: the longest runs of unchanged blocks at each end of the
+ * page, and the new Markdown that goes between them. Exported for tests.
+ */
+export function splitChange(parts: string[], after: string, sep: string): { head: number; tail: number; middle: string } {
+  let head = 0;
+  let headEnd = 0;
+  while (head < parts.length) {
+    const run = parts.slice(0, head + 1).join(sep);
+    if (after !== run && !after.startsWith(run + sep)) break;
+    head += 1;
+    headEnd = run.length;
+  }
+  let tail = 0;
+  let tailStart = after.length;
+  while (head + tail < parts.length) {
+    const run = parts.slice(parts.length - tail - 1).join(sep);
+    const start = after.length - run.length;
+    if (!after.endsWith(run) || start < headEnd || (start > 0 && !after.slice(0, start).endsWith(sep) && start !== headEnd)) break;
+    tail += 1;
+    tailStart = start;
+  }
+  return { head, tail, middle: after.slice(headEnd, tailStart).trim() };
+}
+
+/**
+ * Find-and-replace inside a page. With the page open, only the blocks the edits touch are
+ * replaced (the rest keep their ids, and it is one undo step per changed run); closed pages
+ * are rewritten through their Markdown.
+ */
+async function editDocument(pageId: string, edits: TextEdit[]): Promise<{ replaced: number; blocksChanged?: number }> {
+  const meta = requireMeta(pageId);
+  if (meta.deletedAt) throw new Error(`"${displayTitle(pageId)}" is in the trash. Restore it first.`);
+  if (meta.kind !== "page") throw new Error(`"${displayTitle(pageId)}" is a ${meta.kind}; only pages have a document.`);
+  const what = `"${displayTitle(pageId)}"`;
+  const handle = editorBridge.get(pageId);
+  if (handle?.getBlocks && handle.getMarkdown && handle.replaceBlocks && handle.removeBlocks && handle.insertMarkdown) {
+    const blocks = handle.getBlocks();
+    const parts = blocks.map((block) => handle.getMarkdown!([block.id]).trim());
+    const SEP = "\n\n";
+    const before = parts.join(SEP);
+    const outcome = applyEdits(before, edits, what);
+    const after = outcome.text;
+    if (after === before) return { replaced: outcome.replaced, blocksChanged: 0 };
+    checkEmbeds(after, before);
+    const { head, tail, middle } = splitChange(parts, after, SEP);
+    const changed = blocks.slice(head, blocks.length - tail);
+    const unsafe = changed.find((block) => !MARKDOWN_BLOCKS.has(block.type));
+    if (unsafe) throw new Error(`That edit would rewrite a ${unsafe.type} block, which Markdown can't hold. Use editor.updateBlock or blocks.setData for it.`);
+    if (changed.length && middle) await handle.replaceBlocks(changed.map((block) => block.id), middle);
+    else if (changed.length) await handle.removeBlocks(changed.map((block) => block.id));
+    else if (middle) {
+      if (head > 0) await handle.insertMarkdown(middle, "after", blocks[head - 1].id);
+      else if (blocks.length) await handle.insertMarkdown(middle, "before", blocks[0].id);
+      else await handle.insertMarkdown(middle, "end");
+    }
+    return { replaced: outcome.replaced, blocksChanged: changed.length };
+  }
+  const source = await readDocument(pageId, "markdown");
+  const outcome = applyEdits(source, edits, what);
+  if (outcome.text !== source) await writeDocument(pageId, outcome.text, "replace", source);
+  return { replaced: outcome.replaced };
 }
 
 function childrenOf(parentId: string): PageMeta[] {
@@ -259,17 +397,31 @@ export function isTitleKey(schema: DatabaseSchema, name: string): boolean {
   return key === "title" || key === schema.titleName.toLowerCase();
 }
 
+/** Rows with formula values filled in, plus the schema with each formula's result type. */
+export function formulaRows(databaseId: string, schema: DatabaseSchema): FormulaResult {
+  return withFormulas(rowsOf(store().pages, databaseId), schema);
+}
+
 export function schemaInfo(meta: PageMeta, schema: DatabaseSchema): DatabaseSchemaInfo {
+  const hasFormulas = schema.properties.some((property) => property.type === "formula");
+  const typed = hasFormulas ? formulaRows(meta.id, schema) : undefined;
   return {
     databaseId: meta.id,
     title: displayTitle(meta.id),
     titleName: schema.titleName,
-    properties: schema.properties.map((property) => ({
-      id: property.id,
-      name: property.name,
-      type: property.type,
-      ...(property.options ? { options: property.options.map((option) => ({ id: option.id, name: option.name, color: option.color })) } : {}),
-    })),
+    properties: schema.properties.map((property) => {
+      const resultType = typed?.schema.properties.find((item) => item.id === property.id)?.resultType;
+      const error = typed?.issues.find((issue) => issue.propertyId === property.id)?.message;
+      return {
+        id: property.id,
+        name: property.name,
+        type: property.type,
+        ...(property.options ? { options: property.options.map((option) => ({ id: option.id, name: option.name, color: option.color })) } : {}),
+        ...(property.format ? { format: property.format } : {}),
+        ...(property.type === "formula" ? { formula: property.formula ?? "", ...(resultType ? { resultType } : {}), ...(error ? { error } : {}) } : {}),
+        ...(property.dateFormat ? { dateFormat: property.dateFormat } : {}),
+      };
+    }),
     views: schema.views.map((view) => ({ id: view.id, name: view.name, type: view.type })),
   };
 }
@@ -304,8 +456,18 @@ function readableValues(row: DatabaseRow, schema: DatabaseSchema): Record<string
   return out;
 }
 
-export function rowInfo(row: DatabaseRow, schema: DatabaseSchema): DatabaseRowInfo {
-  return { id: row.id, title: displayTitle(row.id), values: readableValues(row, schema), updatedAt: row.meta.updatedAt ?? "" };
+/** A row for callers. Pass `errors` (formulaRows().rowErrors.get(row.id)) to report formula failures. */
+export function rowInfo(row: DatabaseRow, schema: DatabaseSchema, errors?: Record<string, string>): DatabaseRowInfo {
+  const info: DatabaseRowInfo = { id: row.id, title: displayTitle(row.id), values: readableValues(row, schema), updatedAt: row.meta.updatedAt ?? "" };
+  if (errors && Object.keys(errors).length) {
+    info.errors = Object.fromEntries(Object.entries(errors).map(([id, message]) => [schema.properties.find((property) => property.id === id)?.name ?? id, message]));
+  }
+  return info;
+}
+
+/** Formula rows → row infos (formula values and errors included). */
+export function rowInfos(result: FormulaResult, rows: DatabaseRow[] = result.rows): DatabaseRowInfo[] {
+  return rows.map((row) => rowInfo(row, result.schema, result.rowErrors.get(row.id)));
 }
 
 function statusGroupFor(index: number, total: number): SelectOption["group"] {
@@ -332,6 +494,87 @@ export function buildProperty(name: string, type: PropertyType, options?: string
   return property;
 }
 
+/** The friendly property settings beyond name/type/options. */
+export interface PropertyExtras {
+  formula?: string;
+  format?: string;
+  dateFormat?: string;
+}
+
+/**
+ * Checks a formula against the schema: it must compile, refer only to existing properties
+ * (by name, the title included) and not loop back to itself. Returns the trimmed source.
+ */
+export function checkFormula(schema: DatabaseSchema, source: string, self: Property): string {
+  const text = source.trim();
+  if (!text) throw new Error(`Formula "${self.name}" is empty. Example: {Price} * {Quantity} (see databases.formulaFunctions).`);
+  const compiled = compileFormula(text);
+  if (!compiled.ok) {
+    const { message, start, end } = compiled.error;
+    const stop = Math.max(end, start + 1);
+    const snippet = text.slice(start, stop);
+    const where = snippet ? ` at "${snippet}" (characters ${start}–${stop})` : " at the end";
+    throw new Error(`Formula error in "${self.name}": ${message}${where}. Formula: ${text}`);
+  }
+  const named = new Map<string, Property>();
+  named.set(schema.titleName.trim().toLowerCase(), { id: TITLE_ID, name: schema.titleName, type: "text" });
+  for (const property of [...schema.properties.filter((item) => item.id !== self.id), self]) {
+    const key = property.name.trim().toLowerCase();
+    if (!named.has(key)) named.set(key, property);
+  }
+  const target = (name: string) => named.get(name.trim().toLowerCase());
+  for (const ref of compiled.refs) {
+    const property = target(ref);
+    if (!property) {
+      const names = [schema.titleName, ...schema.properties.map((item) => item.name)].map((name) => `"${name}"`).join(", ");
+      throw new Error(`Formula "${self.name}" refers to unknown property "${ref}". Properties: ${names}.`);
+    }
+    if (property.id === self.id) throw new Error(`Formula "${self.name}" cannot refer to itself.`);
+  }
+  // Formulas may use other formulas, but never in a loop.
+  const refsOf = (property: Property): string[] => {
+    if (property.id === self.id) return compiled.refs;
+    if (property.type !== "formula") return [];
+    const other = compileFormula(property.formula ?? "");
+    return other.ok ? other.refs : [];
+  };
+  const visit = (property: Property, path: string[]): void => {
+    for (const ref of refsOf(property)) {
+      const next = target(ref);
+      if (!next || next.type !== "formula") continue;
+      if (next.id === self.id) throw new Error(`Formula "${self.name}" would loop: ${[...path, next.name].join(" → ")}.`);
+      if (!path.includes(next.name)) visit(next, [...path, next.name]);
+    }
+  };
+  visit(self, [self.name]);
+  return text;
+}
+
+const NUMBER_FORMAT_IDS = ["number", "commas", "percent", "dollar", "euro", "pound", "yen"];
+const DATE_FORMAT_IDS = ["relative", "short", "long", "iso"];
+
+/** Applies formula / number format / date format settings to a property (validated). */
+export function applyPropertyExtras(schema: DatabaseSchema, property: Property, extras: PropertyExtras): void {
+  if (extras.format !== undefined) {
+    if (property.type !== "number" && property.type !== "formula") throw new Error(`format applies to number and formula properties, not "${property.name}" (${property.type}).`);
+    if (extras.format && !NUMBER_FORMAT_IDS.includes(extras.format)) throw new Error(`Unknown format "${extras.format}". Use one of: ${NUMBER_FORMAT_IDS.join(", ")}.`);
+    if (extras.format) property.format = extras.format as Property["format"];
+    else delete property.format;
+  }
+  if (extras.dateFormat !== undefined) {
+    if (property.type !== "formula") throw new Error(`dateFormat applies to formula properties (date results), not "${property.name}" (${property.type}).`);
+    if (extras.dateFormat && !DATE_FORMAT_IDS.includes(extras.dateFormat)) throw new Error(`Unknown dateFormat "${extras.dateFormat}". Use one of: ${DATE_FORMAT_IDS.join(", ")}.`);
+    if (extras.dateFormat) property.dateFormat = extras.dateFormat as Property["dateFormat"];
+    else delete property.dateFormat;
+  }
+  if (property.type === "formula") {
+    if (extras.formula !== undefined) property.formula = checkFormula(schema, extras.formula, property);
+    else if (!property.formula) throw new Error(`Formula property "${property.name}" needs a formula, e.g. {Price} * {Quantity}.`);
+  } else if (extras.formula !== undefined) {
+    throw new Error(`formula needs type "formula" ("${property.name}" is ${property.type}).`);
+  }
+}
+
 export function ensureOption(property: Property, name: string): { id: string; created: boolean } {
   const key = name.trim();
   if (!key) throw new Error(`Empty option for "${property.name}".`);
@@ -355,6 +598,7 @@ function checkDate(value: string, property: Property): string {
 /** Converts a friendly value into the stored form. Returns `undefined` to clear. */
 export function convertValue(property: Property, value: unknown): { value: unknown; schemaChanged: boolean } {
   if (value === null || value === undefined || value === "") return { value: undefined, schemaChanged: false };
+  if (property.type === "formula") throw new Error(`"${property.name}" is a formula (${property.formula || "empty"}); its value is computed and cannot be set. Change the formula with databases.updateProperty.`);
   if (isComputed(property.type)) throw new Error(`"${property.name}" is computed automatically and cannot be set.`);
   switch (property.type) {
     case "number": {
@@ -457,7 +701,7 @@ function cellMarkdown(value: unknown): string {
 }
 
 function databaseMarkdown(meta: PageMeta, schema: DatabaseSchema): string {
-  const rows = rowsOf(store().pages, meta.id).map((row) => rowInfo(row, schema));
+  const rows = rowInfos(formulaRows(meta.id, schema));
   const head = [schema.titleName, ...schema.properties.map((property) => property.name)];
   const lines = [
     `| ${head.map(cellMarkdown).join(" | ")} |`,
@@ -595,10 +839,12 @@ export const HANDLERS: Record<string, Handler> = {
     const { handle } = editorFor(p.pageId);
     const position = p.position ?? "end";
     if ((position === "before" || position === "after") && !p.blockId) throw new Error(`position "${position}" needs blockId.`);
+    checkEmbeds(p.markdown);
     const blockIds = await need(handle.insertMarkdown, "editor.insertMarkdown")(p.markdown, position, p.blockId);
     return { blockIds };
   },
   "editor.replaceBlocks": async (p) => {
+    checkEmbeds(p.markdown);
     const blockIds = await need(editorFor(p.pageId).handle.replaceBlocks, "editor.replaceBlocks")(p.blockIds, p.markdown);
     return { blockIds };
   },
@@ -609,6 +855,7 @@ export const HANDLERS: Record<string, Handler> = {
     await need(editorFor(p.pageId).handle.removeBlocks, "editor.removeBlocks")(p.blockIds);
   },
   "editor.setMarkdown": async (p) => {
+    checkEmbeds(p.markdown);
     await need(editorFor(p.pageId).handle.setMarkdown, "editor.setMarkdown")(p.markdown);
   },
   "editor.insertBlocks": async (p) => {
@@ -688,6 +935,7 @@ export const HANDLERS: Record<string, Handler> = {
   "pages.write": async (p) => {
     await writeDocument(p.pageId, p.markdown, "replace");
   },
+  "pages.edit": async (p) => editDocument(p.pageId || activePageId(), p.edits),
   "pages.append": async (p) => {
     await writeDocument(p.pageId, p.markdown, "append");
   },
@@ -753,33 +1001,14 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "databases.queryRows": (p) => {
     const { schema } = requireDatabase(p.databaseId);
-    return rowsOf(store().pages, p.databaseId)
-      .map((row) => rowInfo(row, schema))
+    return rowInfos(formulaRows(p.databaseId, schema))
       .filter((row) => matchesWhere(row, schema, p.where))
       .slice(0, p.limit ?? 200);
-  },
-  "databases.create": async (p) => {
-    requireWorkspace();
-    const parentId = p.parentId ?? "";
-    if (parentId && requireMeta(parentId, "Parent").kind === "database") throw new Error("Databases cannot be nested inside databases.");
-    const view = (p.view ?? "table") as ViewType;
-    let schema = defaultSchema();
-    const properties = (p.properties ?? []) as { name: string; type: PropertyType; options?: string[] }[];
-    if (properties.length) {
-      schema = { version: 1, titleName: "Name", properties: [], views: [] };
-      for (const item of properties) {
-        schema.properties.push(buildProperty(uniquePropertyName(schema, item.name.trim() || "Property"), item.type, item.options));
-      }
-    }
-    schema.views = [newView(view, schema)];
-    const meta = await store().createItem("database", parentId, { open: false, title: p.title, data: serializeSchema(schema) });
-    if (!meta) throw new Error("The database could not be created.");
-    if (p.open !== false) await store().selectPage(meta.id);
-    return { databaseId: meta.id };
   },
   "databases.addProperty": async (p) => {
     const { meta, schema } = requireDatabase(p.databaseId);
     const property = buildProperty(uniquePropertyName(schema, p.name.trim() || "Property"), p.type, p.options);
+    applyPropertyExtras(schema, property, p);
     schema.properties.push(property);
     await store().setPageData(meta.id, serializeSchema(schema));
     return { propertyId: property.id };
@@ -793,6 +1022,59 @@ export const HANDLERS: Record<string, Handler> = {
     const row = await store().createItem("page", meta.id, { open: false, title, data: serializeRowValues(values) });
     if (!row) throw new Error("The row could not be created.");
     return { rowId: row.id };
+  },
+  "databases.addRows": async (p) => {
+    const { meta, schema } = requireDatabase(p.databaseId);
+    const input = (p.rows ?? []) as { title?: string; values?: Record<string, unknown> }[];
+    if (!input.length) throw new Error("rows is empty.");
+    let schemaChanged = false;
+    const items = input.map((row, index) => {
+      const values: RowValues = {};
+      try {
+        const applied = applyValues(schema, values, row.values);
+        schemaChanged ||= applied.schemaChanged;
+        return { title: row.title ?? applied.title ?? "", data: serializeRowValues(values) };
+      } catch (error) {
+        throw new Error(`Row ${index + 1}: ${errorMessage(error)}`);
+      }
+    });
+    // New select options must exist before the rows that use them.
+    if (schemaChanged) await store().setPageData(meta.id, serializeSchema(schema));
+    const rows = await store().createItems("page", meta.id, items);
+    return { rowIds: rows.map((row) => row.id), count: rows.length };
+  },
+  "databases.updateRows": async (p) => {
+    const updates = (p.updates ?? []) as { rowId: string; title?: string; values?: Record<string, unknown> }[];
+    if (!updates.length) throw new Error("updates is empty.");
+    // One schema per database, shared by its rows, so option creation is saved once.
+    const schemas = new Map<string, { schema: DatabaseSchema; changed: boolean }>();
+    const plans = updates.map((update, index) => {
+      const row = requireMeta(update.rowId, `Row ${index + 1}`);
+      const database = row.parentId ? findMeta(row.parentId) : undefined;
+      if (!database || database.kind !== "database") throw new Error(`Row ${index + 1}: "${displayTitle(row.id)}" is not a database row.`);
+      let entry = schemas.get(database.id);
+      if (!entry) schemas.set(database.id, (entry = { schema: parseSchema(database.data), changed: false }));
+      const values = parseRowValues(row.data);
+      let title = update.title;
+      if (update.values) {
+        try {
+          const applied = applyValues(entry.schema, values, update.values);
+          entry.changed ||= applied.schemaChanged;
+          title ??= applied.title;
+        } catch (error) {
+          throw new Error(`Row ${index + 1}: ${errorMessage(error)}`);
+        }
+      }
+      return { row, values, title, hasValues: Boolean(update.values) };
+    });
+    for (const [databaseId, entry] of schemas) if (entry.changed) await store().setPageData(databaseId, serializeSchema(entry.schema));
+    await Promise.all(
+      plans.map(async (plan) => {
+        if (plan.hasValues) await store().setPageData(plan.row.id, serializeRowValues(plan.values));
+        if (plan.title !== undefined && plan.title !== plan.row.title) await store().renamePage(plan.row.id, plan.title);
+      }),
+    );
+    return { count: plans.length };
   },
   "databases.updateRow": async (p) => {
     const row = requireMeta(p.rowId, "Row");

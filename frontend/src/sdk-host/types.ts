@@ -89,6 +89,16 @@ export interface DatabasePropertyInfo {
   name: string;
   type: string;
   options?: { id: string; name: string; color: string }[];
+  /** Number properties (and number formulas): number | commas | percent | dollar | euro | pound | yen. */
+  format?: string;
+  /** Formula properties: the formula source. */
+  formula?: string;
+  /** Formula properties: the type the results have (number, text, checkbox, date). */
+  resultType?: string;
+  /** Date and date-formula display: relative | short | long | iso. */
+  dateFormat?: string;
+  /** Formula properties: why the formula fails, if it does. */
+  error?: string;
 }
 
 export interface DatabaseSchemaInfo {
@@ -99,32 +109,82 @@ export interface DatabaseSchemaInfo {
   views: { id: string; name: string; type: string }[];
 }
 
+/** A filter rule, or a nested and/or group of rules (advanced filters). */
+export type DatabaseFilterNode =
+  | { id: string; property: string; op: string; value?: unknown }
+  | { id: string; mode: "and" | "or"; items: DatabaseFilterNode[] };
+
+/** Chart view settings; property ids are returned as names. */
+export interface DatabaseChartInfo {
+  kind?: "bar" | "column" | "line" | "area" | "pie" | "donut" | "scatter" | "funnel" | "radar" | "heatmap" | "number";
+  x?: string;
+  dateBucket?: "day" | "week" | "month" | "quarter" | "year";
+  aggregate?: "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+  y?: string;
+  series?: string;
+  stacked?: boolean;
+  normalize?: boolean;
+  cumulative?: boolean;
+  sort?: "default" | "label" | "labelDesc" | "value" | "valueDesc";
+  limit?: number;
+  omitEmpty?: boolean;
+  smooth?: boolean;
+  labels?: boolean;
+  legend?: boolean;
+  grid?: boolean;
+  palette?: string;
+  height?: number;
+  goal?: number;
+  yMin?: number;
+  yMax?: number;
+  format?: string;
+  title?: string;
+}
+
 export interface DatabaseViewInfo {
   databaseId: string;
   id: string;
   name: string;
-  type: "table" | "board" | "gallery" | "list" | "calendar";
+  type: "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
   filters: { id: string; property: string; op: string; value?: unknown }[];
   filterMode: "and" | "or";
+  /** Advanced filter tree, combined (AND) with `filters`. */
+  advanced?: { mode: "and" | "or"; items: DatabaseFilterNode[] };
   sorts: { property: string; direction: "asc" | "desc" }[];
   /** Visible properties, in order (the title column first). */
   visible: string[];
   hidden: string[];
   groupBy?: string;
   hiddenGroups?: string[];
+  collapsedGroups?: string[];
+  hideEmptyGroups?: boolean;
+  colorColumns?: boolean;
   dateProperty?: string;
   cardPreview?: "cover" | "none";
+  cardSize?: "small" | "medium" | "large";
   wrap?: boolean;
   widths?: Record<string, number>;
   calcs?: Record<string, string>;
+  showFilterBar?: boolean;
+  /** Rows shown before "Load more". */
+  limit?: number;
+  showIcons?: boolean;
+  /** Where row pages open: modal (default) | side | tab | current. */
+  openIn?: "modal" | "side" | "tab" | "current";
+  rowNumbers?: boolean;
+  chart?: DatabaseChartInfo;
+  /** Custom views: the HTML/CSS/JS rendered in a sandboxed frame. */
+  custom?: { html: string; height?: number };
 }
 
 export interface DatabaseRowInfo {
   id: string;
   title: string;
-  /** Values keyed by property name; select options are returned by name. */
+  /** Values keyed by property name; select options are returned by name; formulas hold their result. */
   values: Record<string, unknown>;
   updatedAt: string;
+  /** Formula errors for this row, by property name. */
+  errors?: Record<string, string>;
 }
 
 export interface WorkspaceInfo {
@@ -531,4 +591,18 @@ export interface PluginTestResult {
 export interface PluginInstallResult extends PluginInfo {
   test?: PluginTestResult;
   health: { status: "ready" | "failed" | "starting" | "stopped"; error?: string; logs: { level: string; message: string }[] };
+}
+
+/** Something with editable text, from source.list (assistant). */
+export interface SourceEntry {
+  /** Pass to source.get / source.edit, e.g. "status:pomodoro", "home:<viewId>/<widgetId>". */
+  target: string;
+  kind: "sidebar" | "status" | "block" | "node" | "css" | "component" | "home" | "homeview" | "plugin";
+  title: string;
+  /** Layer id ("base" = the app's own customizations), plugin id, or "home". */
+  owner: string;
+  /** Text fields and their length in characters. */
+  fields: Record<string, number>;
+  /** False for plugin-owned items: change them with plugins.edit. */
+  editable: boolean;
 }

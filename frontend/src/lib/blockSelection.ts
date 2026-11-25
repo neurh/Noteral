@@ -319,6 +319,9 @@ function extendRange(view: EditorView, up: boolean): void {
  * Highlights every block in a block selection, hides the text highlight the
  * browser would otherwise paint across it, and gives the selection its keys.
  */
+/** Node views that handle their own pointer input. */
+export const ISOLATED_EMBEDS = ".db-block, [data-editor-isolated]";
+
 export function blockSelectionPlugin(actions: BlockSelectionActions): Plugin {
   return new Plugin({
     key: blockSelectionKey,
@@ -346,8 +349,13 @@ export function blockSelectionPlugin(actions: BlockSelectionActions): Plugin {
       handleDOMEvents: {
         // The marquee claims a press by preventing its default; keep the
         // editor from also starting a text selection from it.
+        // Presses inside an interactive embed (an inline database, a custom
+        // block) belong to that embed: without this the editor would select
+        // the whole block on every click inside it.
         mousedown(_view, event) {
-          return event.defaultPrevented;
+          if (event.defaultPrevented) return true;
+          const target = event.target instanceof Element ? event.target : null;
+          return Boolean(target?.closest(ISOLATED_EMBEDS));
         },
       },
     },

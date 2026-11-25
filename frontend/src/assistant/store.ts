@@ -18,14 +18,16 @@ import { resolveMentions } from "./mentions";
 import type { Mention } from "./mentions";
 import { effectiveThinking, modelKey, resolveModel } from "./models";
 import { useAppStore } from "../store";
-import { buildBody, newId, StreamParser } from "./protocol";
+import { activeHistory, contextUsage, SUMMARY_PROMPT, transcriptOf } from "./context";
+import { buildBody, leanHistory, newId, StreamParser } from "./protocol";
 import { presetFor } from "./providers";
+import { canContinue, isOutputLimit, NOT_RUN, retryLabel, retryReason, trimToLastStep } from "./retry";
 import type { ProviderKind } from "./providers";
 import { systemPrompt } from "./prompt";
 import { sourcesOfCall } from "./sources";
-import { canRunInParallel, needsApproval, runLimited, runTool, toolDefs } from "./tools";
+import { LOAD_TOOL, canRunInParallel, chatToolDefs, needsApproval, resolveLoad, runLimited, runTool, toolCatalog } from "./tools";
 import { DEFAULT_SETTINGS } from "./types";
-import type { AgentRun, AgentStep, AssistantMode, AssistantSettings, Chat, ChatMessage, Part, ToolPart, Usage } from "./types";
+import type { AgentRun, AgentStep, AssistantMode, Attachment, AssistantSettings, Chat, ChatMessage, Part, ToolPart, Usage } from "./types";
 
 export type AssistantView = "chat" | "history" | "providers";
 
@@ -66,10 +68,17 @@ interface AssistantState {
   openChat(id: string): Promise<void>;
   deleteChat(id: string): Promise<void>;
   refreshChats(): Promise<void>;
-  send(text: string, mentions?: Mention[]): Promise<void>;
-  regenerate(): Promise<void>;
+  send(text: string, mentions?: Mention[], files?: Attachment[]): Promise<void>;
+  /**
+   * Retry the last reply. A reply that failed or was stopped after finishing some steps
+   * continues from its last good step; otherwise (or with `fresh`) it runs again from
+   * the user's message.
+   */
+  regenerate(options?: { fresh?: boolean }): Promise<void>;
   /** Stops the open chat (or the given one). */
   stop(chatId?: string): void;
+  /** Skips the wait before an automatic retry of the open chat (or the given one). */
+  retryNow(chatId?: string): void;
   respond(toolId: string, allow: boolean, always?: boolean): void;
   /** Answer a question the assistant asked with ui.ask. */
   answer(toolId: string, answer: AskAnswer): void;
@@ -121,6 +130,8 @@ interface Control {
   requests: Set<string>;
   approvals: Map<string, (allow: boolean) => void>;
   answers: Map<string, (answer: AskAnswer) => void>;
+  /** Pending waits before automatic retries; calling one ends that wait now. */
+  waits: Set<() => void>;
 }
 
 const controls = new Map<string, Control>();
@@ -134,7 +145,7 @@ let settingsTimer: number | undefined;
 function controlFor(chatId: string): Control {
   let control = controls.get(chatId);
   if (!control) {
-    control = { stopped: false, requests: new Set(), approvals: new Map(), answers: new Map() };
+    control = { stopped: false, requests: new Set(), approvals: new Map(), answers: new Map(), waits: new Set() };
     controls.set(chatId, control);
   }
   return control;
@@ -145,6 +156,7 @@ function releaseControl(chatId: string, control: Control) {
   control.approvals.clear();
   for (const resolve of control.answers.values()) resolve({ answer: "", choices: [], cancelled: true });
   control.answers.clear();
+  for (const wake of [...control.waits]) wake();
   for (const id of control.requests) void api.cancelAIStream(id).catch(() => undefined);
   control.requests.clear();
   if (controls.get(chatId) === control) controls.delete(chatId);
@@ -160,7 +172,7 @@ function chatTitle(text: string) {
   return line.length > 60 ? `${line.slice(0, 58).trimEnd()}…` : line || "New chat";
 }
 
-async function promptContext(webAccess: boolean, toolCount: number) {
+async function promptContext(webAccess: boolean, toolCount: number, catalog = "") {
   const info = (await callMethod("app.info", {}, { caller: "assistant" }).catch(() => null)) as AppInfo | null;
   const page = (await callMethod("editor.getActive", {}, { caller: "assistant" }).catch(() => null)) as ActivePage | null;
   return {
@@ -170,10 +182,11 @@ async function promptContext(webAccess: boolean, toolCount: number) {
     theme: info?.theme ?? "light",
     toolCount,
     webAccess,
+    catalog,
   };
 }
 
-type StreamResult = { parts: Part[]; usage?: Usage; error?: string; cancelled?: boolean; finish?: string };
+type StreamResult = { parts: Part[]; usage?: Usage; error?: string; cancelled?: boolean; finish?: string; status?: number; fatal?: boolean };
 
 /**
  * Stamps thinking parts with when they started and ended, so the timeline can show
@@ -208,20 +221,61 @@ function streamStep(control: Control, kind: ProviderKind, providerId: string, mo
       done(event) {
         control.requests.delete(requestId);
         const result = parser.result();
-        resolve({ ...result, parts: clock(result.parts.map((part) => ({ ...part })), true), error: parser.error || event.error || undefined, cancelled: event.cancelled });
+        resolve({ ...result, parts: clock(result.parts.map((part) => ({ ...part })), true), error: parser.error || event.error || undefined, cancelled: event.cancelled, status: event.status });
       },
     });
     api.startAIStream(requestId, providerId, model, JSON.stringify(body)).catch((error: unknown) => {
       streams.delete(requestId);
       control.requests.delete(requestId);
-      resolve({ parts: [], error: errorMessage(error) });
+      resolve({ parts: [], error: errorMessage(error), fatal: true });
     });
     // Stopped before the stream registered: cancel it right away.
     if (control.stopped) void api.cancelAIStream(requestId).catch(() => undefined);
   });
 }
 
-const isOutputLimit = (finish?: string) => finish === "length" || finish === "max_tokens" || finish === "MAX_TOKENS";
+type RetryWait = NonNullable<ChatMessage["retrying"]>;
+
+interface RetryPolicy {
+  retries: number;
+  /** Seconds between attempts. */
+  delay: number;
+  /** Called when a wait starts (with its details) and when it ends (null). */
+  onWait?: (wait: RetryWait | null) => void;
+}
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Number.isFinite(value) ? Math.round(value) : min));
+
+/** Waits `ms`, or less when the chat is stopped or the user asks to retry now. */
+function pause(control: Control, ms: number) {
+  return new Promise<void>((resolve) => {
+    const wake = () => {
+      window.clearTimeout(timer);
+      control.waits.delete(wake);
+      resolve();
+    };
+    const timer = window.setTimeout(wake, ms);
+    control.waits.add(wake);
+  });
+}
+
+/**
+ * streamStep, retried after a pause when it fails for a passing reason (network,
+ * rate limit, overloaded or 5xx provider, empty stream). Each attempt sends the same body.
+ */
+async function streamWithRetry(control: Control, kind: ProviderKind, providerId: string, model: string, body: Record<string, unknown>, onParts: (parts: Part[]) => void, policy: RetryPolicy): Promise<StreamResult> {
+  const retries = clamp(policy.retries, 0, 10);
+  for (let attempt = 0; ; attempt++) {
+    const result = await streamStep(control, kind, providerId, model, body, onParts);
+    const reason = control.stopped ? null : retryReason(result);
+    if (!reason || attempt >= retries) return result;
+    const delay = clamp(policy.delay, 1, 120) * 1000;
+    policy.onWait?.({ attempt: attempt + 1, of: retries, at: Date.now() + delay, reason, error: result.error || retryLabel(reason) });
+    await pause(control, delay);
+    policy.onWait?.(null);
+    if (control.stopped) return { parts: [], cancelled: true };
+  }
+}
 const AGENT_MAX_STEPS = 12;
 
 export const useAssistant = create<AssistantState>((set, get) => {
@@ -239,6 +293,8 @@ export const useAssistant = create<AssistantState>((set, get) => {
     live.set(chat.id, chat);
     set({ chat, ...mirrors(chat.id), ...extra });
   };
+
+  const retryPolicy = (onWait?: RetryPolicy["onWait"]): RetryPolicy => ({ retries: get().settings.retries, delay: get().settings.retryDelay, onWait });
 
   const chatById = (chatId: string) => live.get(chatId) ?? (get().chat.id === chatId ? get().chat : undefined);
 
@@ -292,6 +348,49 @@ export const useAssistant = create<AssistantState>((set, get) => {
       setWaiting(chatId, (ids) => [...ids, toolId]);
     }).finally(() => setWaiting(chatId, (ids) => ids.filter((id) => id !== toolId)));
 
+  /** Asks the model for a summary of `messages` (as a plain transcript). Returns "" on failure. */
+  const summarize = async (control: Control, provider: ProviderView, model: string, messages: ChatMessage[]): Promise<{ text: string; error?: string }> => {
+    const kind = provider.kind as ProviderKind;
+    const request: ChatMessage = { id: newId("msg"), role: "user", createdAt: Date.now(), parts: [{ type: "text", text: `${SUMMARY_PROMPT}\n\n<conversation>\n${transcriptOf(messages)}\n</conversation>` }] };
+    const body = buildBody({ kind, model, system: "You write precise, compact summaries of work sessions.", messages: [request], tools: [], maxTokens: Math.min(4096, get().settings.maxTokens), temperature: null, preset: provider.preset });
+    const result = await streamWithRetry(control, kind, provider.id, model, body, () => undefined, retryPolicy());
+    if (result.cancelled) return { text: "", error: "Stopped." };
+    const text = result.parts.map((part) => (part.type === "text" ? part.text : "")).join("").trim();
+    return result.error || !text ? { text: "", error: result.error || "The model returned an empty summary." } : { text };
+  };
+
+  const summaryMessage = (text: string, count: number, auto: boolean): ChatMessage => ({
+    id: newId("msg"),
+    role: "user",
+    createdAt: Date.now(),
+    summary: { messages: count, at: Date.now(), auto },
+    parts: [{ type: "text", text: `Summary of the earlier conversation (${count} messages, compacted to save context):\n\n${text}` }],
+  });
+
+  /**
+   * Auto-compact: summarizes everything before the current user message into one summary
+   * message placed just before it. Earlier messages stay visible but are no longer sent.
+   */
+  const compactBefore = async (control: Control, chatId: string, messageId: string, provider: ProviderView, model: string): Promise<boolean> => {
+    const chat = chatById(chatId);
+    if (!chat) return false;
+    const replyIndex = chat.messages.findIndex((message) => message.id === messageId);
+    const userIndex = replyIndex - 1;
+    if (userIndex < 0 || chat.messages[userIndex].role !== "user") return false;
+    const start = chat.messages.length - activeHistory(chat.messages).length;
+    const older = chat.messages.slice(start, userIndex);
+    if (older.length < 2) return false;
+    patchMessage(chatId, messageId, (message) => ({ ...message, compacting: true }));
+    const result = await summarize(control, provider, model, older);
+    patchMessage(chatId, messageId, (message) => ({ ...message, compacting: undefined }));
+    if (!result.text) return false;
+    const latest = chatById(chatId)!;
+    const at = latest.messages.findIndex((message) => message.id === chat.messages[userIndex].id);
+    if (at < 0) return false;
+    commit({ ...latest, messages: [...latest.messages.slice(0, at), summaryMessage(result.text, older.length, true), ...latest.messages.slice(at)] });
+    return true;
+  };
+
   /** Runs one sub-agent to completion; its progress is mirrored into the parent tool part. */
   const runAgent = async (
     control: Control,
@@ -333,10 +432,18 @@ export const useAssistant = create<AssistantState>((set, get) => {
         thinking: env.thinking,
       });
       const base = reply.parts;
-      const result = await streamStep(control, env.kind, env.provider.id, env.model, body, (parts) => {
-        const text = textOf(parts);
-        if (text && text !== run.text) publish({ text });
-      });
+      const result = await streamWithRetry(
+        control,
+        env.kind,
+        env.provider.id,
+        env.model,
+        body,
+        (parts) => {
+          const text = textOf(parts);
+          if (text && text !== run.text) publish({ text });
+        },
+        retryPolicy((wait) => publish({ text: wait ? `${retryLabel(wait.reason)} — retrying (${wait.attempt} of ${wait.of})…` : "" })),
+      );
       usage.input = Math.max(usage.input, result.usage?.input ?? 0);
       usage.output += result.usage?.output ?? 0;
       reply = { ...reply, parts: [...base, ...result.parts] };
@@ -390,6 +497,15 @@ export const useAssistant = create<AssistantState>((set, get) => {
     return partial || `The sub-agent stopped after ${AGENT_MAX_STEPS} steps without a final report.`;
   };
 
+  /** tools.load: adds methods to the chat's loaded set; returns what the model sees. */
+  const loadTools = (chatId: string, mode: AssistantMode, settings: AssistantSettings, requested: unknown): string => {
+    const { methods, unknown } = resolveLoad(mode, settings, requested);
+    const chat = chatById(chatId);
+    if (chat && methods.length) commit({ ...chat, tools: [...new Set([...(chat.tools ?? []), ...methods])] });
+    if (!methods.length) throw new Error(`Nothing to load${unknown.length ? ` for ${unknown.join(", ")}` : ""}. Use namespaces or method names from the catalog; some tools need another mode.`);
+    return JSON.stringify({ loaded: methods, ...(unknown.length ? { unknown } : {}), note: "These tools are available from your next call." });
+  };
+
   /** Runs the agent loop for an (empty or partial) assistant message of a chat. */
   const runLoop = async (chatId: string, messageId: string) => {
     const { settings, providers } = get();
@@ -408,18 +524,28 @@ export const useAssistant = create<AssistantState>((set, get) => {
     const kind = provider.kind as ProviderKind;
     const mode = chat.mode;
     const model = settings.model;
-    const tools = toolDefs(mode, settings);
-    if (settings.agents) tools.push(agentToolDef());
+    const lazy = settings.toolLoading !== "all";
+    const toolsFor = () => {
+      const defs = chatToolDefs(mode, settings, lazy ? chatById(chatId)?.tools ?? [] : "all");
+      if (settings.agents) defs.push(agentToolDef());
+      return defs;
+    };
+    let tools = toolsFor();
     const resolved = resolveModel(settings.models, settings.discovered, provider.id, kind, model);
+    const maxTokens = resolved.maxOutput ?? settings.maxTokens;
+    const temperature = resolved.temperature !== undefined ? resolved.temperature : settings.temperature;
+    let compacted = false;
     const thinking = effectiveThinking(settings.thinking, resolved.thinking);
     const workspace = useAppStore.getState().workspace?.name ?? null;
     patchMessage(chatId, messageId, (message) => ({ ...message, model, providerId: provider.id, endedAt: undefined }));
 
-    let outputTokens = 0;
+    let outputTokens = messageOf(chatId, messageId)?.usage?.output ?? 0;
     const markStopped = () => patchMessage(chatId, messageId, (message) => ({ ...message, stopped: true }));
 
     try {
-      const system = systemPrompt(mode, settings, await promptContext(settings.webAccess, tools.length));
+      // The catalog lists every non-core tool and doesn't change as tools load, so the
+      // system prompt stays byte-identical across steps (prompt caching).
+      const system = systemPrompt(mode, settings, await promptContext(settings.webAccess, tools.length, lazy ? toolCatalog(mode, settings, []) : ""));
       for (let step = 0; step < Math.max(1, settings.maxSteps); step++) {
         const before = messageOf(chatId, messageId);
         const current = chatById(chatId);
@@ -427,11 +553,30 @@ export const useAssistant = create<AssistantState>((set, get) => {
           if (control.stopped) markStopped();
           return;
         }
-        const history = current.messages.slice(0, current.messages.findIndex((message) => message.id === messageId) + 1);
-        const body = buildBody({ kind, model, system, messages: history, tools, maxTokens: settings.maxTokens, temperature: settings.temperature, preset: provider.preset, thinking });
+        let history = activeHistory(current.messages.slice(0, current.messages.findIndex((message) => message.id === messageId) + 1));
+        // Auto-compact once per run when the context is fuller than the user's threshold.
+        if (!compacted && settings.autoCompact > 0 && contextUsage(history, 0).used >= (resolved.contextWindow * settings.autoCompact) / 100) {
+          compacted = true;
+          if (await compactBefore(control, chatId, messageId, provider, model)) {
+            const fresh = chatById(chatId)!;
+            history = activeHistory(fresh.messages.slice(0, fresh.messages.findIndex((message) => message.id === messageId) + 1));
+          }
+          if (control.stopped) {
+            markStopped();
+            return;
+          }
+        }
+        const body = buildBody({ kind, model, system, messages: leanHistory(history), tools, maxTokens, temperature, preset: provider.preset, thinking, vision: resolved.vision });
         const baseParts = before.parts;
-        const result = await streamStep(control, kind, provider.id, model, body, (parts) =>
-          patchMessage(chatId, messageId, (message) => ({ ...message, parts: [...baseParts, ...parts] })),
+        const result = await streamWithRetry(
+          control,
+          kind,
+          provider.id,
+          model,
+          body,
+          (parts) => patchMessage(chatId, messageId, (message) => ({ ...message, parts: [...baseParts, ...parts] })),
+          // While waiting, drop what the failed attempt streamed and show the countdown.
+          retryPolicy((wait) => patchMessage(chatId, messageId, (message) => ({ ...message, parts: wait ? baseParts : message.parts, retrying: wait ?? undefined }))),
         );
         outputTokens += result.usage?.output ?? 0;
         patchMessage(chatId, messageId, (message) => ({
@@ -447,6 +592,10 @@ export const useAssistant = create<AssistantState>((set, get) => {
           patchMessage(chatId, messageId, (message) => ({ ...message, error: result.error }));
           return;
         }
+        if (retryReason(result) === "empty") {
+          patchMessage(chatId, messageId, (message) => ({ ...message, error: "The model sent an empty reply. Retry, or try another model." }));
+          return;
+        }
         const calls = result.parts.filter((part): part is ToolPart => part.type === "tool");
         if (!calls.length) {
           if (isOutputLimit(result.finish)) {
@@ -460,9 +609,11 @@ export const useAssistant = create<AssistantState>((set, get) => {
           patchTool(chatId, messageId, call.id, { status: "running", startedAt: Date.now() });
           try {
             const output =
-              call.name === AGENT_TOOL
-                ? await runAgent(control, chatId, messageId, call, { kind, provider, model, settings, thinking, workspace })
-                : await runTool(call.name, call.args, mode, { id: chatId, title: chatById(chatId)?.title ?? "" });
+              call.name === LOAD_TOOL
+                ? loadTools(chatId, mode, settings, call.args.tools)
+                : call.name === AGENT_TOOL
+                  ? await runAgent(control, chatId, messageId, call, { kind, provider, model, settings, thinking, workspace })
+                  : await runTool(call.name, call.args, mode, { id: chatId, title: chatById(chatId)?.title ?? "" });
             patchTool(chatId, messageId, call.id, { status: "done", result: output, endedAt: Date.now() });
           } catch (error) {
             patchTool(chatId, messageId, call.id, { status: "error", error: errorMessage(error), endedAt: Date.now() });
@@ -505,6 +656,7 @@ export const useAssistant = create<AssistantState>((set, get) => {
           markStopped();
           return;
         }
+        if (calls.some((call) => call.name === LOAD_TOOL)) tools = toolsFor();
         if (step === settings.maxSteps - 1) {
           patchMessage(chatId, messageId, (message) => ({ ...message, error: `Paused after ${settings.maxSteps} steps. Send “continue” to keep going.` }));
         }
@@ -517,11 +669,12 @@ export const useAssistant = create<AssistantState>((set, get) => {
       patchMessage(chatId, messageId, (message) => ({
         ...message,
         endedAt: now,
+        retrying: undefined,
         parts: message.parts.map((part) => {
           if (part.type === "thinking" && !part.endedAt) return { ...part, endedAt: now };
           if (part.type !== "tool" || !(part.status === "pending" || part.status === "awaiting" || part.status === "asking" || part.status === "running")) return part;
           const agent = part.agent && part.agent.status === "running" ? { ...part.agent, status: "stopped" as const, endedAt: now } : part.agent;
-          return { ...part, status: "error", error: "Not run — the response was stopped.", endedAt: now, ...(agent ? { agent } : {}) };
+          return { ...part, status: "error", error: NOT_RUN, endedAt: now, ...(agent ? { agent } : {}) };
         }),
       }));
       releaseControl(chatId, control);
@@ -664,12 +817,12 @@ export const useAssistant = create<AssistantState>((set, get) => {
       }
     },
 
-    async send(text, mentions = []) {
-      const trimmed = text.trim();
+    async send(text, mentions = [], files = []) {
+      const trimmed = text.trim() || (files.length ? (files.length === 1 ? "Look at the attached file." : "Look at the attached files.") : "");
       if (!trimmed || get().running) return;
       const chatId = get().chat.id;
       const resolved = mentions.length ? await resolveMentions(mentions) : [];
-      const user: ChatMessage = { id: newId("msg"), role: "user", parts: [{ type: "text", text: trimmed }], createdAt: Date.now(), ...(resolved.length ? { mentions: resolved } : {}) };
+      const user: ChatMessage = { id: newId("msg"), role: "user", parts: [{ type: "text", text: trimmed }], createdAt: Date.now(), ...(resolved.length ? { mentions: resolved } : {}), ...(files.length ? { attachments: files } : {}) };
       const reply: ChatMessage = { id: newId("msg"), role: "assistant", parts: [], createdAt: Date.now() };
       const chat = chatById(chatId) ?? get().chat;
       const next: Chat = {
@@ -686,11 +839,19 @@ export const useAssistant = create<AssistantState>((set, get) => {
       await runLoop(next.id, reply.id);
     },
 
-    async regenerate() {
+    async regenerate(options = {}) {
       if (get().running) return;
       const chat = get().chat;
       const last = chat.messages[chat.messages.length - 1];
       if (!last || last.role !== "assistant") return;
+      const kept = !options.fresh && canContinue(last) ? trimToLastStep(last.parts) : null;
+      if (kept) {
+        // Continue on the same message: the model sees everything up to the last finished step.
+        const resumed: ChatMessage = { ...last, parts: kept, error: undefined, stopped: undefined, endedAt: undefined, retrying: undefined };
+        commit({ ...chat, messages: [...chat.messages.slice(0, -1), resumed] });
+        await runLoop(chat.id, last.id);
+        return;
+      }
       const reply: ChatMessage = { id: newId("msg"), role: "assistant", parts: [], createdAt: Date.now() };
       commit({ ...chat, messages: [...chat.messages.slice(0, -1), reply] });
       await runLoop(chat.id, reply.id);
@@ -706,6 +867,12 @@ export const useAssistant = create<AssistantState>((set, get) => {
       control.approvals.clear();
       for (const resolve of control.answers.values()) resolve({ answer: "", choices: [], cancelled: true });
       control.answers.clear();
+      for (const wake of [...control.waits]) wake();
+    },
+
+    retryNow(chatId) {
+      const control = controls.get(chatId ?? get().chat.id);
+      if (control) for (const wake of [...control.waits]) wake();
     },
 
     answer(toolId, reply) {
@@ -720,39 +887,24 @@ export const useAssistant = create<AssistantState>((set, get) => {
 
     async compact() {
       const { chat, settings, providers, running } = get();
-      if (running || chat.messages.length < 2) return;
+      if (running) return;
+      const history = activeHistory(chat.messages);
+      if (history.length < 2) return;
       const provider = providers.find((item) => item.id === settings.providerId && item.enabled);
       if (!provider || !settings.model) return;
-      const kind = provider.kind as ProviderKind;
-      const request: ChatMessage = {
-        id: newId("msg"),
-        role: "user",
-        createdAt: Date.now(),
-        parts: [{ type: "text", text: "Summarize our conversation so far so a fresh chat can continue it: the goal, decisions, what was changed (with page ids and names), open questions and next steps. Be complete but brief. Reply with the summary only." }],
-      };
       const control = controlFor(chat.id);
       control.stopped = false;
       setRun(chat.id, { messageId: "", startedAt: Date.now(), title: chat.title });
       try {
-        const body = buildBody({ kind, model: settings.model, system: "You write precise, compact summaries of work sessions.", messages: [...chat.messages, request], tools: [], maxTokens: Math.min(4096, settings.maxTokens), temperature: null, preset: provider.preset });
-        const result = await streamStep(control, kind, provider.id, settings.model, body, () => undefined);
-        const summary = result.parts.map((part) => (part.type === "text" ? part.text : "")).join("").trim();
-        if (result.cancelled || control.stopped) return;
-        if (result.error || !summary) {
-          useAppStore.getState().notify(result.error ? `Couldn't compact: ${result.error}` : "The model returned an empty summary.", "error");
+        const result = await summarize(control, provider, settings.model, history);
+        if (control.stopped) return;
+        if (!result.text) {
+          useAppStore.getState().notify(`Couldn't compact: ${result.error}`, "error");
           return;
         }
-        const fresh = emptyChat(chat.mode);
-        const note: ChatMessage = {
-          id: newId("msg"),
-          role: "user",
-          createdAt: Date.now(),
-          parts: [{ type: "text", text: "Continue from this summary of our earlier conversation." }],
-          mentions: [{ kind: "text", id: chat.id, label: `Summary of “${chat.title || "earlier chat"}”`, content: summary }],
-        };
-        const reply: ChatMessage = { id: newId("msg"), role: "assistant", createdAt: Date.now(), parts: [{ type: "text", text: "Got it — I have the summary and can pick up from there." }], model: settings.model, providerId: provider.id };
-        const next: Chat = { ...fresh, title: chat.title ? `${chat.title} (continued)` : "Continued chat", messages: [note, reply] };
-        if (get().chat.id === chat.id) showChat(next, { view: "chat" });
+        const latest = chatById(chat.id) ?? chat;
+        const next: Chat = { ...latest, updatedAt: Date.now(), messages: [...latest.messages, summaryMessage(result.text, history.length, false)] };
+        commit(next);
         await saveChat(next);
       } finally {
         releaseControl(chat.id, control);

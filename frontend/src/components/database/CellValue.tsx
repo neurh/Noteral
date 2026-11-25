@@ -25,7 +25,40 @@ export function isInlineEditable(property: Property): boolean {
 }
 
 export function isEditable(property: Property): boolean {
-  return property.type !== "createdTime" && property.type !== "lastEdited";
+  return property.type !== "createdTime" && property.type !== "lastEdited" && property.type !== "formula";
+}
+
+function relativeDay(start: string): string {
+  const date = new Date(start.length <= 10 ? `${start}T00:00:00` : start);
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(date);
+  day.setHours(0, 0, 0, 0);
+  const diff = Math.round((day.getTime() - today.getTime()) / 86_400_000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  if (Math.abs(diff) < 14) return diff > 0 ? `In ${diff} days` : `${-diff} days ago`;
+  return formatDate(start.slice(0, 10));
+}
+
+/** Display text of a formula's date result in its chosen format. */
+export function formulaDateText(property: Property, start: string): string {
+  if (!start) return "";
+  const hasTime = start.length > 10;
+  switch (property.dateFormat) {
+    case "relative":
+      return relativeDay(start);
+    case "iso":
+      return start.slice(0, hasTime ? 16 : 10).replace("T", " ");
+    case "long": {
+      const date = new Date(hasTime ? start : `${start}T00:00:00`);
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "long", day: "numeric", ...(hasTime ? { hour: "numeric", minute: "2-digit" } : {}) });
+    }
+    default:
+      return hasTime ? formatDateTime(start) : formatDate(start);
+  }
 }
 
 function linkHref(property: Property, text: string): string {
@@ -68,6 +101,23 @@ export function CellDisplay({ property, row, compact }: { property: Property; ro
     case "createdTime":
     case "lastEdited":
       return typeof value === "string" ? <span className="db-text is-muted">{formatDateTime(value)}</span> : null;
+    case "formula": {
+      if (value === undefined || value === null || value === "") return null;
+      switch (property.resultType) {
+        case "number": {
+          const text = formatNumber(value, property.format);
+          return text ? <span className="db-number is-formula">{text}</span> : null;
+        }
+        case "checkbox":
+          return <span className={`db-checkbox is-readonly ${value ? "is-checked" : ""}`} aria-label={value ? "true" : "false"} />;
+        case "date": {
+          const start = typeof value === "object" ? String((value as DateValue).start ?? "") : String(value);
+          return <span className="db-text is-formula">{formulaDateText(property, start)}</span>;
+        }
+        default:
+          return <span className="db-text is-formula">{String(value)}</span>;
+      }
+    }
     case "url":
     case "email":
     case "phone": {

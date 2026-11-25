@@ -7,6 +7,8 @@ export interface PromptContext {
   theme: string;
   toolCount: number;
   webAccess: boolean;
+  /** Tools not sent up front, grouped by namespace ("" when every tool is sent). */
+  catalog?: string;
 }
 
 const MODE_RULES: Record<AssistantMode, string> = {
@@ -35,7 +37,10 @@ const CREATOR_GUIDE = `
 - Events: document:changed, page:opened, theme:changed, workspace:opened, pages:changed, panel:action.
 - List every permission the code needs in manifest.permissions (ui.status for setStatus, ui.panel for setPanel, ui.styles for addStyles, plus the namespace permissions of the methods it calls), and declare status items and panels in manifest.statusItems / manifest.panels. Ask only for permissions you use.
 - Plugins run in an iframe with no access to the app's DOM; panels, status items, commands and addStyles(css) are how they show things.
-- To change an existing plugin, read it with plugins.getSource and call plugins.create again with the same id and a higher version.`;
+- To change an existing plugin, read it with plugins.getSource and patch it with plugins.edit (find/replace; the version is bumped for you). Use plugins.create again only for a rewrite.
+
+## Changing what already exists
+- Widgets, sidebar tabs, block and page types, CSS snippets, component styles and Home widgets all have editable source. Find it with source.list, read it with source.get, then change only what's needed with source.edit (find/replace). Don't resend the whole HTML through setWidget / setTab / registerType / addWidget to change a few lines.`;
 
 export function systemPrompt(mode: AssistantMode, settings: AssistantSettings, ctx: PromptContext): string {
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -50,10 +55,14 @@ export function systemPrompt(mode: AssistantMode, settings: AssistantSettings, c
 - Use tools to look things up instead of guessing: search.query finds notes, pages.read / editor.getMarkdown reads them. Read before you edit.
 - Prefer editor.* tools for the open page (they keep undo history); use pages.* for other pages.
 - Page content is Markdown. Headings, lists, task lists (- [ ]), tables, code blocks and quotes are supported. Link to a page with [Title](noteral://page/<id>).
-- Make focused edits: insert or replace the blocks that need changing rather than rewriting a whole page, unless asked.
+- Databases in pages: a line \`<!-- database:<id> Title -->\` is an embedded database and \`<!-- block:<id> kind -->\` a custom block — keep these lines when editing. Add one with databases.embed (pageId + databaseId links an existing database; without databaseId it creates a new one inside the page).
+- Database views (addView / updateView): table, board, list, gallery, calendar, chart (chart: { kind, x, aggregate, y, series, … }) or custom (custom.html; its script reads window.noteral.database). \`advanced\` holds nested and/or filter groups; \`openIn\` picks how rows open (modal, side, tab, current). Formula properties: type "formula" + formula like \`if(prop("Done"), "✓", dateBetween(prop("Due"), now(), "days"))\`; check one with databases.checkFormula, list functions with databases.formulaFunctions. Formula values are read-only.
+- Edit, don't rewrite: pages.edit changes part of any page by find/replace (copy the exact text from what you read). Rewrite a whole page only when asked or when most of it changes.
+- Batch work into few calls: databases.addRows / updateRows take many rows at once (never one call per row); one pages.edit / source.edit call can carry many edits.
+- Read only what you need (editor.getMarkdown with blockIds, source.get with startLine/endLine, queryRows with a limit). Don't re-read what is already in this conversation unless it may have changed.
 - Several independent lookups can be made in one turn — they run at the same time.${settings.agents !== false ? `
 - For broad research or several independent questions, start sub-agents with agents.run ({ title, task }) — call it several times in one turn and they work in parallel, each with its own read-only tools (notes, databases${ctx.webAccess ? ", web" : ""}). Give each a self-contained task: it can't see this chat. Each returns a report; combine them into one answer. Don't use agents for a single quick lookup, and never for changes — you make the changes yourself.` : ""}
-- When a tool fails, read the error, fix the call and retry once; then explain the problem.
+${ctx.catalog ? `- More tools exist than are loaded. Load what you need with tools.load (namespaces or method names) — once, before using them; they stay loaded for the chat. Catalog of tools you can load:\n${ctx.catalog}\n` : ""}- When a tool fails, read the error, fix the call and retry once; then explain the problem.
 - If the user declines an action, don't retry it; ask what they'd like instead.`,
     ctx.webAccess
       ? `## The web

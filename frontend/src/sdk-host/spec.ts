@@ -119,27 +119,88 @@ export const PERMISSIONS: PermissionSpec[] = [
 
 const pageId = s.str("Page id. Defaults to the page open in the focused pane.");
 const markdown = s.str("Markdown. Headings, lists, checklists (- [ ]), quotes, code fences, tables and images are supported.", { maxLength: 200_000 });
+/** Find-and-replace edits (pages.edit, source.edit, plugins.edit). */
+const textEdits = s.arr(
+  "Edits, applied in order.",
+  s.obj(
+    {
+      find: s.str("Exact text to replace (include enough context to be unique).", { minLength: 1, maxLength: 100_000 }),
+      replace: s.str("Replacement text (\"\" deletes).", { maxLength: 200_000 }),
+      all: s.bool("Replace every occurrence.", { default: false }),
+    },
+    ["find", "replace"],
+  ),
+  50,
+);
 const blockIds = s.arr("Block ids, from editor.getBlocks.", s.str("Block id"), 500);
 const pageKind = s.str("Item kind.", { enum: ["page", "folder"] });
 const propertyRef = s.str("Property name or id (\"title\" or the title column's name for the title).", { maxLength: 100 });
-const PROPERTY_TYPES = ["text", "number", "select", "multiSelect", "status", "date", "checkbox", "url", "email", "phone", "createdTime", "lastEdited"];
-const VIEW_TYPES = ["table", "board", "gallery", "list", "calendar"];
-const FILTER_OPS = ["contains", "notContains", "is", "isNot", "startsWith", "endsWith", "isEmpty", "isNotEmpty", "eq", "neq", "gt", "lt", "gte", "lte", "before", "after", "onOrBefore", "onOrAfter"];
+const PROPERTY_TYPES = ["text", "number", "select", "multiSelect", "status", "date", "checkbox", "url", "email", "phone", "createdTime", "lastEdited", "formula"];
+const VIEW_TYPES = ["table", "board", "gallery", "list", "calendar", "chart", "custom"];
+const FILTER_OPS = ["contains", "notContains", "is", "isNot", "startsWith", "endsWith", "isEmpty", "isNotEmpty", "eq", "neq", "gt", "lt", "gte", "lte", "before", "after", "onOrBefore", "onOrAfter", "within"];
+const NUMBER_FORMATS = ["number", "commas", "percent", "dollar", "euro", "pound", "yen"];
+/** Formula settings shared by create / addProperty / updateProperty. */
+const formulaFields = {
+  formula: s.str("Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.", { maxLength: 4000 }),
+  format: s.str("Number format (number and formula properties).", { enum: NUMBER_FORMATS }),
+  dateFormat: s.str("How date results of a formula show.", { enum: ["relative", "short", "long", "iso"] }),
+};
 const CALCS = ["none", "countAll", "countValues", "countUnique", "countEmpty", "countNotEmpty", "percentEmpty", "percentNotEmpty", "checked", "unchecked", "percentChecked", "sum", "average", "median", "min", "max", "range", "earliest", "latest"];
 const filterRules = s.arr(
-  "Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO.",
+  "Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek|pastMonth|pastYear|nextWeek|nextMonth|nextYear|thisWeek|thisMonth|thisYear. Formulas filter as their result type.",
   s.obj({ property: propertyRef, op: s.str("Operator.", { enum: FILTER_OPS }), value: s.any("Value to compare with (omit for isEmpty / isNotEmpty).") }, ["property", "op"]),
   30,
 );
 const sortRules = s.arr("Sort rules, first wins (replaces the view's sorts).", s.obj({ property: propertyRef, direction: s.str("Direction.", { enum: ["asc", "desc"], default: "asc" }) }, ["property"]), 10);
+const advancedFilter = s.obj(
+  {
+    mode: s.str("and: every item matches; or: any.", { enum: ["and", "or"], default: "and" }),
+    items: s.arr("Rules { property, op, value } and nested groups { mode, items } (up to 4 levels).", s.map("A rule or a group."), 60),
+  },
+  ["items"],
+  "Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear.",
+);
+const chartPatch = s.obj(
+  {
+    kind: s.str("Chart kind.", { enum: ["bar", "column", "line", "area", "pie", "donut", "scatter", "funnel", "radar", "heatmap", "number"] }),
+    x: s.str("Category property (name), or createdTime / lastEdited. \"\" clears.", { maxLength: 100 }),
+    dateBucket: s.str("Group dates on x by.", { enum: ["day", "week", "month", "quarter", "year"] }),
+    aggregate: s.str("Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values.", { enum: ["count", "countValues", "countUnique", "sum", "average", "median", "min", "max"] }),
+    y: s.str("Measured property (name). \"\" clears.", { maxLength: 100 }),
+    series: s.str("Property that splits each category into series. \"\" clears.", { maxLength: 100 }),
+    stacked: s.bool("Stack series."),
+    normalize: s.bool("Stack to 100%."),
+    cumulative: s.bool("Running total."),
+    sort: s.str("Category order.", { enum: ["default", "label", "labelDesc", "value", "valueDesc"] }),
+    limit: s.int("Show the first N categories (the rest merge into Other).", { minimum: 1, maximum: 200 }),
+    omitEmpty: s.bool("Skip the empty category."),
+    smooth: s.bool("Smooth lines."),
+    labels: s.bool("Value labels."),
+    legend: s.bool("Legend."),
+    grid: s.bool("Grid lines."),
+    palette: s.str("Palette id.", { maxLength: 40 }),
+    height: s.int("Height in px (inline databases).", { minimum: 120, maximum: 1200 }),
+    goal: s.num("Reference line value."),
+    yMin: s.num("Y axis minimum."),
+    yMax: s.num("Y axis maximum."),
+    format: s.str("Value number format.", { enum: NUMBER_FORMATS }),
+    title: s.str("Chart title.", { maxLength: 120 }),
+  },
+  [],
+  "Chart settings (chart views); merged into the current ones.",
+);
 const viewPatch = {
   name: s.str("View name.", { maxLength: 80 }),
   type: s.str("Layout.", { enum: VIEW_TYPES }),
   filters: filterRules,
   filterMode: s.str("Match all rules (and) or any (or).", { enum: ["and", "or"] }),
+  advanced: advancedFilter,
   sorts: sortRules,
-  groupBy: s.str("Board/table grouping property (select, multi-select, status, checkbox). \"\" removes grouping.", { maxLength: 100 }),
-  hiddenGroups: s.arr("Group values (option names) to hide on a board.", s.str("Option name."), 100),
+  groupBy: s.str("Grouping property. Boards: select, multi-select, status or checkbox; tables, lists and galleries: any property but the title. \"\" removes grouping.", { maxLength: 100 }),
+  hiddenGroups: s.arr("Groups to hide (option names, true/false, or \"none\").", s.str("Group name."), 100),
+  collapsedGroups: s.arr("Groups shown collapsed (table/list/gallery).", s.str("Group name."), 100),
+  hideEmptyGroups: s.bool("Hide groups with no rows."),
+  colorColumns: s.bool("Colour board columns / groups by option colour."),
   show: s.arr("Properties to show, in order (others are hidden).", propertyRef, 100),
   hide: s.arr("Properties to hide.", propertyRef, 100),
   order: s.arr("Property order (names or ids).", propertyRef, 100),
@@ -147,11 +208,39 @@ const viewPatch = {
   calcs: s.map("Property → footer calculation (table).", { type: "string", enum: CALCS }),
   dateProperty: s.str("Date property for calendar views.", { maxLength: 100 }),
   cardPreview: s.str("Card preview for board/gallery.", { enum: ["cover", "none"] }),
+  cardSize: s.str("Gallery card size.", { enum: ["small", "medium", "large"] }),
   wrap: s.bool("Wrap long cell text."),
+  rowNumbers: s.bool("Table row numbers."),
+  showFilterBar: s.bool("Show the filter/sort chip bar (default true)."),
+  showIcons: s.bool("Show page icons beside titles (default true)."),
+  limit: s.int("Rows shown before \"Load more\" (0 = default).", { minimum: 0, maximum: 1000 }),
+  openIn: s.str("Where row pages open: modal (center peek, default), side (side peek), tab, current.", { enum: ["modal", "side", "tab", "current"] }),
+  chart: chartPatch,
+  custom: s.obj(
+    {
+      html: s.str("HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined.", { maxLength: 400_000 }),
+      height: s.int("Frame height in px (inline databases).", { minimum: 120, maximum: 2000 }),
+    },
+    [],
+    "Custom view settings (custom views).",
+  ),
 };
 const htmlView = s.str(
   "HTML for a sandboxed view (a fragment or a full document; inline <style> and <script> are fine, no remote scripts). The script gets a global `noteral` (props, setData, call, on, open, notify — see the View API guide). Theme tokens are available as CSS variables, and the kit classes n-btn, n-input, n-card, n-row, n-col, n-grid, n-chip, n-list, n-muted are predefined.",
   { maxLength: 400_000 },
+);
+const newProperties = s.arr(
+  "Columns besides the title.",
+  s.obj(
+    {
+      name: s.str("Property name.", { maxLength: 100 }),
+      type: s.str("Property type.", { enum: PROPERTY_TYPES }),
+      options: s.arr("Options for select / multiSelect / status.", s.str("Option name."), 50),
+      ...formulaFields,
+    },
+    ["name", "type"],
+  ),
+  40,
 );
 const iconParam = s.str("Icon: an emoji or a Lucide icon name such as \"chart-line\".", { maxLength: 60 });
 const menuSlot = s.str("Menu: page (the page \"…\" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu).", {
@@ -424,6 +513,17 @@ export const METHODS: MethodSpec[] = [
     returns: "void",
   },
   {
+    name: "pages.edit",
+    summary: "Change part of a page by find-and-replace, without resending the whole page.",
+    details:
+      "Each edit's find must match the page's Markdown exactly once (copy it from pages.read or editor.getMarkdown); whitespace differences are tolerated. Set all: true to replace every match. Edits apply in order; if one fails nothing changes. Open pages keep untouched blocks. Prefer this over pages.write / editor.setMarkdown for anything smaller than a rewrite.",
+    permission: "pages.write",
+    tier: "content",
+    params: s.obj({ pageId: s.str("Page id. Defaults to the page open in the focused pane."), edits: textEdits }, ["edits"]),
+    returns: "{ replaced: number; blocksChanged?: number }",
+    example: `await app.pages.edit({ pageId, edits: [{ find: "Due: Friday", replace: "Due: Monday" }] });`,
+  },
+  {
     name: "pages.append",
     summary: "Append Markdown to the end of a page.",
     permission: "pages.write",
@@ -512,32 +612,43 @@ export const METHODS: MethodSpec[] = [
   },
   {
     name: "databases.create",
-    summary: "Create a database with properties.",
-    details: "Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited.",
+    summary: "Create a database (a page in the tree) with properties and a first view.",
+    details: "To put a database inside a page's content, use databases.embed instead. Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited, formula (give `formula`).",
     permission: "databases.write",
     tier: "content",
     params: s.obj(
       {
         title: s.str("Database title.", { maxLength: 300 }),
         parentId: s.str("Parent page/folder id."),
-        properties: s.arr(
-          "Columns besides the title.",
-          s.obj(
-            {
-              name: s.str("Property name.", { maxLength: 100 }),
-              type: s.str("Property type.", { enum: ["text", "number", "select", "multiSelect", "status", "date", "checkbox", "url", "email", "phone", "createdTime", "lastEdited"] }),
-              options: s.arr("Options for select / multiSelect / status.", s.str("Option name."), 50),
-            },
-            ["name", "type"],
-          ),
-          40,
-        ),
-        view: s.str("First view type.", { enum: ["table", "board", "gallery", "list", "calendar"], default: "table" }),
+        properties: newProperties,
+        view: s.str("First view type.", { enum: VIEW_TYPES, default: "table" }),
         open: s.bool("Open it in a tab.", { default: true }),
       },
       ["title"],
     ),
     returns: "{ databaseId: string }",
+  },
+  {
+    name: "databases.embed",
+    summary: "Put a database inside a page's content: a new inline database, or a linked view of an existing one.",
+    details:
+      "With databaseId the block links that database (it stays where it is). Without it a new database is created as a child of the page (title, properties, view as in databases.create). Inserts at the end unless position says otherwise; before/after need blockId (from editor.getBlocks) or anchor (text of a block). Works whether or not the page is open. In page Markdown an embedded database is the line <!-- database:ID Title -->; keep it when editing.",
+    permission: "databases.write",
+    tier: "content",
+    params: s.obj(
+      {
+        pageId: s.str("Page to insert into. Defaults to the page open in the focused pane."),
+        databaseId: s.str("Existing database to link. Omit to create a new inline database."),
+        title: s.str("New database title.", { maxLength: 300 }),
+        properties: newProperties,
+        view: s.str("First view type of a new database.", { enum: VIEW_TYPES, default: "table" }),
+        position: s.str("Where in the page.", { enum: ["start", "end", "before", "after"], default: "end" }),
+        blockId: s.str("Anchor block for before/after."),
+        anchor: s.str("Or: text from the anchor block (first block containing it).", { maxLength: 300 }),
+      },
+    ),
+    returns: "{ databaseId: string; pageId: string; created: boolean }",
+    example: `await app.databases.embed({ pageId, title: "Tasks", properties: [{ name: "Status", type: "status" }, { name: "Due", type: "date" }], view: "board" });`,
   },
   {
     name: "databases.addProperty",
@@ -548,8 +659,9 @@ export const METHODS: MethodSpec[] = [
       {
         databaseId: s.str("Database id."),
         name: s.str("Property name.", { maxLength: 100 }),
-        type: s.str("Property type.", { enum: ["text", "number", "select", "multiSelect", "status", "date", "checkbox", "url", "email", "phone", "createdTime", "lastEdited"] }),
+        type: s.str("Property type.", { enum: PROPERTY_TYPES }),
         options: s.arr("Options for select / multiSelect / status.", s.str("Option name."), 50),
+        ...formulaFields,
       },
       ["databaseId", "name", "type"],
     ),
@@ -563,6 +675,35 @@ export const METHODS: MethodSpec[] = [
     tier: "content",
     params: s.obj({ databaseId: s.str("Database id."), title: s.str("Row title.", { maxLength: 300 }), values: s.map("Property name → value.") }, ["databaseId"]),
     returns: "{ rowId: string }",
+  },
+  {
+    name: "databases.addRows",
+    summary: "Add many rows in one call (up to 500). Prefer this over repeated addRow.",
+    details: "Each row is { title?, values? } with values keyed by property name, same rules as addRow. All rows are created in one transaction, in order.",
+    permission: "databases.write",
+    tier: "content",
+    params: s.obj(
+      {
+        databaseId: s.str("Database id."),
+        rows: s.arr("Rows to add.", s.obj({ title: s.str("Row title.", { maxLength: 300 }), values: s.map("Property name → value.") }), 500),
+      },
+      ["databaseId", "rows"],
+    ),
+    returns: "{ rowIds: string[]; count: number }",
+    example: `await app.databases.addRows({ databaseId, rows: [{ title: "Ship v2", values: { Status: "Doing" } }, { title: "Write docs" }] });`,
+  },
+  {
+    name: "databases.updateRows",
+    summary: "Change many rows in one call (up to 500).",
+    permission: "databases.write",
+    tier: "content",
+    params: s.obj(
+      {
+        updates: s.arr("Row changes.", s.obj({ rowId: s.str("Row (page) id."), title: s.str("New title.", { maxLength: 300 }), values: s.map("Property name → value. null clears.") }, ["rowId"]), 500),
+      },
+      ["updates"],
+    ),
+    returns: "{ count: number }",
   },
   {
     name: "databases.updateRow",
@@ -593,6 +734,7 @@ export const METHODS: MethodSpec[] = [
         search: s.str("Text search across all properties.", { maxLength: 200 }),
         filters: filterRules,
         filterMode: s.str("and | or for `filters`.", { enum: ["and", "or"] }),
+        advanced: advancedFilter,
         sorts: sortRules,
         limit: s.int("Maximum rows.", { minimum: 1, maximum: 2000, default: 200 }),
       },
@@ -603,17 +745,17 @@ export const METHODS: MethodSpec[] = [
   },
   {
     name: "databases.addView",
-    summary: "Add a view (table, board, gallery, list or calendar) with optional filters, sorts and grouping.",
+    summary: "Add a view (table, board, gallery, list, calendar, chart or custom) with optional filters, sorts, grouping and settings.",
     permission: "databases.write",
     tier: "content",
     params: s.obj({ databaseId: s.str("Database id."), ...viewPatch, type: s.str("Layout.", { enum: VIEW_TYPES, default: "table" }) }, ["databaseId"]),
     returns: "DatabaseViewInfo",
-    example: `await app.databases.addView({ databaseId, type: "board", name: "By status", groupBy: "Status", filters: [{ property: "Done", op: "is", value: false }] });`,
+    example: `await app.databases.addView({ databaseId, type: "chart", name: "Spend by month", chart: { kind: "column", x: "Date", dateBucket: "month", aggregate: "sum", y: "Amount" } });`,
   },
   {
     name: "databases.updateView",
-    summary: "Change a view: name, layout, filters, sorts, grouping, visible properties, order, widths, calculations.",
-    details: "Only the fields you pass change. `filters` and `sorts` replace the existing lists; pass [] to clear.",
+    summary: "Change a view: layout, filters (simple and advanced), sorts, grouping, visible properties, calculations, chart or custom settings, where rows open.",
+    details: "Only the fields you pass change. `filters`, `sorts` and `advanced` replace the existing ones; pass [] / { items: [] } to clear. `chart` merges into the current chart settings.",
     permission: "databases.write",
     tier: "content",
     params: s.obj({ databaseId: s.str("Database id."), viewId: s.str("View id."), ...viewPatch }, ["databaseId", "viewId"]),
@@ -645,8 +787,8 @@ export const METHODS: MethodSpec[] = [
   },
   {
     name: "databases.updateProperty",
-    summary: "Rename a property, change its type, number format or select options.",
-    details: "`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible.",
+    summary: "Rename a property, change its type, formula, number/date format or select options.",
+    details: "`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible (a formula turned into another type keeps its current results). Renaming updates references in other formulas.",
     permission: "databases.write",
     tier: "content",
     params: s.obj(
@@ -655,7 +797,7 @@ export const METHODS: MethodSpec[] = [
         property: propertyRef,
         name: s.str("New name.", { maxLength: 100 }),
         type: s.str("New type.", { enum: PROPERTY_TYPES }),
-        format: s.str("Number format.", { enum: ["number", "commas", "percent", "dollar", "euro", "pound", "yen"] }),
+        ...formulaFields,
         options: s.arr(
           "Options (select / multi-select / status).",
           s.obj({ name: s.str("Option name.", { maxLength: 100 }), color: s.str("Color name.", { enum: ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"] }), group: s.str("Status group.", { enum: ["todo", "inProgress", "complete"] }) }, ["name"]),
@@ -665,6 +807,22 @@ export const METHODS: MethodSpec[] = [
       ["databaseId", "property"],
     ),
     returns: "DatabaseSchemaInfo",
+  },
+  {
+    name: "databases.formulaFunctions",
+    summary: "The formula language: syntax and every function, one line each.",
+    permission: "databases.read",
+    tier: "read",
+    params: EMPTY,
+    returns: "string",
+  },
+  {
+    name: "databases.checkFormula",
+    summary: "Check a formula against a database without saving: errors, result type and sample results.",
+    permission: "databases.read",
+    tier: "read",
+    params: s.obj({ databaseId: s.str("Database id."), formula: s.str("Formula source.", { maxLength: 4000 }), property: s.str("Formula property it is for (so it may use the others).", { maxLength: 100 }) }, ["databaseId", "formula"]),
+    returns: "{ ok: boolean; error?: string; resultType?: string; sample?: { title: string; value: unknown; error?: string }[] }",
   },
   {
     name: "databases.removeProperty",
@@ -1323,6 +1481,48 @@ export const METHODS: MethodSpec[] = [
     returns: "{ delivered: number }",
   },
 
+  // ── source (assistant only) ────────────────────────────────────────────
+  {
+    name: "source.list",
+    summary: "List everything with editable text (HTML, CSS, Markdown, plugin code) and its target id.",
+    details: "Covers sidebar tabs, status widgets, block and page types, CSS snippets, component styles, Home widgets/views and plugins. Use the target with source.get / source.edit (plugins: plugins.edit).",
+    permission: null,
+    tier: "read",
+    callers: ["assistant"],
+    params: s.obj({ kind: s.str("Only this kind.", { enum: ["sidebar", "status", "block", "node", "css", "component", "home", "homeview", "plugin"] }) }),
+    returns: "SourceEntry[]",
+  },
+  {
+    name: "source.get",
+    summary: "Read the current text of a target (e.g. a widget's HTML) before editing it.",
+    details: "Pass startLine/endLine to read part of a long file. Fields: sidebar html|markdown, status html|text, block/node html, css css, component css|rules, home html|css|text, homeview css, plugin code|styles.",
+    permission: null,
+    tier: "read",
+    callers: ["assistant"],
+    params: s.obj(
+      {
+        target: s.str("Target from source.list, e.g. status:pomodoro, home:<viewId>/<widgetId>, plugin:<id>."),
+        field: s.str("Which text (defaults to the main one)."),
+        layer: s.str("Layer id when the same id exists in several layers."),
+        startLine: s.int("First line (1-based).", { minimum: 1 }),
+        endLine: s.int("Last line.", { minimum: 1 }),
+      },
+      ["target"],
+    ),
+    returns: "{ target: string; owner: string; field: string; lines: number; length: number; text: string }",
+  },
+  {
+    name: "source.edit",
+    summary: "Change part of a widget, tab, block/page type, CSS or Home widget by find-and-replace.",
+    details:
+      "Read it with source.get first; each find must match exactly once (whitespace differences tolerated) unless all: true. Edits apply in order and are all-or-nothing. Far cheaper than resending the whole HTML with setWidget/setTab/registerType — use it for every change to something that exists. Plugin code: use plugins.edit.",
+    permission: null,
+    tier: "app",
+    callers: ["assistant"],
+    params: s.obj({ target: s.str("Target from source.list."), field: s.str("Which text (defaults to the main one)."), layer: s.str("Layer id when ambiguous."), edits: textEdits }, ["target", "edits"]),
+    returns: "{ target: string; field: string; replaced: number; length: number; owner?: string }",
+  },
+
   // ── plugins (assistant only) ───────────────────────────────────────────
   { name: "plugins.list", summary: "List installed plugins.", permission: null, tier: "read", callers: ["assistant"], params: EMPTY, returns: "PluginInfo[]" },
   {
@@ -1333,6 +1533,28 @@ export const METHODS: MethodSpec[] = [
     callers: ["assistant"],
     params: s.obj({ id: s.str("Plugin id.") }, ["id"]),
     returns: "PluginSourceInfo",
+  },
+  {
+    name: "plugins.edit",
+    summary: "Change an installed plugin's code or styles by find-and-replace, then test and reinstall it.",
+    details: "Read it with plugins.getSource (or source.get plugin:<id>) first. The patch version is bumped automatically. Can also update permissions or description. Same test run and health check as plugins.create.",
+    permission: null,
+    tier: "app",
+    callers: ["assistant"],
+    confirm: true,
+    params: s.obj(
+      {
+        id: s.str("Plugin id."),
+        file: s.str("Which file the edits change.", { enum: ["code", "styles"], default: "code" }),
+        edits: textEdits,
+        permissions: s.arr("Replace the permission list.", s.str("Permission id."), 30),
+        description: s.str("New description.", { maxLength: 500 }),
+        version: s.str("Explicit new version (default: bump patch)."),
+        skipTest: s.bool("Install even if the test run reports errors.", { default: false }),
+      },
+      ["id"],
+    ),
+    returns: "PluginInstallResult & { version: string; replaced: number }",
   },
   {
     name: "plugins.create",

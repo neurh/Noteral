@@ -45,6 +45,8 @@ interface ViewFrameProps {
   maxHeight?: number;
   /** The view called noteral.setData(data). */
   onData?: (data: unknown) => void;
+  /** The view called noteral.post(name, payload) and isn't a plugin's (plugins get it in their worker). */
+  onAction?: (name: string, payload: unknown) => void;
   className?: string;
   title: string;
 }
@@ -55,14 +57,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surface, initialHeight, minHeight = 0, maxHeight = 4000, onData, className, title }: ViewFrameProps) {
+export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surface, initialHeight, minHeight = 0, maxHeight = 4000, onData, onAction, className, title }: ViewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight ?? (fill ? 0 : 80));
   const [error, setError] = useState("");
   const theme = useAppStore((state) => state.resolvedTheme);
   const doc = useCustomizations();
-  const latest = useRef({ props, permissions, owner, onData });
-  latest.current = { props, permissions, owner, onData };
+  const latest = useRef({ props, permissions, owner, onData, onAction });
+  latest.current = { props, permissions, owner, onData, onAction };
 
   // Rebuild the document only when the HTML changes; props travel by message.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,6 +124,7 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surf
         }
         case "post":
           if (current.owner.kind === "plugin") pluginRuntime.viewMessage(current.owner.id, { view: viewKey, name: String(data.name ?? ""), payload: data.payload ?? null });
+          else current.onAction?.(String(data.name ?? ""), data.payload ?? null);
           return;
         case "open": {
           const target = String(data.target ?? "");

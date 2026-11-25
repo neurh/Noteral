@@ -19,6 +19,7 @@ import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { LibraryDialog } from "./components/LibraryDialog";
 import { PluginManager } from "./components/PluginManager";
 import { HostDialogs } from "./components/HostDialogs";
+import { RowPeekHost } from "./components/database/RowPeek";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { editorBridge } from "./lib/editorBridge";
 import { toggleAssistant } from "./assistant/open";
@@ -461,6 +462,7 @@ export default function App() {
       <LibraryDialog />
       <PluginManager />
       <HostDialogs />
+      <RowPeekHost />
       <SettingsDialog />
     </div>
   );

@@ -25,6 +25,16 @@ export interface ModelConfig {
   contextWindow?: number;
   /** Thinking levels offered in the composer. Empty hides the selector. */
   thinking?: ThinkingLevel[];
+  /** Max output tokens for this model (overrides the global setting). */
+  maxOutput?: number;
+  /** Temperature for this model (overrides the global setting; null = provider default). */
+  temperature?: number | null;
+  /** Whether it accepts images and PDFs. Unset = guessed from the model name. */
+  vision?: boolean;
+  /** Shown instead of the model id. */
+  label?: string;
+  /** Hidden from the model picker. */
+  hidden?: boolean;
 }
 
 export const modelKey = (providerId: string, model: string) => `${providerId}/${model}`;
@@ -79,6 +89,18 @@ export interface ResolvedModel {
   thinking: ThinkingLevel[];
   /** True when the window came from the user or the provider rather than a guess. */
   knownWindow: boolean;
+  maxOutput?: number;
+  temperature?: number | null;
+  vision: boolean;
+  label: string;
+}
+
+/** Guess whether a model reads images/PDFs from its name (most current chat models do). */
+export function guessVision(kind: ProviderKind | string, model: string): boolean {
+  const id = model.toLowerCase();
+  if (kind === "anthropic" || kind === "gemini") return true;
+  if (/(gpt-4o|gpt-4\.1|gpt-5|o3|o4|vision|llava|gemma-?3|qwen.*vl|pixtral|llama-?3\.2.*vision|claude|gemini|grok-(2-vision|4))/.test(id)) return true;
+  return false;
 }
 
 export function resolveModel(
@@ -96,6 +118,10 @@ export function resolveModel(
     contextWindow: window,
     thinking: config?.thinking ?? defaultThinkingLevels(kind, model),
     knownWindow: Boolean(config?.contextWindow || found),
+    ...(config?.maxOutput ? { maxOutput: config.maxOutput } : {}),
+    ...(config && "temperature" in config ? { temperature: config.temperature ?? null } : {}),
+    vision: config?.vision ?? guessVision(kind, model),
+    label: config?.label?.trim() || displayModel(model),
   };
 }
 

@@ -19,6 +19,7 @@ import { fileToBase64 } from "../lib/base64";
 import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
 import { commandRegistry } from "../lib/commands";
 import { editorBridge, type BlockSummary, type InsertPosition } from "../lib/editorBridge";
+import { embedsToMarkdown, markdownToEmbedBlocks } from "../lib/markdownEmbeds";
 import { statsOfDoc, type DocNode } from "../lib/docStats";
 import { kindOf, useAppStore, type LoadedDocument } from "../store";
 import { defaultSchema, serializeSchema } from "../lib/database";
@@ -280,6 +281,10 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   }, []);
 
   useEffect(() => {
+    const parseMarkdown = (markdown: string) =>
+      markdownToEmbedBlocks(markdown, (text) => editor.tryParseMarkdownToBlocks(text) as never, {
+        lookup: (id) => (editor.getBlock(id) as never) ?? undefined,
+      });
     const handle = {
       getJSON: () => JSON.stringify(editor.document),
       getStats: () => statsOfDoc(editor.prosemirrorState.doc as unknown as DocNode, titleOf, true),
@@ -298,7 +303,8 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       getMarkdown: (blockIds?: string[]) => {
         const all = editor.document;
         const chosen = blockIds?.length ? all.filter((block) => blockIds.includes(block.id)) : all;
-        return editor.blocksToMarkdownLossy(chosen as never);
+        // Databases and custom blocks become `<!-- database:ID -->` / `<!-- block:ID -->` lines.
+        return embedsToMarkdown(chosen as never, (run) => editor.blocksToMarkdownLossy(run as never), titleOf);
       },
       getBlocks: () => editor.document.map((block) => summarizeBlock(block, titleOf)),
       getSelection: () => {
@@ -311,7 +317,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
         };
       },
       insertMarkdown: async (markdown: string, position: InsertPosition, blockId?: string) => {
-        const parsed = editor.tryParseMarkdownToBlocks(markdown);
+        const parsed = parseMarkdown(markdown);
         if (!parsed.length) return [];
         const doc = editor.document;
         let inserted: { id: string }[];
@@ -334,7 +340,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       replaceBlocks: async (blockIds: string[], markdown: string) => {
         const missing = blockIds.filter((id) => !editor.getBlock(id));
         if (missing.length) throw new Error(`Unknown block ids: ${missing.join(", ")}`);
-        const parsed = editor.tryParseMarkdownToBlocks(markdown);
+        const parsed = parseMarkdown(markdown);
         const result = editor.replaceBlocks(blockIds, (parsed.length ? parsed : [{ type: "paragraph" }]) as never);
         return result.insertedBlocks.map((block) => block.id);
       },
@@ -378,7 +384,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
         editor.updateBlock(blockId, { props: { data: serializeBlockData(data) } } as never);
       },
       setMarkdown: async (markdown: string) => {
-        const parsed = editor.tryParseMarkdownToBlocks(markdown);
+        const parsed = parseMarkdown(markdown);
         editor.replaceBlocks(editor.document, (parsed.length ? parsed : [{ type: "paragraph" }]) as never);
       },
       undo: () => editor.undo(),

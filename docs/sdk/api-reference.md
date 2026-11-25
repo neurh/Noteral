@@ -36,6 +36,7 @@ All methods take one params object and return a promise.
 - [`nodes`](#nodes)
 - [`home`](#home)
 - [`views`](#views)
+- [`source`](#source)
 - [`plugins`](#plugins)
 - [Events](#events)
 - [Permissions](#permissions)
@@ -350,6 +351,23 @@ Replace a page's whole content with Markdown.
 | `pageId` | `string` | yes | Page id. |
 | `markdown` | `string` | yes | Markdown. Headings, lists, checklists (- [ ]), quotes, code fences, tables and images are supported. |
 
+### `pages.edit`
+
+Change part of a page by find-and-replace, without resending the whole page.
+
+Each edit's find must match the page's Markdown exactly once (copy it from pages.read or editor.getMarkdown); whitespace differences are tolerated. Set all: true to replace every match. Edits apply in order; if one fails nothing changes. Open pages keep untouched blocks. Prefer this over pages.write / editor.setMarkdown for anything smaller than a rewrite.
+
+**Permission:** `pages.write` · **Returns:** `{ replaced: number; blocksChanged?: number }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `pageId` | `string` |  | Page id. Defaults to the page open in the focused pane. |
+| `edits` | `{ /** Exact text to replace (include enough context to be unique). */ find: string; /** Replacement text ("" deletes). */ replace: string; /** Replace every occurrence. */ all?: boolean; }[]` | yes | Edits, applied in order. |
+
+```ts
+await app.pages.edit({ pageId, edits: [{ find: "Due: Friday", replace: "Due: Monday" }] });
+```
+
 ### `pages.append`
 
 Append Markdown to the end of a page.
@@ -488,9 +506,9 @@ const rows = await app.databases.queryRows({ databaseId, where: { Status: "Done"
 
 ### `databases.create`
 
-Create a database with properties.
+Create a database (a page in the tree) with properties and a first view.
 
-Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited.
+To put a database inside a page's content, use databases.embed instead. Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited, formula (give `formula`).
 
 **Permission:** `databases.write` · **Returns:** `{ databaseId: string }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -498,9 +516,32 @@ Property types: text, number, select, multiSelect, status, date, checkbox, url, 
 | --- | --- | --- | --- |
 | `title` | `string` | yes | Database title. |
 | `parentId` | `string` |  | Parent page/folder id. |
-| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited"; /** Options for select / multiSelect / status. */ options?: string[]; }[]` |  | Columns besides the title. |
-| `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar"` |  | First view type. Default `"table"`. |
+| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; }[]` |  | Columns besides the title. |
+| `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | First view type. Default `"table"`. |
 | `open` | `boolean` |  | Open it in a tab. Default `true`. |
+
+### `databases.embed`
+
+Put a database inside a page's content: a new inline database, or a linked view of an existing one.
+
+With databaseId the block links that database (it stays where it is). Without it a new database is created as a child of the page (title, properties, view as in databases.create). Inserts at the end unless position says otherwise; before/after need blockId (from editor.getBlocks) or anchor (text of a block). Works whether or not the page is open. In page Markdown an embedded database is the line <!-- database:ID Title -->; keep it when editing.
+
+**Permission:** `databases.write` · **Returns:** `{ databaseId: string; pageId: string; created: boolean }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `pageId` | `string` |  | Page to insert into. Defaults to the page open in the focused pane. |
+| `databaseId` | `string` |  | Existing database to link. Omit to create a new inline database. |
+| `title` | `string` |  | New database title. |
+| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; }[]` |  | Columns besides the title. |
+| `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | First view type of a new database. Default `"table"`. |
+| `position` | `"start" \| "end" \| "before" \| "after"` |  | Where in the page. Default `"end"`. |
+| `blockId` | `string` |  | Anchor block for before/after. |
+| `anchor` | `string` |  | Or: text from the anchor block (first block containing it). |
+
+```ts
+await app.databases.embed({ pageId, title: "Tasks", properties: [{ name: "Status", type: "status" }, { name: "Due", type: "date" }], view: "board" });
+```
 
 ### `databases.addProperty`
 
@@ -512,8 +553,11 @@ Add a property (column) to a database.
 | --- | --- | --- | --- |
 | `databaseId` | `string` | yes | Database id. |
 | `name` | `string` | yes | Property name. |
-| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited"` | yes | Property type. |
+| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"` | yes | Property type. |
 | `options` | `string[]` |  | Options for select / multiSelect / status. |
+| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. |
+| `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format (number and formula properties). |
+| `dateFormat` | `"relative" \| "short" \| "long" \| "iso"` |  | How date results of a formula show. |
 
 ### `databases.addRow`
 
@@ -528,6 +572,33 @@ Dates: ISO "2026-03-01". Selects: option name (created if missing). Multi-select
 | `databaseId` | `string` | yes | Database id. |
 | `title` | `string` |  | Row title. |
 | `values` | `Record<string, unknown>` |  | Property name → value. |
+
+### `databases.addRows`
+
+Add many rows in one call (up to 500). Prefer this over repeated addRow.
+
+Each row is { title?, values? } with values keyed by property name, same rules as addRow. All rows are created in one transaction, in order.
+
+**Permission:** `databases.write` · **Returns:** `{ rowIds: string[]; count: number }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `databaseId` | `string` | yes | Database id. |
+| `rows` | `{ /** Row title. */ title?: string; /** Property name → value. */ values?: Record<string, unknown>; }[]` | yes | Rows to add. |
+
+```ts
+await app.databases.addRows({ databaseId, rows: [{ title: "Ship v2", values: { Status: "Doing" } }, { title: "Write docs" }] });
+```
+
+### `databases.updateRows`
+
+Change many rows in one call (up to 500).
+
+**Permission:** `databases.write` · **Returns:** `{ count: number }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `updates` | `{ /** Row (page) id. */ rowId: string; /** New title. */ title?: string; /** Property name → value. null clears. */ values?: Record<string, unknown>; }[]` | yes | Row changes. |
 
 ### `databases.updateRow`
 
@@ -563,8 +634,9 @@ Read rows the way a view shows them (its filters and sorts applied), optionally 
 | `databaseId` | `string` | yes | Database id. |
 | `viewId` | `string` |  | View id (defaults to the first view). |
 | `search` | `string` |  | Text search across all properties. |
-| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO. |
+| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | and \| or for `filters`. |
+| `advanced` | `{ /** and: every item matches; or: any. */ mode?: "and" \| "or"; /** Rules { property, op, value } and nested groups { mode, items } (up to 4 levels). */ items: Record<string, unknown>[]; }` |  | Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear. |
 | `sorts` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Direction. */ direction?: "asc" \| "desc"; }[]` |  | Sort rules, first wins (replaces the view's sorts). |
 | `limit` | `number` |  | Maximum rows. Default `200`. |
 
@@ -574,7 +646,7 @@ const late = await app.databases.queryView({ databaseId, filters: [{ property: "
 
 ### `databases.addView`
 
-Add a view (table, board, gallery, list or calendar) with optional filters, sorts and grouping.
+Add a view (table, board, gallery, list, calendar, chart or custom) with optional filters, sorts, grouping and settings.
 
 **Permission:** `databases.write` · **Returns:** `DatabaseViewInfo` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -582,12 +654,16 @@ Add a view (table, board, gallery, list or calendar) with optional filters, sort
 | --- | --- | --- | --- |
 | `databaseId` | `string` | yes | Database id. |
 | `name` | `string` |  | View name. |
-| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar"` |  | Layout. Default `"table"`. |
-| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO. |
+| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | Layout. Default `"table"`. |
+| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | Match all rules (and) or any (or). |
+| `advanced` | `{ /** and: every item matches; or: any. */ mode?: "and" \| "or"; /** Rules { property, op, value } and nested groups { mode, items } (up to 4 levels). */ items: Record<string, unknown>[]; }` |  | Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear. |
 | `sorts` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Direction. */ direction?: "asc" \| "desc"; }[]` |  | Sort rules, first wins (replaces the view's sorts). |
-| `groupBy` | `string` |  | Board/table grouping property (select, multi-select, status, checkbox). "" removes grouping. |
-| `hiddenGroups` | `string[]` |  | Group values (option names) to hide on a board. |
+| `groupBy` | `string` |  | Grouping property. Boards: select, multi-select, status or checkbox; tables, lists and galleries: any property but the title. "" removes grouping. |
+| `hiddenGroups` | `string[]` |  | Groups to hide (option names, true/false, or "none"). |
+| `collapsedGroups` | `string[]` |  | Groups shown collapsed (table/list/gallery). |
+| `hideEmptyGroups` | `boolean` |  | Hide groups with no rows. |
+| `colorColumns` | `boolean` |  | Colour board columns / groups by option colour. |
 | `show` | `string[]` |  | Properties to show, in order (others are hidden). |
 | `hide` | `string[]` |  | Properties to hide. |
 | `order` | `string[]` |  | Property order (names or ids). |
@@ -595,17 +671,25 @@ Add a view (table, board, gallery, list or calendar) with optional filters, sort
 | `calcs` | `Record<string, "none" \| "countAll" \| "countValues" \| "countUnique" \| "countEmpty" \| "countNotEmpty" \| "percentEmpty" \| "percentNotEmpty" \| "checked" \| "unchecked" \| "percentChecked" \| "sum" \| "average" \| "median" \| "min" \| "max" \| "range" \| "earliest" \| "latest">` |  | Property → footer calculation (table). |
 | `dateProperty` | `string` |  | Date property for calendar views. |
 | `cardPreview` | `"cover" \| "none"` |  | Card preview for board/gallery. |
+| `cardSize` | `"small" \| "medium" \| "large"` |  | Gallery card size. |
 | `wrap` | `boolean` |  | Wrap long cell text. |
+| `rowNumbers` | `boolean` |  | Table row numbers. |
+| `showFilterBar` | `boolean` |  | Show the filter/sort chip bar (default true). |
+| `showIcons` | `boolean` |  | Show page icons beside titles (default true). |
+| `limit` | `number` |  | Rows shown before "Load more" (0 = default). |
+| `openIn` | `"modal" \| "side" \| "tab" \| "current"` |  | Where row pages open: modal (center peek, default), side (side peek), tab, current. |
+| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; }` |  | Chart settings (chart views); merged into the current ones. |
+| `custom` | `{ /** HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined. */ html?: string; /** Frame height in px (inline databases). */ height?: number; }` |  | Custom view settings (custom views). |
 
 ```ts
-await app.databases.addView({ databaseId, type: "board", name: "By status", groupBy: "Status", filters: [{ property: "Done", op: "is", value: false }] });
+await app.databases.addView({ databaseId, type: "chart", name: "Spend by month", chart: { kind: "column", x: "Date", dateBucket: "month", aggregate: "sum", y: "Amount" } });
 ```
 
 ### `databases.updateView`
 
-Change a view: name, layout, filters, sorts, grouping, visible properties, order, widths, calculations.
+Change a view: layout, filters (simple and advanced), sorts, grouping, visible properties, calculations, chart or custom settings, where rows open.
 
-Only the fields you pass change. `filters` and `sorts` replace the existing lists; pass [] to clear.
+Only the fields you pass change. `filters`, `sorts` and `advanced` replace the existing ones; pass [] / { items: [] } to clear. `chart` merges into the current chart settings.
 
 **Permission:** `databases.write` · **Returns:** `DatabaseViewInfo` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -614,12 +698,16 @@ Only the fields you pass change. `filters` and `sorts` replace the existing list
 | `databaseId` | `string` | yes | Database id. |
 | `viewId` | `string` | yes | View id. |
 | `name` | `string` |  | View name. |
-| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar"` |  | Layout. |
-| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO. |
+| `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | Layout. |
+| `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | Match all rules (and) or any (or). |
+| `advanced` | `{ /** and: every item matches; or: any. */ mode?: "and" \| "or"; /** Rules { property, op, value } and nested groups { mode, items } (up to 4 levels). */ items: Record<string, unknown>[]; }` |  | Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear. |
 | `sorts` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Direction. */ direction?: "asc" \| "desc"; }[]` |  | Sort rules, first wins (replaces the view's sorts). |
-| `groupBy` | `string` |  | Board/table grouping property (select, multi-select, status, checkbox). "" removes grouping. |
-| `hiddenGroups` | `string[]` |  | Group values (option names) to hide on a board. |
+| `groupBy` | `string` |  | Grouping property. Boards: select, multi-select, status or checkbox; tables, lists and galleries: any property but the title. "" removes grouping. |
+| `hiddenGroups` | `string[]` |  | Groups to hide (option names, true/false, or "none"). |
+| `collapsedGroups` | `string[]` |  | Groups shown collapsed (table/list/gallery). |
+| `hideEmptyGroups` | `boolean` |  | Hide groups with no rows. |
+| `colorColumns` | `boolean` |  | Colour board columns / groups by option colour. |
 | `show` | `string[]` |  | Properties to show, in order (others are hidden). |
 | `hide` | `string[]` |  | Properties to hide. |
 | `order` | `string[]` |  | Property order (names or ids). |
@@ -627,7 +715,15 @@ Only the fields you pass change. `filters` and `sorts` replace the existing list
 | `calcs` | `Record<string, "none" \| "countAll" \| "countValues" \| "countUnique" \| "countEmpty" \| "countNotEmpty" \| "percentEmpty" \| "percentNotEmpty" \| "checked" \| "unchecked" \| "percentChecked" \| "sum" \| "average" \| "median" \| "min" \| "max" \| "range" \| "earliest" \| "latest">` |  | Property → footer calculation (table). |
 | `dateProperty` | `string` |  | Date property for calendar views. |
 | `cardPreview` | `"cover" \| "none"` |  | Card preview for board/gallery. |
+| `cardSize` | `"small" \| "medium" \| "large"` |  | Gallery card size. |
 | `wrap` | `boolean` |  | Wrap long cell text. |
+| `rowNumbers` | `boolean` |  | Table row numbers. |
+| `showFilterBar` | `boolean` |  | Show the filter/sort chip bar (default true). |
+| `showIcons` | `boolean` |  | Show page icons beside titles (default true). |
+| `limit` | `number` |  | Rows shown before "Load more" (0 = default). |
+| `openIn` | `"modal" \| "side" \| "tab" \| "current"` |  | Where row pages open: modal (center peek, default), side (side peek), tab, current. |
+| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; }` |  | Chart settings (chart views); merged into the current ones. |
+| `custom` | `{ /** HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined. */ html?: string; /** Frame height in px (inline databases). */ height?: number; }` |  | Custom view settings (custom views). |
 
 ### `databases.removeView`
 
@@ -666,9 +762,9 @@ Move a view to another position in the view tabs.
 
 ### `databases.updateProperty`
 
-Rename a property, change its type, number format or select options.
+Rename a property, change its type, formula, number/date format or select options.
 
-`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible.
+`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible (a formula turned into another type keeps its current results). Renaming updates references in other formulas.
 
 **Permission:** `databases.write` · **Returns:** `DatabaseSchemaInfo` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
 
@@ -677,9 +773,31 @@ Rename a property, change its type, number format or select options.
 | `databaseId` | `string` | yes | Database id. |
 | `property` | `string` | yes | Property name or id ("title" or the title column's name for the title). |
 | `name` | `string` |  | New name. |
-| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited"` |  | New type. |
-| `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format. |
+| `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"` |  | New type. |
+| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. |
+| `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format (number and formula properties). |
+| `dateFormat` | `"relative" \| "short" \| "long" \| "iso"` |  | How date results of a formula show. |
 | `options` | `{ /** Option name. */ name: string; /** Color name. */ color?: "default" \| "gray" \| "brown" \| "orange" \| "yellow" \| "green" \| "blue" \| "purple" \| "pink" \| "red"; /** Status group. */ group?: "todo" \| "inProgress" \| "complete"; }[]` |  | Options (select / multi-select / status). |
+
+### `databases.formulaFunctions`
+
+The formula language: syntax and every function, one line each.
+
+**Permission:** `databases.read` · **Returns:** `string` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+No parameters.
+
+### `databases.checkFormula`
+
+Check a formula against a database without saving: errors, result type and sample results.
+
+**Permission:** `databases.read` · **Returns:** `{ ok: boolean; error?: string; resultType?: string; sample?: { title: string; value: unknown; error?: string }[] }` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `databaseId` | `string` | yes | Database id. |
+| `formula` | `string` | yes | Formula source. |
+| `property` | `string` |  | Formula property it is for (so it may use the others). |
 
 ### `databases.removeProperty`
 
@@ -1825,6 +1943,51 @@ Send a message to the plugin's HTML views (tabs, widgets, blocks, pages); they r
 | `payload` | `unknown` |  | JSON payload. |
 | `view` | `string` |  | Only this view key (from the view:message event). |
 
+## source
+
+### `source.list`
+
+List everything with editable text (HTML, CSS, Markdown, plugin code) and its target id.
+
+Covers sidebar tabs, status widgets, block and page types, CSS snippets, component styles, Home widgets/views and plugins. Use the target with source.get / source.edit (plugins: plugins.edit).
+
+**Permission:** none · **Returns:** `SourceEntry[]` · **Callers:** assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `kind` | `"sidebar" \| "status" \| "block" \| "node" \| "css" \| "component" \| "home" \| "homeview" \| "plugin"` |  | Only this kind. |
+
+### `source.get`
+
+Read the current text of a target (e.g. a widget's HTML) before editing it.
+
+Pass startLine/endLine to read part of a long file. Fields: sidebar html|markdown, status html|text, block/node html, css css, component css|rules, home html|css|text, homeview css, plugin code|styles.
+
+**Permission:** none · **Returns:** `{ target: string; owner: string; field: string; lines: number; length: number; text: string }` · **Callers:** assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `target` | `string` | yes | Target from source.list, e.g. status:pomodoro, home:<viewId>/<widgetId>, plugin:<id>. |
+| `field` | `string` |  | Which text (defaults to the main one). |
+| `layer` | `string` |  | Layer id when the same id exists in several layers. |
+| `startLine` | `number` |  | First line (1-based). |
+| `endLine` | `number` |  | Last line. |
+
+### `source.edit`
+
+Change part of a widget, tab, block/page type, CSS or Home widget by find-and-replace.
+
+Read it with source.get first; each find must match exactly once (whitespace differences tolerated) unless all: true. Edits apply in order and are all-or-nothing. Far cheaper than resending the whole HTML with setWidget/setTab/registerType — use it for every change to something that exists. Plugin code: use plugins.edit.
+
+**Permission:** none · **Returns:** `{ target: string; field: string; replaced: number; length: number; owner?: string }` · **Callers:** assistant · **Assistant modes:** Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `target` | `string` | yes | Target from source.list. |
+| `field` | `string` |  | Which text (defaults to the main one). |
+| `layer` | `string` |  | Layer id when ambiguous. |
+| `edits` | `{ /** Exact text to replace (include enough context to be unique). */ find: string; /** Replacement text ("" deletes). */ replace: string; /** Replace every occurrence. */ all?: boolean; }[]` | yes | Edits, applied in order. |
+
 ## plugins
 
 ### `plugins.list`
@@ -1844,6 +2007,24 @@ Read an installed plugin's manifest, code and styles.
 | Param | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | `string` | yes | Plugin id. |
+
+### `plugins.edit`
+
+Change an installed plugin's code or styles by find-and-replace, then test and reinstall it.
+
+Read it with plugins.getSource (or source.get plugin:<id>) first. The patch version is bumped automatically. Can also update permissions or description. Same test run and health check as plugins.create.
+
+**Permission:** none · **Returns:** `PluginInstallResult & { version: string; replaced: number }` · **Callers:** assistant · **Assistant modes:** Creator · **Asks first**
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | `string` | yes | Plugin id. |
+| `file` | `"code" \| "styles"` |  | Which file the edits change. Default `"code"`. |
+| `edits` | `{ /** Exact text to replace (include enough context to be unique). */ find: string; /** Replacement text ("" deletes). */ replace: string; /** Replace every occurrence. */ all?: boolean; }[]` |  | Edits, applied in order. |
+| `permissions` | `string[]` |  | Replace the permission list. |
+| `description` | `string` |  | New description. |
+| `version` | `string` |  | Explicit new version (default: bump patch). |
+| `skipTest` | `boolean` |  | Install even if the test run reports errors. Default `false`. |
 
 ### `plugins.create`
 
@@ -2045,6 +2226,16 @@ export interface DatabasePropertyInfo {
   name: string;
   type: string;
   options?: { id: string; name: string; color: string }[];
+  /** Number properties (and number formulas): number | commas | percent | dollar | euro | pound | yen. */
+  format?: string;
+  /** Formula properties: the formula source. */
+  formula?: string;
+  /** Formula properties: the type the results have (number, text, checkbox, date). */
+  resultType?: string;
+  /** Date and date-formula display: relative | short | long | iso. */
+  dateFormat?: string;
+  /** Formula properties: why the formula fails, if it does. */
+  error?: string;
 }
 
 export interface DatabaseSchemaInfo {
@@ -2055,32 +2246,82 @@ export interface DatabaseSchemaInfo {
   views: { id: string; name: string; type: string }[];
 }
 
+/** A filter rule, or a nested and/or group of rules (advanced filters). */
+export type DatabaseFilterNode =
+  | { id: string; property: string; op: string; value?: unknown }
+  | { id: string; mode: "and" | "or"; items: DatabaseFilterNode[] };
+
+/** Chart view settings; property ids are returned as names. */
+export interface DatabaseChartInfo {
+  kind?: "bar" | "column" | "line" | "area" | "pie" | "donut" | "scatter" | "funnel" | "radar" | "heatmap" | "number";
+  x?: string;
+  dateBucket?: "day" | "week" | "month" | "quarter" | "year";
+  aggregate?: "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+  y?: string;
+  series?: string;
+  stacked?: boolean;
+  normalize?: boolean;
+  cumulative?: boolean;
+  sort?: "default" | "label" | "labelDesc" | "value" | "valueDesc";
+  limit?: number;
+  omitEmpty?: boolean;
+  smooth?: boolean;
+  labels?: boolean;
+  legend?: boolean;
+  grid?: boolean;
+  palette?: string;
+  height?: number;
+  goal?: number;
+  yMin?: number;
+  yMax?: number;
+  format?: string;
+  title?: string;
+}
+
 export interface DatabaseViewInfo {
   databaseId: string;
   id: string;
   name: string;
-  type: "table" | "board" | "gallery" | "list" | "calendar";
+  type: "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
   filters: { id: string; property: string; op: string; value?: unknown }[];
   filterMode: "and" | "or";
+  /** Advanced filter tree, combined (AND) with `filters`. */
+  advanced?: { mode: "and" | "or"; items: DatabaseFilterNode[] };
   sorts: { property: string; direction: "asc" | "desc" }[];
   /** Visible properties, in order (the title column first). */
   visible: string[];
   hidden: string[];
   groupBy?: string;
   hiddenGroups?: string[];
+  collapsedGroups?: string[];
+  hideEmptyGroups?: boolean;
+  colorColumns?: boolean;
   dateProperty?: string;
   cardPreview?: "cover" | "none";
+  cardSize?: "small" | "medium" | "large";
   wrap?: boolean;
   widths?: Record<string, number>;
   calcs?: Record<string, string>;
+  showFilterBar?: boolean;
+  /** Rows shown before "Load more". */
+  limit?: number;
+  showIcons?: boolean;
+  /** Where row pages open: modal (default) | side | tab | current. */
+  openIn?: "modal" | "side" | "tab" | "current";
+  rowNumbers?: boolean;
+  chart?: DatabaseChartInfo;
+  /** Custom views: the HTML/CSS/JS rendered in a sandboxed frame. */
+  custom?: { html: string; height?: number };
 }
 
 export interface DatabaseRowInfo {
   id: string;
   title: string;
-  /** Values keyed by property name; select options are returned by name. */
+  /** Values keyed by property name; select options are returned by name; formulas hold their result. */
   values: Record<string, unknown>;
   updatedAt: string;
+  /** Formula errors for this row, by property name. */
+  errors?: Record<string, string>;
 }
 
 export interface WorkspaceInfo {
@@ -2487,5 +2728,19 @@ export interface PluginTestResult {
 export interface PluginInstallResult extends PluginInfo {
   test?: PluginTestResult;
   health: { status: "ready" | "failed" | "starting" | "stopped"; error?: string; logs: { level: string; message: string }[] };
+}
+
+/** Something with editable text, from source.list (assistant). */
+export interface SourceEntry {
+  /** Pass to source.get / source.edit, e.g. "status:pomodoro", "home:<viewId>/<widgetId>". */
+  target: string;
+  kind: "sidebar" | "status" | "block" | "node" | "css" | "component" | "home" | "homeview" | "plugin";
+  title: string;
+  /** Layer id ("base" = the app's own customizations), plugin id, or "home". */
+  owner: string;
+  /** Text fields and their length in characters. */
+  fields: Record<string, number>;
+  /** False for plugin-owned items: change them with plugins.edit. */
+  editable: boolean;
 }
 ```

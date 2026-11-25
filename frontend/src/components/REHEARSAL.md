@@ -405,3 +405,34 @@ I checked this with a mock Creator turn (`/tmp/ai-rh/board.mjs`). The turn regis
 - Inside each frame, `html` and `body` compute to `rgba(0, 0, 0, 0)`, so the status widget blends into the bar.
 - `noteral.surface` is `page` / `status` and `noteral.fill` is `true` for the full page.
 - Fault fixed: the status bar showed "0 words · 1 blocks" for custom items, folders and databases. Stats now show only for documents.
+
+## Round 5 — assistant: batch rows, edit tools, model list, files, compaction (2026-11-25)
+
+Mock: OpenAI-compatible server on :9911 (8 models), app server on :8124. Driver samples the reply every 120 ms while a "reading list with 20 books" run streams in Edit mode, at 1366 and 390.
+
+- **Timeline flicker** — 0 open/close flips across 32 samples at both widths. The timeline stays open while the run is live, the label switches to "Writing" when the answer starts, and it folds to "Worked for 4s · 4 steps" once the run ends. Before this fix, answer text hid the steps and they came back on the next tool call.
+- **Batch rows** — the model made one `databases.addRows` call with 20 rows, not 20 calls. The timeline shows "Added rows · 20 rows".
+- **Token use** — loading tools on demand sends 29 tool schemas (~18 KB) in Edit mode instead of 98 (~50 KB). Older tool results are cut to 1,200 characters in history.
+- **Files** — chips for image + text in the composer (image chip shows a 16 px thumbnail, or an icon if the image won't decode). The sent message shows a 36 px thumbnail. A model without vision gets a warning chip and a note in the request instead of the image bytes.
+- **Compaction** — `/compact` adds a "Compacted N messages" divider that expands to show the summary. The context ring drops from 8% to 5%.
+- **Model list** — after Load models: alphabetical list with a filter (shown when there are more than 6), the selected model scrolled to the centre, badges for window, vision and thinking (a dashed badge means the window is an estimate), and a pencil that opens options inline. Files and Thinking now sit on their own rows, so the level buttons don't wrap into ragged lines at 390.
+- **Behaviour** — the auto-compact slider (50–95%, default 80) plus an on/off switch; "Load tools on demand" checkbox.
+- No page errors, no horizontal overflow in the panel at 390.
+
+## Round 6 — databases: header, view settings, filters, formula, chart, custom, row peek, AI embed (2026-11-25)
+
+Real app (production server build, :8124, data /tmp/noteral-r6) with a "Q4 planning" page holding an inline Projects database of 12 rows and 7 properties. Drivers: /tmp/ai-rh/r6/db.mjs and custom.mjs at 1366 and 390, ai.mjs against the mock provider on :9911. Screenshots were checked at 1:1.
+
+- **Header** — the tabs and actions sit on one row at both widths: the tab tops are at 172/173 px and the action tops at 177 px. At 390 the extra views fold into "+1" and the active tab truncates instead of running under the actions. Before this fix "1 more" overlapped the Filter icon.
+- **View settings** — the root page shows Layout, Properties, Filter, Sort, Group, the filter-bar switch, duplicate and delete. The Layout grid is now 4 columns. Before, there were 5, which left one orphan tile. "Open pages in" is a 2×2 grid with the glyph beside the label, replacing four squeezed tiles whose "Center peek" label wrapped. The Group page has hide empty, collapse/expand all, and per-group eye toggles.
+- **Editor block selection (bug fixed)** — clicking a tab or opening settings inside an inline database selected the whole BlockNote node, which greyed out the database. `lib/blockSelection.ts` now hands mousedown inside `.db-block` / `[data-editor-isolated]` back to the embed. After clicks there are 0 selected nodes.
+- **Filter bar** — 6 chips plus Clear scroll on one 26 px line: scrollWidth is 718 against clientWidth 597 at 1366, and 189 at 390. Nothing wraps or pushes the page wider.
+- **Advanced filter** — the popover fits inside the viewport at both widths and states that it is combined with the simple chips.
+- **Chart** — a stacked bar of Budget by Team and Status. Whole-currency totals now show "$131,000" instead of "$131,000.00". The header wraps cleanly at 390.
+- **Row peek** — center peek (default) is 960×757, side peek docks on the right, and both are full-screen at 390. Prev/next, switch-mode and full-page buttons are present.
+- **Formula** — highlighted source, live "Returns text", and a 5-row preview. A deliberate typo shows the error under the editor with the token highlighted, and Save is disabled. The reference section heading reads "Reference" instead of a second "Properties". The error no longer repeats the token twice.
+- **Custom view** — the starter list renders in the transparent frame on the database surface. A row with no icon no longer gets a 📄 placeholder. The code editor modal shows the bridge reference.
+- **AI embed** — the mock run calls `databases.embed` in Edit mode, the database block appears in the page, and its marker survives a markdown round-trip.
+- No page errors and no horizontal overflow in any step.
+
+Not checked: stageshow `film.mjs --gate`. It only films `.ss-stage` / `.ss-fit` stages ("no visible stages in .page-pane"), so it can't film app screens. Also not checked: calendar and board with 100+ rows, and RTL.

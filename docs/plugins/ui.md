@@ -10,7 +10,7 @@ SDK 2 lets a plugin add real interface rather than only Markdown panels: right-s
 | Page-tree item type | `nodes.registerType`, `unregisterType`, `listTypes`, `create`, `getData`, `setData` | `nodes` (`create`/`setData`: `pages.write`) |
 | Home | `home.listViews`, `createView`, `updateView`, `setBackground`, `addWidget`, `updateWidget`, … | `home` |
 | Appearance | `appearance.setTokens`, `styleComponent`, `addCss`, `removeCss`, `reset`, `listLayers`, `setLayer` | `appearance` |
-| Database views | `databases.addView`, `updateView`, `queryView`, `updateProperty`, … | `databases.read` / `databases.write` |
+| Databases | `databases.embed`, `addView`, `updateView`, `queryView`, `addProperty`, `updateProperty`, `checkFormula`, … | `databases.read` / `databases.write` |
 
 Everything a plugin contributes belongs to it. Disabling or uninstalling the plugin removes all of it, and none of it can touch another plugin's contributions.
 
@@ -191,6 +191,33 @@ await this.app.appearance.styleComponent({ component: "sidebar", rules: { backgr
 ```
 
 `appearance.listTokens()` and `appearance.listComponents()` return the names you can target.
+
+## Databases
+
+Everything about a database is addressed by **name**: properties, options and view settings take the names the user sees (ids work too), and reads return names.
+
+**Embedding.** `databases.embed({ pageId, databaseId?, title?, properties?, view?, position?, blockId? })` puts a database block in a page. With `databaseId` it links an existing database (any database in the workspace); without it, it creates a new database inside the page. `position` is `start`, `end` (default), `before` or `after` a `blockId` (or `anchor` text). It works whether or not the page is open. In the Markdown that `pages.get`, `pages.read` and `editor.getMarkdown` return, an embedded database is a line `<!-- database:<id> Title -->` and a custom block is `<!-- block:<blockId> kind -->`. Keep those lines when you write the Markdown back and the blocks survive; move them to move the blocks, delete them to remove them. A new `<!-- database:<id> -->` line also embeds that database.
+
+**Views.** `addView` / `updateView` take `type` (`table`, `board`, `list`, `gallery`, `calendar`, `chart`, `custom`) and only the settings you pass:
+
+- `filters` + `filterMode` (simple rules) and `advanced` (`{ mode: "and" | "or", items }`, where items are rules `{ property, op, value }` or nested groups, up to 4 levels). Both apply together. Date rules accept ISO dates, relative dates (`@today`, `@weekAgo`, …) and `within` ranges (`pastWeek`, `thisMonth`, …).
+- `groupBy` on boards (select, multi-select, status, checkbox) and on tables, lists and galleries (any property), with `hiddenGroups`, `collapsedGroups`, `hideEmptyGroups`, `colorColumns`.
+- `show` / `hide` / `order` / `widths` / `calcs`, `rowNumbers`, `wrap`, `showIcons`, `cardPreview`, `cardSize` (`small`, `medium`, `large`), `showFilterBar`, `limit` (rows before *Load more*), and `openIn` — where a row opens: `modal` (default), `side`, `tab` or `current`.
+- `chart` for chart views: `{ kind, x, dateBucket, aggregate, y, series, stacked, normalize, cumulative, sort, limit, omitEmpty, smooth, labels, legend, grid, palette, height, goal, yMin, yMax, format, title }`. `kind` is bar, column, line, area, pie, donut, scatter, funnel, radar, heatmap or number; `aggregate` is count, countValues, countUnique, sum, average, median, min or max (the last five need a numeric `y`). `x` can also be `createdTime` or `lastEdited`. Passed fields merge into the current chart.
+- `custom` for custom views: `{ html, height? }`, a fully custom HTML/CSS/JS view in a sandboxed frame. Its script reads `window.noteral.database`:
+
+```js
+const db = window.noteral.database;
+// db.schema, db.view, db.rows — rows have id, title, icon, values (by property name) and cells (display text)
+db.onChange((data) => render(data.rows));    // called with fresh { schema, view, rows } when the database changes
+db.openRow(rowId);                            // open a row
+await db.setValue(rowId, "Status", "Done");   // change one value (by property name)
+await db.addRow({ Name: "New", Status: "Todo" });
+```
+
+`getView` returns every setting with property names, and `queryView` reads rows the way a view shows them (plus optional extra `filters`, `advanced`, `sorts`, `search`).
+
+**Formulas.** A property of type `formula` computes its value from the row: `addProperty({ databaseId, name: "Left", type: "formula", formula: 'dateBetween(prop("Due"), now(), "days")', format?, dateFormat? })`. Refer to properties with `prop("Name")`. Formulas are checked when saved; an error names the problem and the offending part. `checkFormula({ databaseId, formula })` tries one without saving and returns its result type and sample values, and `formulaFunctions()` lists every function, one per line. Row reads include formula results (with `errors` per row when one fails); setting a formula value is an error. Renaming a property updates the formulas that use it, and `updateProperty({ type: "formula", formula })` turns an existing property into a formula.
 
 ## Testing before you ship
 

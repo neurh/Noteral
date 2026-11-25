@@ -9,6 +9,7 @@ import {
   EyeOff,
   ListFilter,
   Plus,
+  Sigma,
   Trash2,
   WrapText,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import {
   type PropertyType,
   type SelectOption,
 } from "../../lib/database";
+import { FormulaEditor } from "./FormulaEditor";
 import { OptionEditor } from "./OptionPicker";
 import { OptionChip, PropertyIcon } from "./parts";
 import { Popover } from "./Popover";
@@ -159,6 +161,8 @@ interface PropertyMenuProps {
 export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, onFilter }: PropertyMenuProps) {
   const [name, setName] = useState(property.name);
   const [sub, setSub] = useState<{ kind: "type" | "format"; anchor: HTMLElement } | null>(null);
+  // A new, empty formula opens straight into the editor.
+  const [editFormula, setEditFormula] = useState(() => property.type === "formula" && !property.formula?.trim());
   const isTitle = property.id === TITLE_ID;
   const commitName = () => {
     if (name.trim() && name.trim() !== property.name) renameProperty(db, property.id, name);
@@ -175,6 +179,20 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
     close();
   };
   const currentSort = view?.sorts.find((s) => s.propertyId === property.id)?.direction;
+
+  if (editFormula) {
+    const live = db.schema.properties.find((item) => item.id === property.id) ?? property;
+    return (
+      <FormulaEditor
+        db={db}
+        property={live}
+        onClose={() => {
+          commitName();
+          onClose();
+        }}
+      />
+    );
+  }
 
   return (
     <Popover anchor={anchor} onClose={close} width={250} label={`${property.name} property`}>
@@ -196,6 +214,13 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
           <button type="button" className="db-menu-item" onClick={(event) => setSub({ kind: "type", anchor: event.currentTarget })}>
             <PropertyIcon property={property} /> Type
             <span className="db-menu-value">{typeName(property.type)}</span>
+            <ChevronRight size={14} className="db-menu-trail" />
+          </button>
+        ) : null}
+        {property.type === "formula" ? (
+          <button type="button" className="db-menu-item" onClick={() => setEditFormula(true)}>
+            <Sigma size={14} /> Edit formula
+            <code className="db-menu-value db-formula-snippet">{property.formula?.trim() || "Empty"}</code>
             <ChevronRight size={14} className="db-menu-trail" />
           </button>
         ) : null}
@@ -297,6 +322,7 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
             onPick={(type) => {
               setSub(null);
               changePropertyType(db, property.id, type);
+              if (type === "formula") setEditFormula(true);
             }}
           />
         </Popover>

@@ -1,5 +1,8 @@
 import {
   AlignLeft,
+  Blocks,
+  ChartColumn,
+  Sigma,
   AtSign,
   Calendar,
   CalendarDays,
@@ -35,6 +38,7 @@ const typeIcons: Record<PropertyType, LucideIcon> = {
   phone: Phone,
   createdTime: Clock,
   lastEdited: History,
+  formula: Sigma,
 };
 
 export function PropertyIcon({ property, type, size = 14 }: { property?: Property; type?: PropertyType; size?: number }) {
@@ -49,6 +53,8 @@ const viewIcons: Record<ViewType, LucideIcon> = {
   gallery: LayoutGrid,
   list: Rows3,
   calendar: CalendarDays,
+  chart: ChartColumn,
+  custom: Blocks,
 };
 
 export function ViewIcon({ type, size = 14 }: { type: ViewType; size?: number }) {

@@ -36,6 +36,7 @@ import { openMarkdownLink } from "../lib/links";
 import { Markdown } from "../lib/markdownView";
 import { useAppStore } from "../store";
 import { AGENT_TOOL } from "./agents";
+import { useFollow } from "./follow";
 import { changesOf } from "./ledger";
 import type { Change } from "./ledger";
 import { hostOf, searchResults, sourcesOf } from "./sources";
@@ -233,22 +234,32 @@ export const Timeline = memo(function Timeline({
   steps,
   live,
   waiting = false,
+  answering = false,
 }: {
   message: ChatMessage;
   steps: Step[];
+  /** The run is still going (it may be writing text between steps). */
   live: boolean;
   /** The run is paused on an approval or a question below the timeline. */
   waiting?: boolean;
+  /** Text after the last step is streaming below the timeline. */
+  answering?: boolean;
 }) {
   const [open, setOpen] = useState(live);
   const [showAll, setShowAll] = useState(false);
   const wasLive = useRef(live);
+  // Once the user opens or closes it by hand, stop moving it for them.
+  const pinned = useRef(false);
   const now = useNow(live);
 
-  // Open while working; fold away once the answer arrives.
+  // Open while the run works and fold once it has finished. Text streaming between two
+  // steps doesn't fold it: that text may turn into a step a moment later, and folding then
+  // reopening is the flicker this avoids.
   useEffect(() => {
-    if (live && !wasLive.current) setOpen(true);
-    if (!live && wasLive.current) setOpen(false);
+    if (!pinned.current) {
+      if (live && !wasLive.current) setOpen(true);
+      if (!live && wasLive.current) setOpen(false);
+    }
     wasLive.current = live;
   }, [live]);
 
@@ -264,7 +275,9 @@ export const Timeline = memo(function Timeline({
 
   const summary = waiting
     ? "Waiting for you"
-    : live
+    : live && answering
+      ? "Writing"
+      : live
     ? liveLabel(steps, now)
     : onlyThinking
       ? `Thought for ${formatDuration(elapsed)}`
@@ -279,12 +292,20 @@ export const Timeline = memo(function Timeline({
   const visible = hidden ? steps.slice(hidden) : steps;
 
   return (
-    <section className={`activity${live ? " is-live" : ""}${waiting ? " is-waiting" : ""}${open ? " is-open" : ""}`} aria-label="How the assistant worked">
-      <button type="button" className="activity-head" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+    <section className={`activity${live && !waiting ? " is-live" : ""}${waiting ? " is-waiting" : ""}${open ? " is-open" : ""}`} aria-label="How the assistant worked">
+      <button
+        type="button"
+        className="activity-head"
+        onClick={() => {
+          pinned.current = true;
+          setOpen((value) => !value);
+        }}
+        aria-expanded={open}
+      >
         <span className="activity-head-icon" aria-hidden="true">
-          {live ? <span className="activity-pulse" /> : waiting ? <Hand size={13} /> : failed ? <CircleAlert size={13} /> : <Check size={13} />}
+          {waiting ? <Hand size={13} /> : live ? <span className="activity-pulse" /> : failed ? <CircleAlert size={13} /> : <Check size={13} />}
         </span>
-        <span className={`activity-head-label${live ? " shimmer" : ""}`}>{summary}</span>
+        <span className={`activity-head-label${live && !waiting ? " shimmer" : ""}`}>{summary}</span>
         {live ? <span className="activity-timer">{formatDuration(elapsed)}</span> : null}
         {meta.length ? <span className="activity-head-meta">{meta.join(" · ")}</span> : null}
         <ChevronDown size={13} className="activity-caret" aria-hidden="true" />
@@ -344,7 +365,9 @@ function ThinkingStep({ step, now, live }: { step: Extract<Step, { kind: "thinki
   const ms = step.startedAt ? (step.endedAt ?? now) - step.startedAt : null;
   const label = live ? "Thinking" : ms !== null && ms >= 1000 ? `Thought for ${formatDuration(ms)}` : "Thought";
   const text = step.text.trim();
-  const preview = live ? text.slice(-220) : "";
+  const preview = live ? text.slice(-400) : "";
+  const fullRef = useFollow<HTMLParagraphElement>(live && open ? text : open);
+  const previewRef = useFollow<HTMLParagraphElement>(preview, true);
   return (
     <li className={`activity-step is-thinking${live ? " is-running" : ""}`}>
       <span className="activity-rail" aria-hidden="true">
@@ -356,7 +379,15 @@ function ThinkingStep({ step, now, live }: { step: Extract<Step, { kind: "thinki
           {live && ms !== null ? <span className="activity-time">{formatDuration(ms)}</span> : null}
           {text ? <ChevronDown size={12} className="activity-caret" aria-hidden="true" /> : null}
         </button>
-        {open ? <p className="activity-reasoning">{text}</p> : preview ? <p className="activity-reasoning is-preview">{preview}</p> : null}
+        {open ? (
+          <p ref={fullRef} className="activity-reasoning">
+            {text}
+          </p>
+        ) : preview ? (
+          <p ref={previewRef} className="activity-reasoning is-preview">
+            {preview}
+          </p>
+        ) : null}
       </div>
     </li>
   );
@@ -484,6 +515,7 @@ function AgentStepRow({ tool, now }: { tool: ToolPart; now: number }) {
         ? "Stopped"
         : `${run.steps.length} step${run.steps.length === 1 ? "" : "s"} · report ready`;
   const report = tool.status === "done" ? (tool.result ?? run.text) : run.text;
+  const reportRef = useFollow<HTMLDivElement>(running && open ? report : open);
   return (
     <li className={`activity-step is-agent agent-${run.status}`}>
       <span className="activity-rail" aria-hidden="true">
@@ -514,7 +546,11 @@ function AgentStepRow({ tool, now }: { tool: ToolPart; now: number }) {
                   ))}
                 </ol>
               ) : null}
-              {report ? <Markdown source={report} className="assistant-md agent-card-report" onLink={openMarkdownLink} /> : null}
+              {report ? (
+                <div ref={reportRef} className="agent-card-report">
+                  <Markdown source={report} className="assistant-md" onLink={openMarkdownLink} />
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

@@ -47,6 +47,7 @@ Rules for agents writing plugins:
 - pages.trash({}) → PageInfo[] [pages.read] — List trashed pages.
 - pages.create({title?, parentId?, kind?, markdown?, icon?, open?}) → PageInfo [pages.write] — Create a page or folder, optionally with Markdown content.
 - pages.write({pageId, markdown}) → void [pages.write] — Replace a page's whole content with Markdown.
+- pages.edit({pageId?, edits}) → { replaced: number; blocksChanged?: number } [pages.write] — Change part of a page by find-and-replace, without resending the whole page.
 - pages.append({pageId, markdown}) → void [pages.write] — Append Markdown to the end of a page.
 - pages.rename({pageId, title}) → void [pages.write] — Rename a page.
 - pages.setIcon({pageId, icon}) → void [pages.write] — Set a page's icon (an emoji, or "" to clear).
@@ -59,18 +60,23 @@ Rules for agents writing plugins:
 - databases.list({}) → DatabaseInfo[] [databases.read] — List databases with their row counts.
 - databases.getSchema({databaseId}) → DatabaseSchemaInfo [databases.read] — Get a database's properties (columns) and views.
 - databases.queryRows({databaseId, where?, limit?}) → DatabaseRowInfo[] [databases.read] — Read a database's rows with values keyed by property name.
-- databases.create({title, parentId?, properties?, view?, open?}) → { databaseId: string } [databases.write] — Create a database with properties.
-- databases.addProperty({databaseId, name, type, options?}) → { propertyId: string } [databases.write] — Add a property (column) to a database.
+- databases.create({title, parentId?, properties?, view?, open?}) → { databaseId: string } [databases.write] — Create a database (a page in the tree) with properties and a first view.
+- databases.embed({pageId?, databaseId?, title?, properties?, view?, position?, blockId?, anchor?}) → { databaseId: string; pageId: string; created: boolean } [databases.write] — Put a database inside a page's content: a new inline database, or a linked view of an existing one.
+- databases.addProperty({databaseId, name, type, options?, formula?, format?, dateFormat?}) → { propertyId: string } [databases.write] — Add a property (column) to a database.
 - databases.addRow({databaseId, title?, values?}) → { rowId: string } [databases.write] — Add a row; values are keyed by property name.
+- databases.addRows({databaseId, rows}) → { rowIds: string[]; count: number } [databases.write] — Add many rows in one call (up to 500). Prefer this over repeated addRow.
+- databases.updateRows({updates}) → { count: number } [databases.write] — Change many rows in one call (up to 500).
 - databases.updateRow({rowId, title?, values?}) → void [databases.write] — Change a row's title and/or values (keyed by property name).
 - databases.getView({databaseId, viewId?}) → DatabaseViewInfo [databases.read] — Get one view with its filters, sorts, grouping, visible properties and calculations.
-- databases.queryView({databaseId, viewId?, search?, filters?, filterMode?, sorts?, limit?}) → DatabaseRowInfo[] [databases.read] — Read rows the way a view shows them (its filters and sorts applied), optionally with a search.
-- databases.addView({databaseId, name?, type?, filters?, filterMode?, sorts?, groupBy?, hiddenGroups?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, wrap?}) → DatabaseViewInfo [databases.write] — Add a view (table, board, gallery, list or calendar) with optional filters, sorts and grouping.
-- databases.updateView({databaseId, viewId, name?, type?, filters?, filterMode?, sorts?, groupBy?, hiddenGroups?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, wrap?}) → DatabaseViewInfo [databases.write] — Change a view: name, layout, filters, sorts, grouping, visible properties, order, widths, calculations.
+- databases.queryView({databaseId, viewId?, search?, filters?, filterMode?, advanced?, sorts?, limit?}) → DatabaseRowInfo[] [databases.read] — Read rows the way a view shows them (its filters and sorts applied), optionally with a search.
+- databases.addView({databaseId, name?, type?, filters?, filterMode?, advanced?, sorts?, groupBy?, hiddenGroups?, collapsedGroups?, hideEmptyGroups?, colorColumns?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, cardSize?, wrap?, rowNumbers?, showFilterBar?, showIcons?, limit?, openIn?, chart?, custom?}) → DatabaseViewInfo [databases.write] — Add a view (table, board, gallery, list, calendar, chart or custom) with optional filters, sorts, grouping and settings.
+- databases.updateView({databaseId, viewId, name?, type?, filters?, filterMode?, advanced?, sorts?, groupBy?, hiddenGroups?, collapsedGroups?, hideEmptyGroups?, colorColumns?, show?, hide?, order?, widths?, calcs?, dateProperty?, cardPreview?, cardSize?, wrap?, rowNumbers?, showFilterBar?, showIcons?, limit?, openIn?, chart?, custom?}) → DatabaseViewInfo [databases.write] — Change a view: layout, filters (simple and advanced), sorts, grouping, visible properties, calculations, chart or custom settings, where rows open.
 - databases.removeView({databaseId, viewId}) → void [databases.write] — Remove a view (a database keeps at least one).
 - databases.duplicateView({databaseId, viewId, name?}) → DatabaseViewInfo [databases.write] — Copy a view with all its settings.
 - databases.moveView({databaseId, viewId, index}) → void [databases.write] — Move a view to another position in the view tabs.
-- databases.updateProperty({databaseId, property, name?, type?, format?, options?}) → DatabaseSchemaInfo [databases.write] — Rename a property, change its type, number format or select options.
+- databases.updateProperty({databaseId, property, name?, type?, formula?, format?, dateFormat?, options?}) → DatabaseSchemaInfo [databases.write] — Rename a property, change its type, formula, number/date format or select options.
+- databases.formulaFunctions({}) → string [databases.read] — The formula language: syntax and every function, one line each.
+- databases.checkFormula({databaseId, formula, property?}) → { ok: boolean; error?: string; resultType?: string; sample?: { title: string; value: unknown; error?: string }[] } [databases.read] — Check a formula against a database without saving: errors, result type and sample results.
 - databases.removeProperty({databaseId, property}) → void [databases.write] — Delete a property and its values from every row.
 - databases.deleteRows({rowIds}) → { deleted: number } [databases.write] — Move rows to the trash.
 - databases.rename({databaseId, title?, titleColumn?}) → void [databases.write] — Rename a database or its title column.

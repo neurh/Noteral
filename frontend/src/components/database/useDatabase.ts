@@ -12,11 +12,16 @@ import {
   type DatabaseSchema,
   type RowValues,
 } from "../../lib/database";
+import { withFormulas, type FormulaIssue } from "../../lib/databaseFormulas";
 
 export interface DatabaseApi {
   meta: PageMeta | undefined;
   schema: DatabaseSchema;
   rows: DatabaseRow[];
+  /** Formula compile errors and cycles, per property. */
+  formulaIssues: FormulaIssue[];
+  /** Formula runtime errors: row id → property id → message. */
+  rowErrors: Map<string, Record<string, string>>;
   /** Applies a change to the latest stored schema (never a stale render copy). */
   updateSchema: (change: (schema: DatabaseSchema) => DatabaseSchema | void) => void;
   setValue: (rowId: string, propertyId: string, value: unknown) => void;
@@ -46,8 +51,11 @@ export function useDatabase(databaseId: string): DatabaseApi {
   const movePage = useAppStore((state) => state.movePage);
   const selectPage = useAppStore((state) => state.selectPage);
 
-  const schema = useMemo(() => parseSchema(meta?.data), [meta?.data]);
-  const rows = useMemo(() => rowsOf(children, databaseId), [children, databaseId]);
+  const stored = useMemo(() => parseSchema(meta?.data), [meta?.data]);
+  const storedRows = useMemo(() => rowsOf(children, databaseId), [children, databaseId]);
+  // Formula results are computed here, so every view sees them as values.
+  const computed = useMemo(() => withFormulas(storedRows, stored), [storedRows, stored]);
+  const { schema, rows } = computed;
 
   const updateSchema = useCallback(
     (change: (schema: DatabaseSchema) => DatabaseSchema | void) => {
@@ -77,6 +85,8 @@ export function useDatabase(databaseId: string): DatabaseApi {
     meta,
     schema,
     rows,
+    formulaIssues: computed.issues,
+    rowErrors: computed.rowErrors,
     updateSchema,
     setValue,
     setValues,

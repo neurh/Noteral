@@ -150,7 +150,8 @@ interface AppState {
   createWorkspace: (name: string) => Promise<void>;
   renameWorkspace: (id: string, name: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
-  selectPage: (pageId: string, options?: { recordHistory?: boolean }) => Promise<void>;
+  /** Opens a page in a tab. `replace` swaps it into the current tab instead of adding one. */
+  selectPage: (pageId: string, options?: { recordHistory?: boolean; replace?: boolean }) => Promise<void>;
   selectTab: (tabId: string) => void;
   openHomeTab: (settings?: Partial<HomeTabSettings>, paneId?: string) => void;
   updateHomeTab: (tabId: string, patch: Partial<HomeTabSettings>) => void;
@@ -183,6 +184,8 @@ interface AppState {
     parentId?: string,
     options?: { open?: boolean; title?: string; data?: string },
   ) => Promise<PageMeta | null>;
+  /** Creates many items of one kind in one backend call (bulk database rows). Throws on failure. */
+  createItems: (kind: ItemKind, parentId: string, items: { title?: string; data?: string }[]) => Promise<PageMeta[]>;
   /** Replaces a page's structured data (database schema or row values). Optimistic. */
   setPageData: (pageId: string, data: string) => Promise<void>;
   closeTab: (pageId: string) => Promise<void>;
@@ -257,6 +260,7 @@ function withoutHomeTab(settings: Record<string, HomeTabSettings>, tabId: string
 function openTabInLayout(
   state: AppState,
   pageId: string,
+  replaceActive = false,
 ): { layout: LayoutNode; focusedPaneId: string; replacedHomeTab: string } {
   const existing = paneOfTab(state.layout, pageId);
   if (existing) {
@@ -267,12 +271,13 @@ function openTabInLayout(
     };
   }
   const focused = findPane(state.layout, state.focusedPaneId) ?? firstPane(state.layout);
-  if (focused && isHomeTab(focused.activeTabId) && focused.tabs.includes(focused.activeTabId)) {
-    const replacedHomeTab = focused.activeTabId;
+  if (focused && (replaceActive || isHomeTab(focused.activeTabId)) && focused.tabs.includes(focused.activeTabId)) {
+    const replacedHomeTab = isHomeTab(focused.activeTabId) ? focused.activeTabId : "";
+    const replaced = focused.activeTabId;
     return {
       layout: updatePane(state.layout, focused.id, (pane) => ({
         ...pane,
-        tabs: pane.tabs.map((tabId) => (tabId === replacedHomeTab ? pageId : tabId)),
+        tabs: pane.tabs.map((tabId) => (tabId === replaced ? pageId : tabId)),
         activeTabId: pageId,
       })),
       focusedPaneId: focused.id,
@@ -746,7 +751,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectPage: async (pageId, options) => {
     const page = get().pages.find((item) => item.id === pageId);
     if (!page) return;
-    const opened = openTabInLayout(get(), pageId);
+    const previous = get().activePageId;
+    if (options?.replace && previous && previous !== pageId && get().documents[previous]) void get().saveNow(previous);
+    const opened = openTabInLayout(get(), pageId, options?.replace);
     // Re-selecting the page already in front (a self-link, its sidebar row)
     // must keep its outline and counts: the editor will not publish them again.
     const switching = get().activePageId !== pageId;
@@ -963,6 +970,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().notify(errorMessage(error), "error");
       return null;
     }
+  },
+
+  createItems: async (kind, parentId, items) => {
+    const workspaceId = get().workspace?.id;
+    if (!workspaceId) throw new Error("No workspace is open.");
+    if (!items.length) return [];
+    const created = await api.createItems(workspaceId, parentId, kind, items.map((item) => ({ title: item.title ?? "", data: item.data ?? "" })));
+    if (get().workspace?.id !== workspaceId) return [];
+    const metas: PageMeta[] = (created ?? []).map((doc) => ({
+      id: doc.id,
+      parentId: doc.parentId,
+      title: doc.title,
+      icon: doc.icon,
+      cover: doc.cover,
+      position: doc.position,
+      updatedAt: doc.updatedAt,
+      createdAt: doc.createdAt,
+      kind: doc.kind,
+      data: doc.data,
+    }));
+    set((state) => ({ pages: [...state.pages, ...metas] }));
+    return metas;
   },
 
   setPageData: async (pageId, data) => {

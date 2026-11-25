@@ -5,6 +5,7 @@ Noteral plugins are small JavaScript bundles that run in a sandboxed iframe and 
 - **[Manifest](manifest.md)**: every `manifest.json` field
 - **[Extending the interface](ui.md)**: sidebar tabs, status-bar widgets, custom blocks, custom page types, Home, appearance layers, testing
 - **[Publishing](publishing.md)**: `npm run release` and `npm run submit`, using the GitHub CLI, GitHub Releases and the community registry
+- **[Databases](../databases.md)**: views, filters, formulas, charts, custom views and embedding from code
 - **[API reference](../sdk/api-reference.md)**: every method, event, permission and type, generated from the source
 - **[llms.txt](../sdk/llms.txt)** / **[llms-full.txt](../sdk/llms-full.txt)**: the same material for coding agents
 

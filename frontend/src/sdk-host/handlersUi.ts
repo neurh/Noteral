@@ -46,6 +46,8 @@ import { viewHub } from "../lib/viewFrame";
 import { pluginRuntime } from "../plugins/runtime";
 import { loadOptions } from "../lib/pluginOptions";
 import { PERMISSIONS } from "./spec";
+import { applyEdits } from "./textEdits";
+import type { TextEdit } from "./textEdits";
 import { SNIPPET_ID, applyTokens, displayTitle, editCustomizations, editorFor, pluginInfo, requireMeta, store } from "./handlers";
 import type { CallContext } from "./handlers";
 import type {
@@ -714,6 +716,37 @@ function buildManifest(input: ManifestInput): Manifest {
   } as Manifest;
 }
 
+/** 1.2.3 → 1.2.4 (anything unparsable becomes 1.0.1). */
+function bumpPatch(version: string): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? "");
+  return match ? `${match[1]}.${match[2]}.${Number(match[3]) + 1}` : "1.0.1";
+}
+
+/** Test-run, install and health-check a plugin; a plugin that fails to start is switched off. */
+async function installPlugin(manifest: Manifest, code: string, styles: string, skipTest: boolean): Promise<PluginInstallResult> {
+  let test: PluginTestResult | undefined;
+  if (!skipTest) {
+    test = (await pluginRuntime.trial(manifest, code, styles, 1500)) as PluginTestResult;
+    if (!test.ok) throw new Error(`The plugin failed its test run, so nothing was installed. Fix it and try again.\n${summarizeTest(test)}`);
+  }
+  let info;
+  try {
+    info = await api.installGeneratedPlugin(manifest, code, styles, manifest.permissions ?? []);
+    await store().loadPlugins();
+  } catch (error) {
+    throw new Error(`The plugin was not installed: ${errorMessage(error)}`);
+  }
+  const health = await pluginRuntime.health(manifest.id);
+  if (health.status === "failed") {
+    // Don't leave a broken plugin running; the assistant can fix it and install again.
+    await api.togglePlugin(manifest.id, false).catch(() => undefined);
+    await store().loadPlugins();
+    health.error = `Turned off because it failed to start: ${health.error ?? "unknown error"}`;
+    info = { ...info, enabled: false };
+  }
+  return { ...pluginInfo(info), ...(test ? { test } : {}), health };
+}
+
 function summarizeTest(result: PluginTestResult): string {
   const lines = [`Status: ${result.status}${result.error ? ` — ${result.error}` : ""}`];
   const errors = result.logs.filter((entry) => entry.level !== "info").slice(-8);
@@ -729,30 +762,34 @@ const PLUGIN_HANDLERS: Record<string, Handler> = {
     return (await pluginRuntime.trial(manifest, String(p.code ?? ""), p.styles ?? "", waitMs)) as PluginTestResult;
   },
   "plugins.create": async (p): Promise<PluginInstallResult> => {
-    const manifest = buildManifest(p.manifest);
     const code = String(p.code ?? "");
     if (!code.trim()) throw new Error("code is required.");
-    let test: PluginTestResult | undefined;
-    if (!p.skipTest) {
-      test = (await pluginRuntime.trial(manifest, code, p.styles ?? "", 1500)) as PluginTestResult;
-      if (!test.ok) throw new Error(`The plugin failed its test run, so nothing was installed. Fix it and call plugins.create again.\n${summarizeTest(test)}`);
+    return installPlugin(buildManifest(p.manifest), code, p.styles ?? "", Boolean(p.skipTest));
+  },
+  "plugins.edit": async (p): Promise<PluginInstallResult & { version: string; replaced: number }> => {
+    const source = await api.getPluginSource(p.id);
+    const manifest = structuredClone(source.manifest) as Manifest;
+    const file = p.file === "styles" ? "styles" : "code";
+    let code = source.code;
+    let styles = source.styles ?? "";
+    let replaced = 0;
+    if (p.edits?.length) {
+      const outcome = applyEdits(file === "styles" ? styles : code, p.edits as TextEdit[], `${manifest.name} (${file === "styles" ? "styles.css" : "main.js"})`);
+      replaced = outcome.replaced;
+      if (file === "styles") styles = outcome.text;
+      else code = outcome.text;
     }
-    let info;
-    try {
-      info = await api.installGeneratedPlugin(manifest, code, p.styles ?? "", manifest.permissions ?? []);
-      await store().loadPlugins();
-    } catch (error) {
-      throw new Error(`The plugin was not installed: ${errorMessage(error)}`);
+    if (p.permissions) {
+      const known = new Set<string>(PERMISSIONS.map((permission) => permission.id));
+      const unknown = (p.permissions as string[]).filter((id) => !known.has(id));
+      if (unknown.length) throw new Error(`Unknown permissions: ${unknown.join(", ")}.`);
+      manifest.permissions = Array.from(new Set(p.permissions as string[]));
     }
-    const health = await pluginRuntime.health(manifest.id);
-    if (health.status === "failed") {
-      // Don't leave a broken plugin running; the assistant can fix it and install again.
-      await api.togglePlugin(manifest.id, false).catch(() => undefined);
-      await store().loadPlugins();
-      health.error = `Turned off because it failed to start: ${health.error ?? "unknown error"}`;
-      info = { ...info, enabled: false };
-    }
-    return { ...pluginInfo(info), ...(test ? { test } : {}), health };
+    if (typeof p.description === "string") manifest.description = p.description;
+    if (!replaced && !p.permissions && typeof p.description !== "string") throw new Error("Nothing to change: pass edits, permissions or description.");
+    manifest.version = typeof p.version === "string" && p.version ? p.version : bumpPatch(manifest.version);
+    const result = await installPlugin(manifest, code, styles, Boolean(p.skipTest));
+    return { ...result, version: manifest.version, replaced };
   },
   "plugins.logs": (p): LogEntryInfo[] => {
     const limit = Math.max(1, Math.min(400, Number(p.limit ?? 50)));

@@ -1,11 +1,10 @@
 import { useState } from "react";
 import { Browser } from "@wailsio/runtime";
-import { Check, ExternalLink, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { api, errorMessage, list } from "../lib/api";
+import { Check, ExternalLink, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { errorMessage } from "../lib/api";
 import type { ProviderView } from "../lib/api";
 import { dialogs } from "../lib/dialogs";
-import { DEFAULT_CONTEXT_WINDOW, THINKING_INFO, THINKING_LEVELS, defaultContextWindow, defaultThinkingLevels, displayModel, modelKey, resolveModel } from "./models";
-import type { ModelConfig, ThinkingLevel } from "./models";
+import { ModelList } from "./ModelList";
 import { PRESETS, presetFor } from "./providers";
 import type { ProviderPreset } from "./providers";
 import { useAssistant } from "./store";
@@ -68,7 +67,6 @@ export function ProvidersView() {
           </div>
         ) : null}
       </section>
-      <ModelSettings />
       <BehaviourSettings />
     </div>
   );
@@ -140,6 +138,7 @@ function ProviderEditor({ editing, onDone }: { editing: NonNullable<Editing>; on
   const { provider, preset } = editing;
   const providers = useAssistant((state) => state.providers);
   const saveProvider = useAssistant((state) => state.saveProvider);
+  const discoverModels = useAssistant((state) => state.discoverModels);
   const [name, setName] = useState(provider?.name ?? preset.name);
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? preset.baseUrl);
   const [apiKey, setApiKey] = useState("");
@@ -206,9 +205,9 @@ function ProviderEditor({ editing, onDone }: { editing: NonNullable<Editing>; on
     setNote("");
     try {
       const saved = await persist();
-      const found = list(await api.listAIModels(saved.id)).map((item) => item.id).sort();
+      const found = await discoverModels(saved.id);
       if (!found.length) {
-        setNote("Connected, but the provider returned no models. Type a model id below.");
+        setNote("Connected, but the provider returned no models. Add a model id below.");
         return;
       }
       setModels(found);
@@ -269,20 +268,19 @@ function ProviderEditor({ editing, onDone }: { editing: NonNullable<Editing>; on
           {preset.local ? <small>Runs on this computer. Start {preset.name} first, then load models.</small> : null}
         </label>
 
-        <div className="assistant-field">
-          <span>
-            Model
-            <button type="button" className="assistant-link" onClick={() => void loadModels()} disabled={Boolean(busy)}>
-              {busy === "models" ? <LoaderCircle size={10} className="spin" /> : <RefreshCw size={10} />} Load models
-            </button>
-          </span>
-          <input className="inline-input mono" list="assistant-model-options" value={defaultModel} onChange={(event) => setDefaultModel(event.target.value)} spellCheck={false} placeholder="model id" />
-          <datalist id="assistant-model-options">
-            {models.map((model) => (
-              <option key={model} value={model} />
-            ))}
-          </datalist>
-        </div>
+        <ModelList
+          providerId={idFor()}
+          kind={preset.kind}
+          models={models}
+          value={defaultModel}
+          onChange={setDefaultModel}
+          onAdd={(model) => {
+            setModels((current) => (current.includes(model) ? current : [...current, model].sort()));
+            setDefaultModel(model);
+          }}
+          onLoad={() => void loadModels()}
+          loading={busy === "models"}
+        />
 
         {note ? (
           <p className="assistant-note ok">
@@ -305,156 +303,6 @@ function ProviderEditor({ editing, onDone }: { editing: NonNullable<Editing>; on
         </div>
       </section>
     </form>
-  );
-}
-
-/** Per-model context window and thinking levels. */
-function ModelSettings() {
-  const settings = useAssistant((state) => state.settings);
-  const providers = useAssistant((state) => state.providers);
-  const updateSettings = useAssistant((state) => state.updateSettings);
-  const discoverModels = useAssistant((state) => state.discoverModels);
-  const [adding, setAdding] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const enabled = providers.filter((item) => item.enabled);
-  // The selected model, any model with an override, then each provider's default.
-  const rows: { providerId: string; model: string }[] = [];
-  const seen = new Set<string>();
-  const add = (providerId: string, model: string) => {
-    const key = modelKey(providerId, model);
-    if (!model || seen.has(key) || !providers.some((item) => item.id === providerId)) return;
-    seen.add(key);
-    rows.push({ providerId, model });
-  };
-  add(settings.providerId, settings.model);
-  for (const key of Object.keys(settings.models)) {
-    const at = key.indexOf("/");
-    if (at > 0) add(key.slice(0, at), key.slice(at + 1));
-  }
-  for (const provider of enabled) add(provider.id, provider.defaultModel);
-
-  const setConfig = (key: string, patch: Partial<ModelConfig> | null) => {
-    const models = { ...settings.models };
-    if (patch === null) delete models[key];
-    else {
-      const next = { ...models[key], ...patch };
-      if (next.contextWindow === undefined) delete next.contextWindow;
-      if (next.thinking === undefined) delete next.thinking;
-      if (Object.keys(next).length) models[key] = next;
-      else delete models[key];
-    }
-    updateSettings({ models });
-  };
-
-  const provider = providers.find((item) => item.id === settings.providerId);
-
-  return (
-    <section className="assistant-section">
-      <div className="assistant-section-head">
-        <h4>Models</h4>
-        {provider ? (
-          <button
-            type="button"
-            className="assistant-mini"
-            disabled={busy}
-            title={`Ask ${provider.name} for its models' context sizes`}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await discoverModels(provider.id);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {busy ? <LoaderCircle size={12} className="spin" /> : <RefreshCw size={12} />} Detect sizes
-          </button>
-        ) : null}
-      </div>
-      <p className="assistant-section-note">The context ring in the chat uses these sizes. Thinking levels decide what the composer offers; untick all to hide it.</p>
-      {rows.length === 0 ? <p className="assistant-section-note">Choose a model in the chat first.</p> : null}
-      <div className="assistant-model-configs">
-        {rows.map(({ providerId, model }) => {
-          const owner = providers.find((item) => item.id === providerId)!;
-          const key = modelKey(providerId, model);
-          const config = settings.models[key];
-          const resolved = resolveModel(settings.models, settings.discovered, providerId, owner.kind, model);
-          const guessWindow = settings.discovered[key] || defaultContextWindow(owner.kind, model);
-          const guessThinking = defaultThinkingLevels(owner.kind, model);
-          const toggleLevel = (level: ThinkingLevel) => {
-            const current = resolved.thinking;
-            const next = current.includes(level) ? current.filter((item) => item !== level) : THINKING_LEVELS.filter((item) => item === level || current.includes(item));
-            setConfig(key, { thinking: next.join() === guessThinking.join() ? undefined : next });
-          };
-          return (
-            <div key={key} className="assistant-model-config">
-              <div className="assistant-model-config-head">
-                <strong title={model}>{displayModel(model)}</strong>
-                <small>{owner.name}</small>
-                {config ? (
-                  <button type="button" className="assistant-mini" onClick={() => setConfig(key, null)} title="Use the detected defaults">
-                    Reset
-                  </button>
-                ) : null}
-              </div>
-              <label className="assistant-field assistant-field-inline">
-                <span>Context window</span>
-                <input
-                  className="inline-input"
-                  type="number"
-                  min={1000}
-                  max={10_000_000}
-                  step={1000}
-                  value={config?.contextWindow ?? ""}
-                  placeholder={`${guessWindow.toLocaleString()}${settings.discovered[key] ? "" : " (guess)"}`}
-                  onChange={(event) => {
-                    const value = event.target.value === "" ? undefined : clamp(Number(event.target.value), 1000, 10_000_000, DEFAULT_CONTEXT_WINDOW);
-                    setConfig(key, { contextWindow: value });
-                  }}
-                  aria-label={`Context window for ${model}`}
-                />
-                <small>tokens</small>
-              </label>
-              <div className="assistant-field assistant-field-inline">
-                <span>Thinking</span>
-                <div className="assistant-levels" role="group" aria-label={`Thinking levels for ${model}`}>
-                  {THINKING_LEVELS.map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      aria-pressed={resolved.thinking.includes(level)}
-                      className={`assistant-level${resolved.thinking.includes(level) ? " on" : ""}`}
-                      onClick={() => toggleLevel(level)}
-                      title={THINKING_INFO[level].hint}
-                    >
-                      {THINKING_INFO[level].label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {provider ? (
-        <form
-          className="assistant-model-add"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const model = adding.trim();
-            if (!model) return;
-            setConfig(modelKey(provider.id, model), { contextWindow: defaultContextWindow(provider.kind, model) });
-            setAdding("");
-          }}
-        >
-          <input className="inline-input" value={adding} onChange={(event) => setAdding(event.target.value)} placeholder={`Another ${provider.name} model id…`} spellCheck={false} aria-label="Model id" />
-          <button type="submit" className="secondary-button" disabled={!adding.trim()}>
-            <Plus size={12} /> Add
-          </button>
-        </form>
-      ) : null}
-    </section>
   );
 }
 
@@ -520,6 +368,56 @@ function BehaviourSettings() {
           />
         </label>
       </div>
+      <div className="assistant-field">
+        <div className="assistant-field-row">
+          <label className="assistant-field">
+            <span>Retry failed requests</span>
+            <input className="inline-input" type="number" min={0} max={10} value={settings.retries ?? 3} onChange={(event) => updateSettings({ retries: clamp(Number(event.target.value), 0, 10, 3) })} aria-describedby="assistant-retry-hint" />
+          </label>
+          <label className="assistant-field">
+            <span>Seconds between retries</span>
+            <input
+              className="inline-input"
+              type="number"
+              min={1}
+              max={120}
+              value={settings.retryDelay ?? 10}
+              disabled={!settings.retries}
+              onChange={(event) => updateSettings({ retryDelay: clamp(Number(event.target.value), 1, 120, 10) })}
+            />
+          </label>
+        </div>
+        <small id="assistant-retry-hint">When a request fails for a passing reason (connection lost, provider busy or rate-limited), wait and send it again. 0 turns it off; Stop cancels the wait.</small>
+      </div>
+      <div className="assistant-field">
+        <span>
+          Auto-compact at <strong className="assistant-value">{settings.autoCompact ? `${settings.autoCompact}%` : "Off"}</strong>
+        </span>
+        <div className="assistant-slider-row">
+          <input
+            type="range"
+            min={50}
+            max={95}
+            step={5}
+            value={settings.autoCompact || 80}
+            disabled={!settings.autoCompact}
+            onChange={(event) => updateSettings({ autoCompact: Number(event.target.value) })}
+            aria-label="Auto-compact threshold"
+          />
+          <label className="switch" title={settings.autoCompact ? "Turn auto-compact off" : "Turn auto-compact on"}>
+            <input type="checkbox" checked={Boolean(settings.autoCompact)} onChange={(event) => updateSettings({ autoCompact: event.target.checked ? 80 : 0 })} aria-label="Auto-compact" />
+            <span className="switch-track"><span className="switch-thumb" /></span>
+          </label>
+        </div>
+        <small>When a chat fills this much of the model's context window, older turns are summarized in place so the chat can keep going.</small>
+      </div>
+      <label className="assistant-check">
+        <input type="checkbox" checked={settings.toolLoading !== "all"} onChange={(event) => updateSettings({ toolLoading: event.target.checked ? "auto" : "all" })} />
+        <span>
+          Load tools on demand
+          <small>Sends a small core set and lets the assistant load more when it needs them. Uses far fewer tokens per message.</small>
+        </span>
+      </label>
       <label className="assistant-field">
         <span>Custom instructions</span>
         <textarea

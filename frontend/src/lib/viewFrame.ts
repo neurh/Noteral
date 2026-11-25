@@ -57,6 +57,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 .n-grid{display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
 .n-chip{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:999px;background:var(--accent-softer);color:var(--accent-deep);font-size:12px}
 .n-list{list-style:none;margin:0;padding:0}.n-list>li{padding:6px 8px;border-radius:var(--radius-sm)}.n-list>li:hover{background:var(--bg-hover)}
+.n-item{display:flex;align-items:center;gap:8px;width:100%;min-height:30px;padding:4px 8px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text);text-align:left;cursor:pointer}.n-item:hover{background:var(--bg-hover)}
+html[data-surface=database] body{padding:10px 2px}
 table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--border);padding:5px 6px;text-align:left}th{color:var(--text-muted);font-weight:600;font-size:12px}
 ::selection{background:var(--selection)}
 }
@@ -121,7 +123,7 @@ export function currentTheme(): "light" | "dark" {
 }
 
 /** Where a view is mounted. Views read it as `noteral.surface` and `html[data-surface]`. */
-export type ViewSurface = "page" | "block" | "sidebar" | "status" | "home" | "panel";
+export type ViewSurface = "page" | "block" | "sidebar" | "status" | "home" | "panel" | "database";
 
 export interface ViewDocOptions {
   html: string;

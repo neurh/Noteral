@@ -1008,6 +1008,64 @@
       "returns": "void"
     },
     {
+      "name": "pages.edit",
+      "summary": "Change part of a page by find-and-replace, without resending the whole page.",
+      "details": "Each edit's find must match the page's Markdown exactly once (copy it from pages.read or editor.getMarkdown); whitespace differences are tolerated. Set all: true to replace every match. Edits apply in order; if one fails nothing changes. Open pages keep untouched blocks. Prefer this over pages.write / editor.setMarkdown for anything smaller than a rewrite.",
+      "permission": "pages.write",
+      "tier": "content",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "pageId": {
+            "type": "string",
+            "description": "Page id. Defaults to the page open in the focused pane."
+          },
+          "edits": {
+            "type": "array",
+            "description": "Edits, applied in order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "find": {
+                  "type": "string",
+                  "description": "Exact text to replace (include enough context to be unique).",
+                  "minLength": 1,
+                  "maxLength": 100000
+                },
+                "replace": {
+                  "type": "string",
+                  "description": "Replacement text (\"\" deletes).",
+                  "maxLength": 200000
+                },
+                "all": {
+                  "type": "boolean",
+                  "description": "Replace every occurrence.",
+                  "default": false
+                }
+              },
+              "required": [
+                "find",
+                "replace"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "edits"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "{ replaced: number; blocksChanged?: number }",
+      "example": "await app.pages.edit({ pageId, edits: [{ find: \"Due: Friday\", replace: \"Due: Monday\" }] });"
+    },
+    {
       "name": "pages.append",
       "summary": "Append Markdown to the end of a page.",
       "permission": "pages.write",
@@ -1359,8 +1417,8 @@
     },
     {
       "name": "databases.create",
-      "summary": "Create a database with properties.",
-      "details": "Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited.",
+      "summary": "Create a database (a page in the tree) with properties and a first view.",
+      "details": "To put a database inside a page's content, use databases.embed instead. Property types: text, number, select, multiSelect, status, date, checkbox, url, email, phone, createdTime, lastEdited, formula (give `formula`).",
       "permission": "databases.write",
       "tier": "content",
       "callers": [
@@ -1406,7 +1464,8 @@
                     "email",
                     "phone",
                     "createdTime",
-                    "lastEdited"
+                    "lastEdited",
+                    "formula"
                   ]
                 },
                 "options": {
@@ -1417,6 +1476,34 @@
                     "description": "Option name."
                   },
                   "maxItems": 50
+                },
+                "formula": {
+                  "type": "string",
+                  "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+                  "maxLength": 4000
+                },
+                "format": {
+                  "type": "string",
+                  "description": "Number format (number and formula properties).",
+                  "enum": [
+                    "number",
+                    "commas",
+                    "percent",
+                    "dollar",
+                    "euro",
+                    "pound",
+                    "yen"
+                  ]
+                },
+                "dateFormat": {
+                  "type": "string",
+                  "description": "How date results of a formula show.",
+                  "enum": [
+                    "relative",
+                    "short",
+                    "long",
+                    "iso"
+                  ]
                 }
               },
               "required": [
@@ -1435,7 +1522,9 @@
               "board",
               "gallery",
               "list",
-              "calendar"
+              "calendar",
+              "chart",
+              "custom"
             ],
             "default": "table"
           },
@@ -1451,6 +1540,149 @@
         "additionalProperties": false
       },
       "returns": "{ databaseId: string }"
+    },
+    {
+      "name": "databases.embed",
+      "summary": "Put a database inside a page's content: a new inline database, or a linked view of an existing one.",
+      "details": "With databaseId the block links that database (it stays where it is). Without it a new database is created as a child of the page (title, properties, view as in databases.create). Inserts at the end unless position says otherwise; before/after need blockId (from editor.getBlocks) or anchor (text of a block). Works whether or not the page is open. In page Markdown an embedded database is the line <!-- database:ID Title -->; keep it when editing.",
+      "permission": "databases.write",
+      "tier": "content",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "pageId": {
+            "type": "string",
+            "description": "Page to insert into. Defaults to the page open in the focused pane."
+          },
+          "databaseId": {
+            "type": "string",
+            "description": "Existing database to link. Omit to create a new inline database."
+          },
+          "title": {
+            "type": "string",
+            "description": "New database title.",
+            "maxLength": 300
+          },
+          "properties": {
+            "type": "array",
+            "description": "Columns besides the title.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Property name.",
+                  "maxLength": 100
+                },
+                "type": {
+                  "type": "string",
+                  "description": "Property type.",
+                  "enum": [
+                    "text",
+                    "number",
+                    "select",
+                    "multiSelect",
+                    "status",
+                    "date",
+                    "checkbox",
+                    "url",
+                    "email",
+                    "phone",
+                    "createdTime",
+                    "lastEdited",
+                    "formula"
+                  ]
+                },
+                "options": {
+                  "type": "array",
+                  "description": "Options for select / multiSelect / status.",
+                  "items": {
+                    "type": "string",
+                    "description": "Option name."
+                  },
+                  "maxItems": 50
+                },
+                "formula": {
+                  "type": "string",
+                  "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+                  "maxLength": 4000
+                },
+                "format": {
+                  "type": "string",
+                  "description": "Number format (number and formula properties).",
+                  "enum": [
+                    "number",
+                    "commas",
+                    "percent",
+                    "dollar",
+                    "euro",
+                    "pound",
+                    "yen"
+                  ]
+                },
+                "dateFormat": {
+                  "type": "string",
+                  "description": "How date results of a formula show.",
+                  "enum": [
+                    "relative",
+                    "short",
+                    "long",
+                    "iso"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 40
+          },
+          "view": {
+            "type": "string",
+            "description": "First view type of a new database.",
+            "enum": [
+              "table",
+              "board",
+              "gallery",
+              "list",
+              "calendar",
+              "chart",
+              "custom"
+            ],
+            "default": "table"
+          },
+          "position": {
+            "type": "string",
+            "description": "Where in the page.",
+            "enum": [
+              "start",
+              "end",
+              "before",
+              "after"
+            ],
+            "default": "end"
+          },
+          "blockId": {
+            "type": "string",
+            "description": "Anchor block for before/after."
+          },
+          "anchor": {
+            "type": "string",
+            "description": "Or: text from the anchor block (first block containing it).",
+            "maxLength": 300
+          }
+        },
+        "additionalProperties": false
+      },
+      "returns": "{ databaseId: string; pageId: string; created: boolean }",
+      "example": "await app.databases.embed({ pageId, title: \"Tasks\", properties: [{ name: \"Status\", type: \"status\" }, { name: \"Due\", type: \"date\" }], view: \"board\" });"
     },
     {
       "name": "databases.addProperty",
@@ -1489,7 +1721,8 @@
               "email",
               "phone",
               "createdTime",
-              "lastEdited"
+              "lastEdited",
+              "formula"
             ]
           },
           "options": {
@@ -1500,6 +1733,34 @@
               "description": "Option name."
             },
             "maxItems": 50
+          },
+          "formula": {
+            "type": "string",
+            "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+            "maxLength": 4000
+          },
+          "format": {
+            "type": "string",
+            "description": "Number format (number and formula properties).",
+            "enum": [
+              "number",
+              "commas",
+              "percent",
+              "dollar",
+              "euro",
+              "pound",
+              "yen"
+            ]
+          },
+          "dateFormat": {
+            "type": "string",
+            "description": "How date results of a formula show.",
+            "enum": [
+              "relative",
+              "short",
+              "long",
+              "iso"
+            ]
           }
         },
         "required": [
@@ -1547,6 +1808,106 @@
         "additionalProperties": false
       },
       "returns": "{ rowId: string }"
+    },
+    {
+      "name": "databases.addRows",
+      "summary": "Add many rows in one call (up to 500). Prefer this over repeated addRow.",
+      "details": "Each row is { title?, values? } with values keyed by property name, same rules as addRow. All rows are created in one transaction, in order.",
+      "permission": "databases.write",
+      "tier": "content",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "databaseId": {
+            "type": "string",
+            "description": "Database id."
+          },
+          "rows": {
+            "type": "array",
+            "description": "Rows to add.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Row title.",
+                  "maxLength": 300
+                },
+                "values": {
+                  "type": "object",
+                  "description": "Property name → value.",
+                  "properties": {},
+                  "additionalProperties": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "maxItems": 500
+          }
+        },
+        "required": [
+          "databaseId",
+          "rows"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "{ rowIds: string[]; count: number }",
+      "example": "await app.databases.addRows({ databaseId, rows: [{ title: \"Ship v2\", values: { Status: \"Doing\" } }, { title: \"Write docs\" }] });"
+    },
+    {
+      "name": "databases.updateRows",
+      "summary": "Change many rows in one call (up to 500).",
+      "permission": "databases.write",
+      "tier": "content",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "updates": {
+            "type": "array",
+            "description": "Row changes.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rowId": {
+                  "type": "string",
+                  "description": "Row (page) id."
+                },
+                "title": {
+                  "type": "string",
+                  "description": "New title.",
+                  "maxLength": 300
+                },
+                "values": {
+                  "type": "object",
+                  "description": "Property name → value. null clears.",
+                  "properties": {},
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "rowId"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 500
+          }
+        },
+        "required": [
+          "updates"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "{ count: number }"
     },
     {
       "name": "databases.updateRow",
@@ -1641,7 +2002,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO.",
+            "description": "Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek|pastMonth|pastYear|nextWeek|nextMonth|nextYear|thisWeek|thisMonth|thisYear. Formulas filter as their result type.",
             "items": {
               "type": "object",
               "properties": {
@@ -1671,7 +2032,8 @@
                     "before",
                     "after",
                     "onOrBefore",
-                    "onOrAfter"
+                    "onOrAfter",
+                    "within"
                   ]
                 },
                 "value": {
@@ -1715,6 +2077,36 @@
               "and",
               "or"
             ]
+          },
+          "advanced": {
+            "type": "object",
+            "description": "Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "description": "and: every item matches; or: any.",
+                "enum": [
+                  "and",
+                  "or"
+                ],
+                "default": "and"
+              },
+              "items": {
+                "type": "array",
+                "description": "Rules { property, op, value } and nested groups { mode, items } (up to 4 levels).",
+                "items": {
+                  "type": "object",
+                  "description": "A rule or a group.",
+                  "properties": {},
+                  "additionalProperties": true
+                },
+                "maxItems": 60
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
           },
           "sorts": {
             "type": "array",
@@ -1762,7 +2154,7 @@
     },
     {
       "name": "databases.addView",
-      "summary": "Add a view (table, board, gallery, list or calendar) with optional filters, sorts and grouping.",
+      "summary": "Add a view (table, board, gallery, list, calendar, chart or custom) with optional filters, sorts, grouping and settings.",
       "permission": "databases.write",
       "tier": "content",
       "callers": [
@@ -1790,13 +2182,15 @@
               "board",
               "gallery",
               "list",
-              "calendar"
+              "calendar",
+              "chart",
+              "custom"
             ],
             "default": "table"
           },
           "filters": {
             "type": "array",
-            "description": "Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO.",
+            "description": "Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek|pastMonth|pastYear|nextWeek|nextMonth|nextYear|thisWeek|thisMonth|thisYear. Formulas filter as their result type.",
             "items": {
               "type": "object",
               "properties": {
@@ -1826,7 +2220,8 @@
                     "before",
                     "after",
                     "onOrBefore",
-                    "onOrAfter"
+                    "onOrAfter",
+                    "within"
                   ]
                 },
                 "value": {
@@ -1871,6 +2266,36 @@
               "or"
             ]
           },
+          "advanced": {
+            "type": "object",
+            "description": "Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "description": "and: every item matches; or: any.",
+                "enum": [
+                  "and",
+                  "or"
+                ],
+                "default": "and"
+              },
+              "items": {
+                "type": "array",
+                "description": "Rules { property, op, value } and nested groups { mode, items } (up to 4 levels).",
+                "items": {
+                  "type": "object",
+                  "description": "A rule or a group.",
+                  "properties": {},
+                  "additionalProperties": true
+                },
+                "maxItems": 60
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
           "sorts": {
             "type": "array",
             "description": "Sort rules, first wins (replaces the view's sorts).",
@@ -1901,17 +2326,34 @@
           },
           "groupBy": {
             "type": "string",
-            "description": "Board/table grouping property (select, multi-select, status, checkbox). \"\" removes grouping.",
+            "description": "Grouping property. Boards: select, multi-select, status or checkbox; tables, lists and galleries: any property but the title. \"\" removes grouping.",
             "maxLength": 100
           },
           "hiddenGroups": {
             "type": "array",
-            "description": "Group values (option names) to hide on a board.",
+            "description": "Groups to hide (option names, true/false, or \"none\").",
             "items": {
               "type": "string",
-              "description": "Option name."
+              "description": "Group name."
             },
             "maxItems": 100
+          },
+          "collapsedGroups": {
+            "type": "array",
+            "description": "Groups shown collapsed (table/list/gallery).",
+            "items": {
+              "type": "string",
+              "description": "Group name."
+            },
+            "maxItems": 100
+          },
+          "hideEmptyGroups": {
+            "type": "boolean",
+            "description": "Hide groups with no rows."
+          },
+          "colorColumns": {
+            "type": "boolean",
+            "description": "Colour board columns / groups by option colour."
           },
           "show": {
             "type": "array",
@@ -1993,9 +2435,218 @@
               "none"
             ]
           },
+          "cardSize": {
+            "type": "string",
+            "description": "Gallery card size.",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
           "wrap": {
             "type": "boolean",
             "description": "Wrap long cell text."
+          },
+          "rowNumbers": {
+            "type": "boolean",
+            "description": "Table row numbers."
+          },
+          "showFilterBar": {
+            "type": "boolean",
+            "description": "Show the filter/sort chip bar (default true)."
+          },
+          "showIcons": {
+            "type": "boolean",
+            "description": "Show page icons beside titles (default true)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Rows shown before \"Load more\" (0 = default).",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "openIn": {
+            "type": "string",
+            "description": "Where row pages open: modal (center peek, default), side (side peek), tab, current.",
+            "enum": [
+              "modal",
+              "side",
+              "tab",
+              "current"
+            ]
+          },
+          "chart": {
+            "type": "object",
+            "description": "Chart settings (chart views); merged into the current ones.",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "Chart kind.",
+                "enum": [
+                  "bar",
+                  "column",
+                  "line",
+                  "area",
+                  "pie",
+                  "donut",
+                  "scatter",
+                  "funnel",
+                  "radar",
+                  "heatmap",
+                  "number"
+                ]
+              },
+              "x": {
+                "type": "string",
+                "description": "Category property (name), or createdTime / lastEdited. \"\" clears.",
+                "maxLength": 100
+              },
+              "dateBucket": {
+                "type": "string",
+                "description": "Group dates on x by.",
+                "enum": [
+                  "day",
+                  "week",
+                  "month",
+                  "quarter",
+                  "year"
+                ]
+              },
+              "aggregate": {
+                "type": "string",
+                "description": "Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values.",
+                "enum": [
+                  "count",
+                  "countValues",
+                  "countUnique",
+                  "sum",
+                  "average",
+                  "median",
+                  "min",
+                  "max"
+                ]
+              },
+              "y": {
+                "type": "string",
+                "description": "Measured property (name). \"\" clears.",
+                "maxLength": 100
+              },
+              "series": {
+                "type": "string",
+                "description": "Property that splits each category into series. \"\" clears.",
+                "maxLength": 100
+              },
+              "stacked": {
+                "type": "boolean",
+                "description": "Stack series."
+              },
+              "normalize": {
+                "type": "boolean",
+                "description": "Stack to 100%."
+              },
+              "cumulative": {
+                "type": "boolean",
+                "description": "Running total."
+              },
+              "sort": {
+                "type": "string",
+                "description": "Category order.",
+                "enum": [
+                  "default",
+                  "label",
+                  "labelDesc",
+                  "value",
+                  "valueDesc"
+                ]
+              },
+              "limit": {
+                "type": "integer",
+                "description": "Show the first N categories (the rest merge into Other).",
+                "minimum": 1,
+                "maximum": 200
+              },
+              "omitEmpty": {
+                "type": "boolean",
+                "description": "Skip the empty category."
+              },
+              "smooth": {
+                "type": "boolean",
+                "description": "Smooth lines."
+              },
+              "labels": {
+                "type": "boolean",
+                "description": "Value labels."
+              },
+              "legend": {
+                "type": "boolean",
+                "description": "Legend."
+              },
+              "grid": {
+                "type": "boolean",
+                "description": "Grid lines."
+              },
+              "palette": {
+                "type": "string",
+                "description": "Palette id.",
+                "maxLength": 40
+              },
+              "height": {
+                "type": "integer",
+                "description": "Height in px (inline databases).",
+                "minimum": 120,
+                "maximum": 1200
+              },
+              "goal": {
+                "type": "number",
+                "description": "Reference line value."
+              },
+              "yMin": {
+                "type": "number",
+                "description": "Y axis minimum."
+              },
+              "yMax": {
+                "type": "number",
+                "description": "Y axis maximum."
+              },
+              "format": {
+                "type": "string",
+                "description": "Value number format.",
+                "enum": [
+                  "number",
+                  "commas",
+                  "percent",
+                  "dollar",
+                  "euro",
+                  "pound",
+                  "yen"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "description": "Chart title.",
+                "maxLength": 120
+              }
+            },
+            "additionalProperties": false
+          },
+          "custom": {
+            "type": "object",
+            "description": "Custom view settings (custom views).",
+            "properties": {
+              "html": {
+                "type": "string",
+                "description": "HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined.",
+                "maxLength": 400000
+              },
+              "height": {
+                "type": "integer",
+                "description": "Frame height in px (inline databases).",
+                "minimum": 120,
+                "maximum": 2000
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
@@ -2004,12 +2655,12 @@
         "additionalProperties": false
       },
       "returns": "DatabaseViewInfo",
-      "example": "await app.databases.addView({ databaseId, type: \"board\", name: \"By status\", groupBy: \"Status\", filters: [{ property: \"Done\", op: \"is\", value: false }] });"
+      "example": "await app.databases.addView({ databaseId, type: \"chart\", name: \"Spend by month\", chart: { kind: \"column\", x: \"Date\", dateBucket: \"month\", aggregate: \"sum\", y: \"Amount\" } });"
     },
     {
       "name": "databases.updateView",
-      "summary": "Change a view: name, layout, filters, sorts, grouping, visible properties, order, widths, calculations.",
-      "details": "Only the fields you pass change. `filters` and `sorts` replace the existing lists; pass [] to clear.",
+      "summary": "Change a view: layout, filters (simple and advanced), sorts, grouping, visible properties, calculations, chart or custom settings, where rows open.",
+      "details": "Only the fields you pass change. `filters`, `sorts` and `advanced` replace the existing ones; pass [] / { items: [] } to clear. `chart` merges into the current chart settings.",
       "permission": "databases.write",
       "tier": "content",
       "callers": [
@@ -2041,12 +2692,14 @@
               "board",
               "gallery",
               "list",
-              "calendar"
+              "calendar",
+              "chart",
+              "custom"
             ]
           },
           "filters": {
             "type": "array",
-            "description": "Filter rules (replaces the view's filters). Select/status/multi-select values are option names; dates are ISO.",
+            "description": "Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek|pastMonth|pastYear|nextWeek|nextMonth|nextYear|thisWeek|thisMonth|thisYear. Formulas filter as their result type.",
             "items": {
               "type": "object",
               "properties": {
@@ -2076,7 +2729,8 @@
                     "before",
                     "after",
                     "onOrBefore",
-                    "onOrAfter"
+                    "onOrAfter",
+                    "within"
                   ]
                 },
                 "value": {
@@ -2121,6 +2775,36 @@
               "or"
             ]
           },
+          "advanced": {
+            "type": "object",
+            "description": "Advanced filter tree, ANDed with `filters`. Pass { items: [] } to clear.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "description": "and: every item matches; or: any.",
+                "enum": [
+                  "and",
+                  "or"
+                ],
+                "default": "and"
+              },
+              "items": {
+                "type": "array",
+                "description": "Rules { property, op, value } and nested groups { mode, items } (up to 4 levels).",
+                "items": {
+                  "type": "object",
+                  "description": "A rule or a group.",
+                  "properties": {},
+                  "additionalProperties": true
+                },
+                "maxItems": 60
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
           "sorts": {
             "type": "array",
             "description": "Sort rules, first wins (replaces the view's sorts).",
@@ -2151,17 +2835,34 @@
           },
           "groupBy": {
             "type": "string",
-            "description": "Board/table grouping property (select, multi-select, status, checkbox). \"\" removes grouping.",
+            "description": "Grouping property. Boards: select, multi-select, status or checkbox; tables, lists and galleries: any property but the title. \"\" removes grouping.",
             "maxLength": 100
           },
           "hiddenGroups": {
             "type": "array",
-            "description": "Group values (option names) to hide on a board.",
+            "description": "Groups to hide (option names, true/false, or \"none\").",
             "items": {
               "type": "string",
-              "description": "Option name."
+              "description": "Group name."
             },
             "maxItems": 100
+          },
+          "collapsedGroups": {
+            "type": "array",
+            "description": "Groups shown collapsed (table/list/gallery).",
+            "items": {
+              "type": "string",
+              "description": "Group name."
+            },
+            "maxItems": 100
+          },
+          "hideEmptyGroups": {
+            "type": "boolean",
+            "description": "Hide groups with no rows."
+          },
+          "colorColumns": {
+            "type": "boolean",
+            "description": "Colour board columns / groups by option colour."
           },
           "show": {
             "type": "array",
@@ -2243,9 +2944,218 @@
               "none"
             ]
           },
+          "cardSize": {
+            "type": "string",
+            "description": "Gallery card size.",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
           "wrap": {
             "type": "boolean",
             "description": "Wrap long cell text."
+          },
+          "rowNumbers": {
+            "type": "boolean",
+            "description": "Table row numbers."
+          },
+          "showFilterBar": {
+            "type": "boolean",
+            "description": "Show the filter/sort chip bar (default true)."
+          },
+          "showIcons": {
+            "type": "boolean",
+            "description": "Show page icons beside titles (default true)."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Rows shown before \"Load more\" (0 = default).",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "openIn": {
+            "type": "string",
+            "description": "Where row pages open: modal (center peek, default), side (side peek), tab, current.",
+            "enum": [
+              "modal",
+              "side",
+              "tab",
+              "current"
+            ]
+          },
+          "chart": {
+            "type": "object",
+            "description": "Chart settings (chart views); merged into the current ones.",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "Chart kind.",
+                "enum": [
+                  "bar",
+                  "column",
+                  "line",
+                  "area",
+                  "pie",
+                  "donut",
+                  "scatter",
+                  "funnel",
+                  "radar",
+                  "heatmap",
+                  "number"
+                ]
+              },
+              "x": {
+                "type": "string",
+                "description": "Category property (name), or createdTime / lastEdited. \"\" clears.",
+                "maxLength": 100
+              },
+              "dateBucket": {
+                "type": "string",
+                "description": "Group dates on x by.",
+                "enum": [
+                  "day",
+                  "week",
+                  "month",
+                  "quarter",
+                  "year"
+                ]
+              },
+              "aggregate": {
+                "type": "string",
+                "description": "Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values.",
+                "enum": [
+                  "count",
+                  "countValues",
+                  "countUnique",
+                  "sum",
+                  "average",
+                  "median",
+                  "min",
+                  "max"
+                ]
+              },
+              "y": {
+                "type": "string",
+                "description": "Measured property (name). \"\" clears.",
+                "maxLength": 100
+              },
+              "series": {
+                "type": "string",
+                "description": "Property that splits each category into series. \"\" clears.",
+                "maxLength": 100
+              },
+              "stacked": {
+                "type": "boolean",
+                "description": "Stack series."
+              },
+              "normalize": {
+                "type": "boolean",
+                "description": "Stack to 100%."
+              },
+              "cumulative": {
+                "type": "boolean",
+                "description": "Running total."
+              },
+              "sort": {
+                "type": "string",
+                "description": "Category order.",
+                "enum": [
+                  "default",
+                  "label",
+                  "labelDesc",
+                  "value",
+                  "valueDesc"
+                ]
+              },
+              "limit": {
+                "type": "integer",
+                "description": "Show the first N categories (the rest merge into Other).",
+                "minimum": 1,
+                "maximum": 200
+              },
+              "omitEmpty": {
+                "type": "boolean",
+                "description": "Skip the empty category."
+              },
+              "smooth": {
+                "type": "boolean",
+                "description": "Smooth lines."
+              },
+              "labels": {
+                "type": "boolean",
+                "description": "Value labels."
+              },
+              "legend": {
+                "type": "boolean",
+                "description": "Legend."
+              },
+              "grid": {
+                "type": "boolean",
+                "description": "Grid lines."
+              },
+              "palette": {
+                "type": "string",
+                "description": "Palette id.",
+                "maxLength": 40
+              },
+              "height": {
+                "type": "integer",
+                "description": "Height in px (inline databases).",
+                "minimum": 120,
+                "maximum": 1200
+              },
+              "goal": {
+                "type": "number",
+                "description": "Reference line value."
+              },
+              "yMin": {
+                "type": "number",
+                "description": "Y axis minimum."
+              },
+              "yMax": {
+                "type": "number",
+                "description": "Y axis maximum."
+              },
+              "format": {
+                "type": "string",
+                "description": "Value number format.",
+                "enum": [
+                  "number",
+                  "commas",
+                  "percent",
+                  "dollar",
+                  "euro",
+                  "pound",
+                  "yen"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "description": "Chart title.",
+                "maxLength": 120
+              }
+            },
+            "additionalProperties": false
+          },
+          "custom": {
+            "type": "object",
+            "description": "Custom view settings (custom views).",
+            "properties": {
+              "html": {
+                "type": "string",
+                "description": "HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined.",
+                "maxLength": 400000
+              },
+              "height": {
+                "type": "integer",
+                "description": "Frame height in px (inline databases).",
+                "minimum": 120,
+                "maximum": 2000
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
@@ -2360,8 +3270,8 @@
     },
     {
       "name": "databases.updateProperty",
-      "summary": "Rename a property, change its type, number format or select options.",
-      "details": "`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible.",
+      "summary": "Rename a property, change its type, formula, number/date format or select options.",
+      "details": "`options` replaces the option list for select / multi-select / status; existing options keep their ids when the name matches. Changing the type converts existing values where possible (a formula turned into another type keeps its current results). Renaming updates references in other formulas.",
       "permission": "databases.write",
       "tier": "content",
       "callers": [
@@ -2401,12 +3311,18 @@
               "email",
               "phone",
               "createdTime",
-              "lastEdited"
+              "lastEdited",
+              "formula"
             ]
+          },
+          "formula": {
+            "type": "string",
+            "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+            "maxLength": 4000
           },
           "format": {
             "type": "string",
-            "description": "Number format.",
+            "description": "Number format (number and formula properties).",
             "enum": [
               "number",
               "commas",
@@ -2415,6 +3331,16 @@
               "euro",
               "pound",
               "yen"
+            ]
+          },
+          "dateFormat": {
+            "type": "string",
+            "description": "How date results of a formula show.",
+            "enum": [
+              "relative",
+              "short",
+              "long",
+              "iso"
             ]
           },
           "options": {
@@ -2469,6 +3395,59 @@
         "additionalProperties": false
       },
       "returns": "DatabaseSchemaInfo"
+    },
+    {
+      "name": "databases.formulaFunctions",
+      "summary": "The formula language: syntax and every function, one line each.",
+      "permission": "databases.read",
+      "tier": "read",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "returns": "string"
+    },
+    {
+      "name": "databases.checkFormula",
+      "summary": "Check a formula against a database without saving: errors, result type and sample results.",
+      "permission": "databases.read",
+      "tier": "read",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "databaseId": {
+            "type": "string",
+            "description": "Database id."
+          },
+          "formula": {
+            "type": "string",
+            "description": "Formula source.",
+            "maxLength": 4000
+          },
+          "property": {
+            "type": "string",
+            "description": "Formula property it is for (so it may use the others).",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "databaseId",
+          "formula"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "{ ok: boolean; error?: string; resultType?: string; sample?: { title: string; value: unknown; error?: string }[] }"
     },
     {
       "name": "databases.removeProperty",
@@ -6124,6 +7103,147 @@
       "returns": "{ delivered: number }"
     },
     {
+      "name": "source.list",
+      "summary": "List everything with editable text (HTML, CSS, Markdown, plugin code) and its target id.",
+      "details": "Covers sidebar tabs, status widgets, block and page types, CSS snippets, component styles, Home widgets/views and plugins. Use the target with source.get / source.edit (plugins: plugins.edit).",
+      "permission": null,
+      "tier": "read",
+      "callers": [
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Only this kind.",
+            "enum": [
+              "sidebar",
+              "status",
+              "block",
+              "node",
+              "css",
+              "component",
+              "home",
+              "homeview",
+              "plugin"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "returns": "SourceEntry[]"
+    },
+    {
+      "name": "source.get",
+      "summary": "Read the current text of a target (e.g. a widget's HTML) before editing it.",
+      "details": "Pass startLine/endLine to read part of a long file. Fields: sidebar html|markdown, status html|text, block/node html, css css, component css|rules, home html|css|text, homeview css, plugin code|styles.",
+      "permission": null,
+      "tier": "read",
+      "callers": [
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Target from source.list, e.g. status:pomodoro, home:<viewId>/<widgetId>, plugin:<id>."
+          },
+          "field": {
+            "type": "string",
+            "description": "Which text (defaults to the main one)."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer id when the same id exists in several layers."
+          },
+          "startLine": {
+            "type": "integer",
+            "description": "First line (1-based).",
+            "minimum": 1
+          },
+          "endLine": {
+            "type": "integer",
+            "description": "Last line.",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "{ target: string; owner: string; field: string; lines: number; length: number; text: string }"
+    },
+    {
+      "name": "source.edit",
+      "summary": "Change part of a widget, tab, block/page type, CSS or Home widget by find-and-replace.",
+      "details": "Read it with source.get first; each find must match exactly once (whitespace differences tolerated) unless all: true. Edits apply in order and are all-or-nothing. Far cheaper than resending the whole HTML with setWidget/setTab/registerType — use it for every change to something that exists. Plugin code: use plugins.edit.",
+      "permission": null,
+      "tier": "app",
+      "callers": [
+        "assistant"
+      ],
+      "confirm": false,
+      "params": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Target from source.list."
+          },
+          "field": {
+            "type": "string",
+            "description": "Which text (defaults to the main one)."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer id when ambiguous."
+          },
+          "edits": {
+            "type": "array",
+            "description": "Edits, applied in order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "find": {
+                  "type": "string",
+                  "description": "Exact text to replace (include enough context to be unique).",
+                  "minLength": 1,
+                  "maxLength": 100000
+                },
+                "replace": {
+                  "type": "string",
+                  "description": "Replacement text (\"\" deletes).",
+                  "maxLength": 200000
+                },
+                "all": {
+                  "type": "boolean",
+                  "description": "Replace every occurrence.",
+                  "default": false
+                }
+              },
+              "required": [
+                "find",
+                "replace"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 50
+          }
+        },
+        "required": [
+          "target",
+          "edits"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "{ target: string; field: string; replaced: number; length: number; owner?: string }"
+    },
+    {
       "name": "plugins.list",
       "summary": "List installed plugins.",
       "permission": null,
@@ -6162,6 +7282,94 @@
         "additionalProperties": false
       },
       "returns": "PluginSourceInfo"
+    },
+    {
+      "name": "plugins.edit",
+      "summary": "Change an installed plugin's code or styles by find-and-replace, then test and reinstall it.",
+      "details": "Read it with plugins.getSource (or source.get plugin:<id>) first. The patch version is bumped automatically. Can also update permissions or description. Same test run and health check as plugins.create.",
+      "permission": null,
+      "tier": "app",
+      "callers": [
+        "assistant"
+      ],
+      "confirm": true,
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Plugin id."
+          },
+          "file": {
+            "type": "string",
+            "description": "Which file the edits change.",
+            "enum": [
+              "code",
+              "styles"
+            ],
+            "default": "code"
+          },
+          "edits": {
+            "type": "array",
+            "description": "Edits, applied in order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "find": {
+                  "type": "string",
+                  "description": "Exact text to replace (include enough context to be unique).",
+                  "minLength": 1,
+                  "maxLength": 100000
+                },
+                "replace": {
+                  "type": "string",
+                  "description": "Replacement text (\"\" deletes).",
+                  "maxLength": 200000
+                },
+                "all": {
+                  "type": "boolean",
+                  "description": "Replace every occurrence.",
+                  "default": false
+                }
+              },
+              "required": [
+                "find",
+                "replace"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 50
+          },
+          "permissions": {
+            "type": "array",
+            "description": "Replace the permission list.",
+            "items": {
+              "type": "string",
+              "description": "Permission id."
+            },
+            "maxItems": 30
+          },
+          "description": {
+            "type": "string",
+            "description": "New description.",
+            "maxLength": 500
+          },
+          "version": {
+            "type": "string",
+            "description": "Explicit new version (default: bump patch)."
+          },
+          "skipTest": {
+            "type": "boolean",
+            "description": "Install even if the test run reports errors.",
+            "default": false
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "PluginInstallResult & { version: string; replaced: number }"
     },
     {
       "name": "plugins.create",

@@ -58,7 +58,12 @@ export function BoardView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
     );
   }
 
-  const visibleGroups = groups.filter((group) => !hidden.has(group.id) && !(group.id === NO_GROUP && !group.rows.length && property.type !== "checkbox"));
+  const visibleGroups = groups.filter(
+    (group) =>
+      !hidden.has(group.id) &&
+      !(group.id === NO_GROUP && !group.rows.length && property.type !== "checkbox") &&
+      !(view.hideEmptyGroups && !group.rows.length),
+  );
   const hiddenGroups = groups.filter((group) => hidden.has(group.id));
 
   function drop(event: DragEvent, group: BoardGroup) {
@@ -83,7 +88,7 @@ export function BoardView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
       {visibleGroups.map((group) => (
         <section
           key={group.id}
-          className={`db-board-col ${over?.group === group.id ? "is-over" : ""}`}
+          className={`db-board-col ${over?.group === group.id ? "is-over" : ""} ${view.colorColumns ? `is-tinted tone-${group.color}` : ""}`}
           aria-label={group.name}
           onDragOver={(event) => {
             if (!drag) return;

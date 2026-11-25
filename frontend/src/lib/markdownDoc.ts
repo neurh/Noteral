@@ -2,12 +2,26 @@
  * Markdown ⇄ stored page JSON for pages that are not open in an editor.
  *
  * Open pages go through their live editor (editorBridge) so undo and the cursor keep working.
- * Closed pages are converted with one headless BlockNote editor using the default schema;
- * Noteral's custom content (embedded databases, page links) becomes readable placeholders.
+ * Closed pages are converted with one headless BlockNote editor using the default schema.
+ * Top-level embedded databases and custom blocks become marker lines that convert back
+ * (see ./markdownEmbeds); nested ones and page links become readable placeholders.
  */
 import { BlockNoteEditor } from "@blocknote/core";
+import { blocksById, embedsToMarkdown, markdownToEmbedBlocks, type EmbedBlock } from "./markdownEmbeds";
 
-type JsonBlock = { id?: string; type?: string; props?: Record<string, unknown>; content?: unknown; children?: JsonBlock[] };
+type JsonBlock = EmbedBlock;
+
+function newBlockId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `b${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
+
+function parseMarkdown(markdown: string, previous: JsonBlock[]): JsonBlock[] {
+  const known = blocksById(previous);
+  return markdownToEmbedBlocks(markdown, (text) => editor().tryParseMarkdownToBlocks(text) as JsonBlock[], {
+    lookup: (id) => known.get(id),
+    newId: newBlockId,
+  });
+}
 
 let headless: BlockNoteEditor | null = null;
 
@@ -57,10 +71,10 @@ export function parseDocJson(docJson: string): JsonBlock[] {
 
 /** Stored page JSON → Markdown. */
 export function docJsonToMarkdown(docJson: string, titleOf: TitleOf = () => ""): string {
-  const blocks = sanitize(parseDocJson(docJson), titleOf);
+  const blocks = parseDocJson(docJson);
   if (!blocks.length) return "";
   try {
-    return editor().blocksToMarkdownLossy(blocks as never).trim();
+    return embedsToMarkdown(blocks, (run) => editor().blocksToMarkdownLossy(sanitize(run, titleOf) as never), titleOf).trim();
   } catch {
     return docJsonToText(docJson, titleOf);
   }
@@ -94,9 +108,12 @@ export function docJsonToText(docJson: string, titleOf: TitleOf = () => ""): str
   return lines.join("\n");
 }
 
-/** Markdown → page JSON ready to store. */
-export function markdownToDocJson(markdown: string): string {
-  const blocks = markdown.trim() ? editor().tryParseMarkdownToBlocks(markdown) : [];
+/**
+ * Markdown → page JSON ready to store. `previousDocJson` (the page's current document)
+ * lets `<!-- block:ID -->` markers restore their custom blocks.
+ */
+export function markdownToDocJson(markdown: string, previousDocJson = ""): string {
+  const blocks = markdown.trim() ? parseMarkdown(markdown, parseDocJson(previousDocJson)) : [];
   return JSON.stringify(blocks.length ? blocks : [{ type: "paragraph", content: [], children: [] }]);
 }
 
@@ -106,6 +123,6 @@ export function appendMarkdown(docJson: string, markdown: string): string {
   const last = existing[existing.length - 1];
   const lastEmpty = last && last.type === "paragraph" && !inlineText(last.content, () => "").trim() && !(last.children ?? []).length;
   const kept = lastEmpty ? existing.slice(0, -1) : existing;
-  const added = markdown.trim() ? editor().tryParseMarkdownToBlocks(markdown) : [];
+  const added = markdown.trim() ? parseMarkdown(markdown, existing) : [];
   return JSON.stringify([...kept, ...added]);
 }

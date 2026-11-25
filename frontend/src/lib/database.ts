@@ -22,7 +22,8 @@ export type PropertyType =
   | "email"
   | "phone"
   | "createdTime"
-  | "lastEdited";
+  | "lastEdited"
+  | "formula";
 
 export type OptionColor = "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
 export const OPTION_COLORS: OptionColor[] = ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
@@ -58,9 +59,91 @@ export interface Property {
   type: PropertyType;
   options?: SelectOption[];
   format?: NumberFormat;
+  /** Formula source for "formula" properties, e.g. `prop("Price") * prop("Qty")`. */
+  formula?: string;
+  /** How a formula's date results show. */
+  dateFormat?: "relative" | "short" | "long" | "iso";
+  /**
+   * What a formula evaluates to, worked out from the rows on every render
+   * (never saved). Filters, sorts, groups and calculations treat the formula
+   * as a property of this type.
+   */
+  resultType?: FormulaResultType;
 }
 
-export type ViewType = "table" | "board" | "gallery" | "list" | "calendar";
+export type FormulaResultType = "text" | "number" | "checkbox" | "date";
+
+export type ViewType = "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
+
+/** Where a row page opens when clicked. */
+export type OpenMode = "modal" | "side" | "tab" | "current";
+export const OPEN_MODES: { id: OpenMode; name: string; description: string }[] = [
+  { id: "modal", name: "Center peek", description: "A centered window over the database" },
+  { id: "side", name: "Side peek", description: "A panel on the right" },
+  { id: "tab", name: "New tab", description: "A new tab in this pane" },
+  { id: "current", name: "Full page", description: "Replaces the current tab" },
+];
+
+/** A nested set of filter rules for advanced filters. */
+export interface FilterGroup {
+  id: string;
+  mode: "and" | "or";
+  items: FilterNode[];
+}
+export type FilterNode = FilterRule | FilterGroup;
+export function isFilterGroup(node: FilterNode): node is FilterGroup {
+  return Array.isArray((node as FilterGroup).items);
+}
+
+export type ChartKind = "bar" | "column" | "line" | "area" | "pie" | "donut" | "scatter" | "funnel" | "radar" | "heatmap" | "number";
+export type ChartAggregate = "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+export type DateBucket = "day" | "week" | "month" | "quarter" | "year";
+
+/** Settings of a chart view. Everything is optional: sensible defaults apply. */
+export interface ChartConfig {
+  kind?: ChartKind;
+  /** Property along the category axis (x for bars/lines, slices for pies). */
+  x?: string;
+  /** How dates on the category axis are grouped. */
+  dateBucket?: DateBucket;
+  /** Measure: count rows, or aggregate a numeric property. */
+  aggregate?: ChartAggregate;
+  y?: string;
+  /** Second property that splits each category into series. */
+  series?: string;
+  stacked?: boolean;
+  /** Stack to 100%. */
+  normalize?: boolean;
+  cumulative?: boolean;
+  /** Category order. */
+  sort?: "default" | "label" | "labelDesc" | "value" | "valueDesc";
+  /** Show only the first N categories (others merge into "Other"). */
+  limit?: number;
+  omitEmpty?: boolean;
+  smooth?: boolean;
+  labels?: boolean;
+  legend?: boolean;
+  grid?: boolean;
+  /** Palette id from CHART_PALETTES. */
+  palette?: string;
+  /** Chart height in pixels (inline databases); page databases fill the pane. */
+  height?: number;
+  /** Optional reference line on value axes. */
+  goal?: number;
+  /** Y axis bounds. */
+  yMin?: number;
+  yMax?: number;
+  /** Number format for values; defaults to the measured property's. */
+  format?: NumberFormat;
+  title?: string;
+}
+
+/** A fully custom view: HTML (with optional CSS/JS) rendered in a sandboxed frame. */
+export interface CustomViewConfig {
+  html: string;
+  /** Frame height for inline databases; page databases fill the pane. */
+  height?: number;
+}
 
 export type FilterOp =
   | "contains"
@@ -80,13 +163,87 @@ export type FilterOp =
   | "before"
   | "after"
   | "onOrBefore"
-  | "onOrAfter";
+  | "onOrAfter"
+  | "within";
 
 export interface FilterRule {
   id: string;
   propertyId: string;
   op: FilterOp;
   value?: unknown;
+}
+
+/** Relative dates a date filter can compare against (stored as the id). */
+export const RELATIVE_DATES: { id: string; name: string }[] = [
+  { id: "@today", name: "Today" },
+  { id: "@yesterday", name: "Yesterday" },
+  { id: "@tomorrow", name: "Tomorrow" },
+  { id: "@weekAgo", name: "One week ago" },
+  { id: "@weekAhead", name: "One week from now" },
+  { id: "@monthAgo", name: "One month ago" },
+  { id: "@monthAhead", name: "One month from now" },
+  { id: "@yearAgo", name: "One year ago" },
+];
+
+/** Ranges for the "is within" date filter. */
+export const DATE_RANGES: { id: string; name: string }[] = [
+  { id: "pastWeek", name: "The past week" },
+  { id: "pastMonth", name: "The past month" },
+  { id: "pastYear", name: "The past year" },
+  { id: "nextWeek", name: "The next week" },
+  { id: "nextMonth", name: "The next month" },
+  { id: "nextYear", name: "The next year" },
+  { id: "thisWeek", name: "This week" },
+  { id: "thisMonth", name: "This month" },
+  { id: "thisYear", name: "This year" },
+];
+
+function shiftDays(base: Date, days: number): Date {
+  const out = new Date(base);
+  out.setDate(out.getDate() + days);
+  return out;
+}
+
+function shiftMonths(base: Date, months: number): Date {
+  const out = new Date(base);
+  out.setMonth(out.getMonth() + months);
+  return out;
+}
+
+/** Resolves a filter date ("2026-05-01" or a relative id like "@today") to an ISO day. */
+export function resolveFilterDate(value: unknown, now = new Date()): string {
+  const text = String(value ?? "");
+  switch (text) {
+    case "@today": return toISODate(now);
+    case "@yesterday": return toISODate(shiftDays(now, -1));
+    case "@tomorrow": return toISODate(shiftDays(now, 1));
+    case "@weekAgo": return toISODate(shiftDays(now, -7));
+    case "@weekAhead": return toISODate(shiftDays(now, 7));
+    case "@monthAgo": return toISODate(shiftMonths(now, -1));
+    case "@monthAhead": return toISODate(shiftMonths(now, 1));
+    case "@yearAgo": return toISODate(shiftMonths(now, -12));
+    default: return text;
+  }
+}
+
+/** The inclusive [from, to] ISO days of a DATE_RANGES id. */
+export function dateRangeOf(id: unknown, now = new Date()): [string, string] | null {
+  const today = toISODate(now);
+  switch (id) {
+    case "pastWeek": return [toISODate(shiftDays(now, -7)), today];
+    case "pastMonth": return [toISODate(shiftMonths(now, -1)), today];
+    case "pastYear": return [toISODate(shiftMonths(now, -12)), today];
+    case "nextWeek": return [today, toISODate(shiftDays(now, 7))];
+    case "nextMonth": return [today, toISODate(shiftMonths(now, 1))];
+    case "nextYear": return [today, toISODate(shiftMonths(now, 12))];
+    case "thisWeek": {
+      const start = shiftDays(now, -((now.getDay() + 6) % 7));
+      return [toISODate(start), toISODate(shiftDays(start, 6))];
+    }
+    case "thisMonth": return [toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), toISODate(new Date(now.getFullYear(), now.getMonth() + 1, 0))];
+    case "thisYear": return [`${now.getFullYear()}-01-01`, `${now.getFullYear()}-12-31`];
+    default: return null;
+  }
 }
 
 export interface SortRule {
@@ -115,6 +272,29 @@ export interface DatabaseView {
   wrap?: boolean;
   /** Table footer calculations per property id. */
   calcs?: Record<string, CalcKind>;
+  /** Advanced filter tree, combined (AND) with the simple filters above. */
+  advanced?: FilterGroup;
+  /** Whether the filter/sort chips bar shows. Default true. */
+  showFilterBar?: boolean;
+  /** Rows shown before "Load more" (table, list, gallery). 0/undefined = 50 page databases, 25 inline. */
+  limit?: number;
+  /** Show page icons next to row titles. Default true. */
+  showIcons?: boolean;
+  /** Where row pages open. Default "modal" (center peek). */
+  openIn?: OpenMode;
+  /** Gallery card size. */
+  cardSize?: "small" | "medium" | "large";
+  /** Group ids collapsed in grouped tables/lists/galleries. */
+  collapsedGroups?: string[];
+  hideEmptyGroups?: boolean;
+  /** Board/grouped views: colour the columns by option colour. */
+  colorColumns?: boolean;
+  /** Table: show row numbers. */
+  rowNumbers?: boolean;
+  /** Chart settings (chart views). */
+  chart?: ChartConfig;
+  /** Custom view (custom views). */
+  custom?: CustomViewConfig;
 }
 
 export type CalcKind =
@@ -171,6 +351,7 @@ export const PROPERTY_TYPES: { type: PropertyType; name: string }[] = [
   { type: "phone", name: "Phone" },
   { type: "createdTime", name: "Created time" },
   { type: "lastEdited", name: "Last edited time" },
+  { type: "formula", name: "Formula" },
 ];
 
 export const VIEW_TYPES: { type: ViewType; name: string }[] = [
@@ -179,6 +360,8 @@ export const VIEW_TYPES: { type: ViewType; name: string }[] = [
   { type: "gallery", name: "Gallery" },
   { type: "list", name: "List" },
   { type: "calendar", name: "Calendar" },
+  { type: "chart", name: "Chart" },
+  { type: "custom", name: "Custom" },
 ];
 
 export function typeName(type: PropertyType): string {
@@ -191,7 +374,20 @@ export function uid(prefix: string): string {
 }
 
 export function isComputed(type: PropertyType): boolean {
-  return type === "createdTime" || type === "lastEdited";
+  return type === "createdTime" || type === "lastEdited" || type === "formula";
+}
+
+/**
+ * The type a property behaves as for filters, sorts, groups and calculations:
+ * a formula acts as the type of its results.
+ */
+export function valueType(property: Property): PropertyType {
+  return property.type === "formula" ? property.resultType ?? "text" : property.type;
+}
+
+/** The property as the type it behaves as (formulas → their result type). */
+export function asValueProperty(property: Property): Property {
+  return property.type === "formula" ? { ...property, type: property.resultType ?? "text" } : property;
 }
 
 export function hasOptions(type: PropertyType): boolean {
@@ -205,6 +401,28 @@ export function defaultStatusOptions(): SelectOption[] {
     { id: uid("opt"), name: "Done", color: "green", group: "complete" },
   ];
 }
+
+/** A first chart that says something: rows per status/select, else per month created. */
+export function defaultChart(schema: DatabaseSchema): ChartConfig {
+  const option = schema.properties.find((p) => p.type === "status" || p.type === "select");
+  if (option) return { kind: "column", x: option.id, aggregate: "count", sort: "default" };
+  const date = schema.properties.find((p) => p.type === "date");
+  return { kind: "line", x: date?.id ?? "createdTime", dateBucket: "month", aggregate: "count", sort: "default" };
+}
+
+export const DEFAULT_CUSTOM_VIEW = `<div class="n-list" id="rows"></div>
+<script>
+  // window.noteral.database: { schema, view, rows } — rows have id, title, icon, values (by property name) and cells (display text).
+  function render({ rows }) {
+    document.getElementById("rows").innerHTML = rows.map((row) =>
+      \`<button class="n-item" data-id="\${row.id}">\${row.icon ? row.icon + " " : ""}\${row.title || "Untitled"}</button>\`).join("") || "<p class=\\"n-muted\\">No rows</p>";
+  }
+  noteral.database.onChange(render);
+  document.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-id]");
+    if (item) noteral.database.openRow(item.dataset.id);
+  });
+</script>`;
 
 export function newView(type: ViewType, schema?: DatabaseSchema, name?: string): DatabaseView {
   const view: DatabaseView = {
@@ -225,7 +443,9 @@ export function newView(type: ViewType, schema?: DatabaseSchema, name?: string):
       view.hidden = schema.properties.slice(2).map((p) => p.id);
     }
     if (type === "gallery") view.cardPreview = "cover";
+    if (type === "chart") view.chart = defaultChart(schema);
   }
+  if (type === "custom") view.custom = { html: DEFAULT_CUSTOM_VIEW };
   return view;
 }
 
@@ -255,7 +475,8 @@ export function parseSchema(raw: string | undefined | null): DatabaseSchema {
   }
   const properties = asArray<Property>(value.properties)
     .filter((p) => p && typeof p.id === "string" && typeof p.type === "string")
-    .map((p) => ({ ...p, name: String(p.name ?? ""), options: hasOptions(p.type) ? asArray<SelectOption>(p.options) : p.options }));
+    // resultType is worked out on render; a stale saved copy must not stick.
+    .map(({ resultType: _resultType, ...p }) => ({ ...p, name: String(p.name ?? ""), options: hasOptions(p.type) ? asArray<SelectOption>(p.options) : p.options }));
   let views = asArray<DatabaseView>(value.views)
     .filter((v) => v && typeof v.id === "string")
     .map((v) => ({
@@ -417,7 +638,8 @@ export function formatNumber(value: unknown, format: NumberFormat = "number"): s
 }
 
 /** Plain text of a cell, used for search, filters on text and exports. */
-export function cellText(row: DatabaseRow, property: Property): string {
+export function cellText(row: DatabaseRow, input: Property): string {
+  const property = asValueProperty(input);
   const value = cellValue(row, property);
   switch (property.type) {
     case "select":
@@ -442,7 +664,8 @@ export function cellText(row: DatabaseRow, property: Property): string {
   }
 }
 
-export function filterOpsFor(type: PropertyType): { op: FilterOp; name: string }[] {
+export function filterOpsFor(input: PropertyType | Property): { op: FilterOp; name: string }[] {
+  const type = typeof input === "string" ? input : valueType(input);
   switch (type) {
     case "number":
       return [
@@ -481,6 +704,7 @@ export function filterOpsFor(type: PropertyType): { op: FilterOp; name: string }
         { op: "after", name: "Is after" },
         { op: "onOrBefore", name: "Is on or before" },
         { op: "onOrAfter", name: "Is on or after" },
+        { op: "within", name: "Is within" },
         { op: "isEmpty", name: "Is empty" },
         { op: "isNotEmpty", name: "Is not empty" },
       ];
@@ -503,14 +727,15 @@ export function opNeedsValue(op: FilterOp): boolean {
 }
 
 export function defaultFilter(property: Property): FilterRule {
-  const op = filterOpsFor(property.type)[0].op;
-  return { id: uid("flt"), propertyId: property.id, op, value: property.type === "checkbox" ? true : undefined };
+  const op = filterOpsFor(property)[0].op;
+  return { id: uid("flt"), propertyId: property.id, op, value: valueType(property) === "checkbox" ? true : undefined };
 }
 
 /** Whether a rule is complete enough to apply; half-written rules are ignored. */
 export function filterIsActive(rule: FilterRule): boolean {
   if (!opNeedsValue(rule.op)) return true;
   if (rule.value === undefined || rule.value === null || rule.value === "") return false;
+  if (Array.isArray(rule.value) && !rule.value.length) return false;
   return true;
 }
 
@@ -519,8 +744,9 @@ function dateKey(property: Property, value: unknown): string {
   return dateStart(value);
 }
 
-export function matchesFilter(row: DatabaseRow, property: Property, rule: FilterRule): boolean {
+export function matchesFilter(row: DatabaseRow, input: Property, rule: FilterRule): boolean {
   if (!filterIsActive(rule)) return true;
+  const property = asValueProperty(input);
   const value = cellValue(row, property);
   if (rule.op === "isEmpty") return property.type === "checkbox" ? !value : isEmptyValue(property.type === "date" ? dateStart(value) : value);
   if (rule.op === "isNotEmpty") return property.type === "checkbox" ? !!value : !isEmptyValue(property.type === "date" ? dateStart(value) : value);
@@ -540,11 +766,17 @@ export function matchesFilter(row: DatabaseRow, property: Property, rule: Filter
       }
     }
     case "select":
-    case "status":
-      return rule.op === "isNot" ? value !== rule.value : value === rule.value;
+    case "status": {
+      // A list value means "is any of" / "is none of".
+      const targets = Array.isArray(rule.value) ? rule.value : [rule.value];
+      const hit = targets.includes(value);
+      return rule.op === "isNot" ? !hit : hit;
+    }
     case "multiSelect": {
       const list = Array.isArray(value) ? value : [];
-      return rule.op === "notContains" ? !list.includes(rule.value) : list.includes(rule.value);
+      const targets = Array.isArray(rule.value) ? rule.value : [rule.value];
+      const hit = targets.some((target) => list.includes(target));
+      return rule.op === "notContains" ? !hit : hit;
     }
     case "checkbox":
       return !!value === !!rule.value;
@@ -552,8 +784,12 @@ export function matchesFilter(row: DatabaseRow, property: Property, rule: Filter
     case "createdTime":
     case "lastEdited": {
       const key = dateKey(property, value);
-      const target = String(rule.value ?? "");
       if (!key) return false;
+      if (rule.op === "within") {
+        const range = dateRangeOf(rule.value);
+        return range ? key >= range[0] && key <= range[1] : true;
+      }
+      const target = resolveFilterDate(rule.value);
       switch (rule.op) {
         case "is": return key === target;
         case "before": return key < target;
@@ -579,7 +815,8 @@ export function matchesFilter(row: DatabaseRow, property: Property, rule: Filter
   }
 }
 
-function compareValues(a: DatabaseRow, b: DatabaseRow, property: Property): number {
+function compareValues(a: DatabaseRow, b: DatabaseRow, input: Property): number {
+  const property = asValueProperty(input);
   const av = cellValue(a, property);
   const bv = cellValue(b, property);
   const aEmpty = property.type === "checkbox" ? false : isEmptyValue(property.type === "date" ? dateStart(av) : av);
@@ -606,42 +843,76 @@ function compareValues(a: DatabaseRow, b: DatabaseRow, property: Property): numb
   }
 }
 
-/** Applies a view's filters, search and sorts; the row order is the fallback. */
+/** Whether a row passes an advanced filter group (empty groups pass). */
+export function matchesGroup(row: DatabaseRow, schema: DatabaseSchema, group: FilterGroup, depth = 0): boolean {
+  const results: boolean[] = [];
+  for (const node of group.items) {
+    if (isFilterGroup(node)) {
+      if (depth > 4 || !countRules(node)) continue;
+      results.push(matchesGroup(row, schema, node, depth + 1));
+      continue;
+    }
+    const property = propertyById(schema, node.propertyId);
+    if (!property || !filterIsActive(node)) continue;
+    results.push(matchesFilter(row, property, node));
+  }
+  if (!results.length) return true;
+  return group.mode === "or" ? results.some(Boolean) : results.every(Boolean);
+}
+
+/** Active rules in a filter tree. */
+export function countRules(group: FilterGroup | undefined): number {
+  if (!group) return 0;
+  let n = 0;
+  for (const node of group.items) n += isFilterGroup(node) ? countRules(node) : filterIsActive(node) ? 1 : 0;
+  return n;
+}
+
+export function emptyFilterGroup(mode: "and" | "or" = "and"): FilterGroup {
+  return { id: uid("grp"), mode, items: [] };
+}
+
+/** Sorts rows by a list of rules; empties stay last, the given order breaks ties. */
+export function sortRows(rows: DatabaseRow[], schema: DatabaseSchema, rules: SortRule[]): DatabaseRow[] {
+  const sorts = rules
+    .map((sort) => ({ sort, property: propertyById(schema, sort.propertyId) }))
+    .filter((item): item is { sort: SortRule; property: Property } => !!item.property)
+    .map((item) => ({ ...item, property: asValueProperty(item.property) }));
+  if (!sorts.length) return rows;
+  const index = new Map(rows.map((row, i) => [row.id, i]));
+  const blank = (property: Property, value: unknown) => property.type !== "checkbox" && isEmptyValue(property.type === "date" ? dateStart(value) : value);
+  return [...rows].sort((a, b) => {
+    for (const { sort, property } of sorts) {
+      const result = compareValues(a, b, property);
+      if (result !== 0) {
+        // Empty values stay last in both directions.
+        const emptyInvolved = blank(property, cellValue(a, property)) || blank(property, cellValue(b, property));
+        return sort.direction === "desc" && !emptyInvolved ? -result : result;
+      }
+    }
+    return (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0);
+  });
+}
+
+/** Applies a view's filters (simple and advanced), search and sorts; the row order is the fallback. */
 export function applyView(rows: DatabaseRow[], schema: DatabaseSchema, view: DatabaseView, search = ""): DatabaseRow[] {
   const rules = view.filters
     .map((rule) => ({ rule, property: propertyById(schema, rule.propertyId) }))
     .filter((item): item is { rule: FilterRule; property: Property } => !!item.property && filterIsActive(item.rule));
+  const advanced = countRules(view.advanced) ? view.advanced : undefined;
   const needle = search.trim().toLowerCase();
   const searchable = [propertyById(schema, TITLE_ID)!, ...schema.properties];
-  let out = rows.filter((row) => {
+  const out = rows.filter((row) => {
     if (rules.length) {
       const results = rules.map(({ rule, property }) => matchesFilter(row, property, rule));
       const ok = view.filterMode === "or" ? results.some(Boolean) : results.every(Boolean);
       if (!ok) return false;
     }
+    if (advanced && !matchesGroup(row, schema, advanced)) return false;
     if (needle) return searchable.some((property) => cellText(row, property).toLowerCase().includes(needle));
     return true;
   });
-  const sorts = view.sorts
-    .map((sort) => ({ sort, property: propertyById(schema, sort.propertyId) }))
-    .filter((item): item is { sort: SortRule; property: Property } => !!item.property);
-  if (sorts.length) {
-    const index = new Map(rows.map((row, i) => [row.id, i]));
-    out = [...out].sort((a, b) => {
-      for (const { sort, property } of sorts) {
-        const result = compareValues(a, b, property);
-        if (result !== 0) {
-          // Empty values stay last in both directions.
-          const av = cellValue(a, property);
-          const bv = cellValue(b, property);
-          const emptyInvolved = property.type !== "checkbox" && (isEmptyValue(property.type === "date" ? dateStart(av) : av) || isEmptyValue(property.type === "date" ? dateStart(bv) : bv));
-          return sort.direction === "desc" && !emptyInvolved ? -result : result;
-        }
-      }
-      return (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0);
-    });
-  }
-  return out;
+  return sortRows(out, schema, view.sorts);
 }
 
 export interface BoardGroup {
@@ -654,38 +925,90 @@ export interface BoardGroup {
 
 export const NO_GROUP = "__none";
 
-/** Splits rows into board columns by a select/status/checkbox property. */
-export function groupRows(rows: DatabaseRow[], property: Property | undefined): BoardGroup[] {
-  if (!property) return [{ id: NO_GROUP, name: "All", color: "default", rows }];
+/** Types that board columns can be built from (values that can be set by dragging). */
+export const BOARD_GROUP_TYPES: PropertyType[] = ["select", "multiSelect", "status", "checkbox"];
+
+/** Whether a property can group rows (tables, lists and galleries group by anything but long text). */
+export function canGroupBy(property: Property | undefined): boolean {
+  return !!property && property.id !== TITLE_ID;
+}
+
+const MONTH_FORMAT: Intl.DateTimeFormatOptions = { month: "long", year: "numeric" };
+
+/**
+ * Splits rows into groups by a property. Option properties keep their option
+ * order with "No X" first; checkboxes split checked/unchecked; dates group by
+ * month (newest first); anything else groups by its text value.
+ */
+export function groupRows(rows: DatabaseRow[], input: Property | undefined): BoardGroup[] {
+  if (!input) return [{ id: NO_GROUP, name: "All", color: "default", rows }];
+  const property = asValueProperty(input);
   if (property.type === "checkbox") {
     return [
-      { id: "true", name: "Checked", color: "green", rows: rows.filter((row) => !!row.values[property.id]) },
-      { id: "false", name: "Unchecked", color: "default", rows: rows.filter((row) => !row.values[property.id]) },
+      { id: "true", name: "Checked", color: "green", rows: rows.filter((row) => !!cellValue(row, property)) },
+      { id: "false", name: "Unchecked", color: "default", rows: rows.filter((row) => !cellValue(row, property)) },
     ];
   }
-  const options = property.options ?? [];
-  const known = new Set(options.map((o) => o.id));
-  const none: BoardGroup = {
-    id: NO_GROUP,
-    name: `No ${property.name || "value"}`,
-    color: "default",
-    rows: rows.filter((row) => {
-      const value = row.values[property.id];
-      if (property.type === "multiSelect") return !Array.isArray(value) || !value.some((id) => known.has(id));
-      return typeof value !== "string" || !known.has(value);
-    }),
-  };
-  const groups = options.map((option) => ({
-    id: option.id,
-    name: option.name,
-    color: option.color,
-    option,
-    rows: rows.filter((row) => {
-      const value = row.values[property.id];
-      return property.type === "multiSelect" ? Array.isArray(value) && value.includes(option.id) : value === option.id;
-    }),
-  }));
-  return [none, ...groups];
+  if (hasOptions(property.type)) {
+    const options = property.options ?? [];
+    const known = new Set(options.map((o) => o.id));
+    const none: BoardGroup = {
+      id: NO_GROUP,
+      name: `No ${property.name || "value"}`,
+      color: "default",
+      rows: rows.filter((row) => {
+        const value = row.values[property.id];
+        if (property.type === "multiSelect") return !Array.isArray(value) || !value.some((id) => known.has(id));
+        return typeof value !== "string" || !known.has(value);
+      }),
+    };
+    const groups = options.map((option) => ({
+      id: option.id,
+      name: option.name,
+      color: option.color,
+      option,
+      rows: rows.filter((row) => {
+        const value = row.values[property.id];
+        return property.type === "multiSelect" ? Array.isArray(value) && value.includes(option.id) : value === option.id;
+      }),
+    }));
+    return [none, ...groups];
+  }
+  const buckets = new Map<string, { name: string; rows: DatabaseRow[] }>();
+  const none: BoardGroup = { id: NO_GROUP, name: `No ${property.name || "value"}`, color: "default", rows: [] };
+  const dated = property.type === "date" || property.type === "createdTime" || property.type === "lastEdited";
+  for (const row of rows) {
+    const value = cellValue(row, property);
+    let key = "";
+    let name = "";
+    if (dated) {
+      const day = property.type === "date" ? dateStart(value) : typeof value === "string" ? localDateOf(value) : "";
+      if (day) {
+        key = day.slice(0, 7);
+        name = parseISODate(`${key}-01`)?.toLocaleDateString(undefined, MONTH_FORMAT) ?? key;
+      }
+    } else if (property.type === "number") {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        key = String(value);
+        name = formatNumber(value, property.format);
+      }
+    } else {
+      name = cellText(row, property).trim();
+      key = name.toLowerCase();
+    }
+    if (!key) {
+      none.rows.push(row);
+      continue;
+    }
+    const bucket = buckets.get(key) ?? { name, rows: [] };
+    bucket.rows.push(row);
+    buckets.set(key, bucket);
+  }
+  const keys = [...buckets.keys()].sort((x, y) =>
+    dated ? y.localeCompare(x) : property.type === "number" ? Number(x) - Number(y) : x.localeCompare(y, undefined, { numeric: true, sensitivity: "base" }),
+  );
+  const groups: BoardGroup[] = keys.map((key) => ({ id: `v:${key}`, name: buckets.get(key)!.name, color: "default", rows: buckets.get(key)!.rows }));
+  return [...groups, none];
 }
 
 /** Values a new row should start with so it lands inside the current view. */
@@ -782,7 +1105,8 @@ export function normalizeUrl(value: string): string {
   return /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export function calcsFor(type: PropertyType): { kind: CalcKind; name: string; short: string }[] {
+export function calcsFor(input: PropertyType | Property): { kind: CalcKind; name: string; short: string }[] {
+  const type = typeof input === "string" ? input : valueType(input);
   const base: { kind: CalcKind; name: string; short: string }[] = [
     { kind: "none", name: "None", short: "" },
     { kind: "countAll", name: "Count all", short: "Count" },
@@ -822,8 +1146,9 @@ export function calcsFor(type: PropertyType): { kind: CalcKind; name: string; sh
 }
 
 /** A column summary for the table footer; "" when the kind does not apply. */
-export function computeCalc(rows: DatabaseRow[], property: Property, kind: CalcKind): string {
+export function computeCalc(rows: DatabaseRow[], input: Property, kind: CalcKind): string {
   if (kind === "none") return "";
+  const property = asValueProperty(input);
   const values = rows.map((row) => cellValue(row, property));
   const empty = (value: unknown) => (property.type === "date" ? !dateStart(value) : property.type === "checkbox" ? !value : isEmptyValue(value));
   const total = rows.length;

@@ -61,6 +61,13 @@ export function CreateItem(workspaceID: string, parentID: string, kind: string, 
     return $Call.ByID(1128001961, workspaceID, parentID, kind, title, data);
 }
 
+/**
+ * CreateItems creates many items of one kind at once (bulk database rows).
+ */
+export function CreateItems(workspaceID: string, parentID: string, kind: string, items: store$0.NewItem[] | null): $CancellablePromise<store$0.PageMeta[] | null> {
+    return $Call.ByID(2975709742, workspaceID, parentID, kind, items);
+}
+
 export function CreatePage(workspaceID: string, parentID: string): $CancellablePromise<store$0.PageDocument> {
     return $Call.ByID(2684228377, workspaceID, parentID);
 }

@@ -94,6 +94,24 @@ export interface ChatMessage {
   context?: { pageId?: string; pageTitle?: string; selection?: string };
   /** User messages: things the user mentioned with @ or by dragging, with the content read at send time. */
   mentions?: Mention[];
+  /** User messages: files the user attached. */
+  attachments?: Attachment[];
+  /** Assistant messages: set while earlier messages are being summarized (auto-compact). */
+  compacting?: boolean;
+  /** Assistant messages: set while waiting to retry a request that failed (live status). */
+  retrying?: { attempt: number; of: number; at: number; reason: "network" | "busy" | "empty"; error: string };
+  /** A summary that replaced earlier messages when the chat was compacted. */
+  summary?: { messages: number; at: number; auto: boolean };
+}
+
+/** A file attached to a user message. Images and PDFs are base64; text files are their text. */
+export interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: "image" | "pdf" | "text";
+  data: string;
 }
 
 export interface Chat {
@@ -105,6 +123,8 @@ export interface Chat {
   providerId?: string;
   model?: string;
   messages: ChatMessage[];
+  /** Methods the model loaded with tools.load (on top of the mode's core tools). */
+  tools?: string[];
 }
 
 export interface AssistantSettings {
@@ -130,6 +150,14 @@ export interface AssistantSettings {
   agents: boolean;
   /** How many sub-agents (and read-only lookups) run at the same time. */
   parallel: number;
+  /** "auto": send core tools and let the model load more (cheaper). "all": send every tool each step. */
+  toolLoading: "auto" | "all";
+  /** Compact the chat automatically when the context is this full (percent; 0 = never). */
+  autoCompact: number;
+  /** Retry a request this many times when the stream fails for a passing reason (0 = never). */
+  retries: number;
+  /** Seconds to wait before each automatic retry. */
+  retryDelay: number;
 }
 
 export const DEFAULT_SETTINGS: AssistantSettings = {
@@ -147,6 +175,10 @@ export const DEFAULT_SETTINGS: AssistantSettings = {
   discovered: {},
   agents: true,
   parallel: 4,
+  toolLoading: "auto",
+  autoCompact: 80,
+  retries: 3,
+  retryDelay: 10,
 };
 
 /** A tool in provider-neutral form. */

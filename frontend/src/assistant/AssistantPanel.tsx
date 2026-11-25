@@ -3,14 +3,17 @@ import type { DragEvent as ReactDragEvent } from "react";
 import { Clipboard } from "@wailsio/runtime";
 import {
   AtSign,
+  Archive,
   Check,
   ChevronRight,
   CircleAlert,
   Copy,
   FileText,
+  FileUp,
   History,
   LoaderCircle,
   Plus,
+  RefreshCw,
   RotateCcw,
   Settings2,
   Trash2,
@@ -22,13 +25,15 @@ import { openMarkdownLink } from "../lib/links";
 import { Markdown } from "../lib/markdownView";
 import { dialogs } from "../lib/dialogs";
 import { toggleAssistant } from "./open";
-import { Composer, MentionChip, focusComposer, useComposer } from "./Composer";
+import { Composer, FileChip, MentionChip, focusComposer, useComposer } from "./Composer";
+import { hasFiles } from "./attachments";
 import { canMention, mentionsFromDrop } from "./mentions";
 import { displayModel } from "./models";
 import { LedgerButton } from "./Ledger";
 import { ProvidersView } from "./ProvidersView";
 import { useAssistant } from "./store";
-import { ApprovalCard, ChangeList, QuestionCard, SourceList, ThinkingLoader, Timeline, changesOf, formatTokens, layoutReply, sourcesOf } from "./Activity";
+import { ApprovalCard, ChangeList, QuestionCard, SourceList, ThinkingLoader, Timeline, changesOf, formatTokens, layoutReply, sourcesOf, useNow } from "./Activity";
+import { canContinue, retryLabel } from "./retry";
 import { MODES } from "./tools";
 import type { AssistantMode, ChatMessage } from "./types";
 
@@ -64,12 +69,16 @@ export function AssistantPanel() {
   );
 }
 
-/** Lets pages, rows, tabs, sidebar tabs and editor blocks be dropped on the chat to mention them. */
+/**
+ * Lets pages, rows, tabs, sidebar tabs and editor blocks be dropped on the chat to mention
+ * them, and files from the computer to attach them.
+ */
 function useMentionDrop() {
-  const [over, setOver] = useState(false);
+  const [over, setOver] = useState<"" | "mention" | "files">("");
   const depth = useRef(0);
   const addMentions = useComposer((state) => state.addMentions);
-  const accepts = (event: ReactDragEvent) => canMention(event.dataTransfer);
+  const addFiles = useComposer((state) => state.addFiles);
+  const accepts = (event: ReactDragEvent) => hasFiles(event.dataTransfer) || canMention(event.dataTransfer);
   return {
     over,
     handlers: {
@@ -77,23 +86,31 @@ function useMentionDrop() {
         if (!accepts(event)) return;
         event.preventDefault();
         depth.current += 1;
-        setOver(true);
+        setOver(hasFiles(event.dataTransfer) ? "files" : "mention");
       },
       onDragOver(event: ReactDragEvent) {
         if (!accepts(event)) return;
         event.preventDefault();
-        event.dataTransfer.dropEffect = "link";
+        event.dataTransfer.dropEffect = hasFiles(event.dataTransfer) ? "copy" : "link";
       },
       onDragLeave(event: ReactDragEvent) {
         if (!accepts(event)) return;
         depth.current = Math.max(0, depth.current - 1);
-        if (!depth.current) setOver(false);
+        if (!depth.current) setOver("");
       },
       onDrop(event: ReactDragEvent) {
         if (!accepts(event)) return;
         event.preventDefault();
         depth.current = 0;
-        setOver(false);
+        setOver("");
+        if (hasFiles(event.dataTransfer)) {
+          const files = [...event.dataTransfer.files];
+          if (files.length) {
+            void addFiles(files);
+            focusComposer();
+          }
+          return;
+        }
         const items = mentionsFromDrop(event.dataTransfer, tabDragId());
         if (items.length) {
           addMentions(items);
@@ -202,8 +219,8 @@ function ChatView() {
       <Composer />
       {drop.over ? (
         <div className="assistant-drop" aria-hidden>
-          <AtSign size={18} />
-          <span>Drop to mention</span>
+          {drop.over === "files" ? <FileUp size={18} /> : <AtSign size={18} />}
+          <span>{drop.over === "files" ? "Drop to attach" : "Drop to mention"}</span>
         </div>
       ) : null}
     </div>
@@ -239,10 +256,40 @@ function EmptyChat({ hasProvider }: { hasProvider: boolean }) {
   );
 }
 
+/** Where a compaction summary replaced the messages above it; opens to show the summary. */
+function SummaryDivider({ message }: { message: ChatMessage }) {
+  const [open, setOpen] = useState(false);
+  const text = message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
+  const body = text.replace(/^Summary of the earlier conversation[^\n]*\n+/, "");
+  const info = message.summary!;
+  return (
+    <div className={`assistant-summary${open ? " is-open" : ""}`}>
+      <button type="button" className="assistant-summary-head" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <span className="assistant-summary-rule" aria-hidden />
+        <span className="assistant-summary-label">
+          <Archive size={11} aria-hidden />
+          {info.auto ? "Auto-compacted" : "Compacted"} {info.messages} messages
+          <ChevronRight size={11} className="assistant-summary-chevron" aria-hidden />
+        </span>
+        <span className="assistant-summary-rule" aria-hidden />
+      </button>
+      {open ? <Markdown source={body} className="assistant-md assistant-summary-body" onLink={openMarkdownLink} /> : null}
+    </div>
+  );
+}
+
 const UserMessage = memo(function UserMessage({ message }: { message: ChatMessage }) {
   const text = message.parts.map((part) => (part.type === "text" ? part.text : "")).join("");
+  if (message.summary) return <SummaryDivider message={message} />;
   return (
     <div className="assistant-user">
+      {message.attachments?.length ? (
+        <div className="assistant-files is-sent">
+          {message.attachments.map((file) => (
+            <FileChip key={file.id} file={file} />
+          ))}
+        </div>
+      ) : null}
       {message.mentions?.length ? (
         <div className="assistant-mentions is-sent">
           {message.mentions.map((item) => (
@@ -260,6 +307,24 @@ const UserMessage = memo(function UserMessage({ message }: { message: ChatMessag
   );
 });
 
+/** Live status while a failed request waits for its automatic retry. */
+function RetryStatus({ wait }: { wait: NonNullable<ChatMessage["retrying"]> }) {
+  const retryNow = useAssistant((state) => state.retryNow);
+  const now = useNow(true, 500);
+  const seconds = Math.max(0, Math.ceil((wait.at - now) / 1000));
+  return (
+    <div className="assistant-retrying" role="status" aria-live="polite" title={wait.error}>
+      <RefreshCw size={12} className={seconds === 0 ? "spin" : undefined} aria-hidden />
+      <span className="assistant-retrying-text">
+        {retryLabel(wait.reason)} — {seconds > 0 ? `retrying in ${seconds}s` : "retrying…"} <span className="assistant-retrying-count">(retry {wait.attempt} of {wait.of})</span>
+      </span>
+      <button type="button" className="assistant-mini" onClick={() => retryNow()} title="Skip the wait and try again now">
+        Retry now
+      </button>
+    </div>
+  );
+}
+
 const AssistantMessage = memo(function AssistantMessage({ message, live, last }: { message: ChatMessage; live: boolean; last: boolean }) {
   const regenerate = useAssistant((state) => state.regenerate);
   const running = useAssistant((state) => state.running);
@@ -268,6 +333,7 @@ const AssistantMessage = memo(function AssistantMessage({ message, live, last }:
   const sources = useMemo(() => (live ? [] : sourcesOf(message)), [message, live]);
   const changes = useMemo(() => (live ? [] : changesOf(message)), [message, live]);
   const text = layout.answer.trim();
+  const resumable = !live && canContinue(message);
   const started = !live || message.parts.some((part) => (part.type === "text" ? part.text.trim() : part.type === "tool" || part.text.trim()));
 
   const copy = async () => {
@@ -282,10 +348,17 @@ const AssistantMessage = memo(function AssistantMessage({ message, live, last }:
 
   return (
     <div className={`assistant-reply${live ? " live" : ""}`}>
-      {!started ? <ThinkingLoader since={message.createdAt} /> : null}
-      <Timeline message={message} steps={layout.steps} live={live && !layout.pending.length && !text} waiting={live && layout.pending.length > 0} />
+      {message.compacting ? (
+        <div className="assistant-compacting" role="status">
+          <LoaderCircle size={12} className="spin" aria-hidden /> Compacting earlier messages to free context…
+        </div>
+      ) : !started && !message.retrying ? (
+        <ThinkingLoader since={message.createdAt} />
+      ) : null}
+      <Timeline message={message} steps={layout.steps} live={live} waiting={live && layout.pending.length > 0} answering={Boolean(text)} />
       {layout.pending.map((tool) => (tool.status === "asking" ? <QuestionCard key={tool.id} tool={tool} /> : <ApprovalCard key={tool.id} tool={tool} />))}
       {text ? <Markdown source={layout.answer} className={`assistant-md assistant-answer${live ? " is-streaming" : ""}`} onLink={openMarkdownLink} /> : null}
+      {live && message.retrying ? <RetryStatus wait={message.retrying} /> : null}
       {message.error ? (
         <div className="assistant-error" role="alert">
           <CircleAlert size={13} /> <span>{message.error}</span>
@@ -294,16 +367,21 @@ const AssistantMessage = memo(function AssistantMessage({ message, live, last }:
       {message.stopped ? <div className="assistant-stopped">Stopped</div> : null}
       {!live ? <ChangeList changes={changes} /> : null}
       {!live ? <SourceList sources={sources} /> : null}
-      {!live && (text || message.error) ? (
+      {!live && (text || message.error || message.stopped) ? (
         <div className="assistant-reply-foot">
           {text ? (
             <button type="button" className="assistant-mini" onClick={() => void copy()} title="Copy reply">
               {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "Copied" : "Copy"}
             </button>
           ) : null}
-          {last ? (
-            <button type="button" className="assistant-mini" onClick={() => void regenerate()} disabled={running} title="Run this reply again">
+          {last && resumable ? (
+            <button type="button" className="assistant-mini" onClick={() => void regenerate()} disabled={running} title="Continue from the last step">
               <RotateCcw size={12} /> Retry
+            </button>
+          ) : null}
+          {last ? (
+            <button type="button" className="assistant-mini" onClick={() => void regenerate({ fresh: true })} disabled={running} title="Run this reply again from your message">
+              <RefreshCw size={12} /> {resumable ? "Start over" : "Regenerate"}
             </button>
           ) : null}
           <span className="assistant-reply-meta">

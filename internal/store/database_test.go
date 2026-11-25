@@ -85,3 +85,48 @@ func TestFoldersAndDatabases(t *testing.T) {
 		t.Fatalf("inline database not remapped: %s", copied.DocJSON)
 	}
 }
+
+func TestCreateItemsBatch(t *testing.T) {
+	st, _ := openTestStore(t)
+	const ws = "ws_default"
+	if _, err := st.Snapshot(ws); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	db, err := st.CreateItem(ws, "", KindDatabase, "Tasks", `{"titleName":"Task","properties":[]}`)
+	if err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	first, err := st.CreateItem(ws, db.ID, KindPage, "Existing", "")
+	if err != nil {
+		t.Fatalf("create row: %v", err)
+	}
+	rows, err := st.CreateItems(ws, db.ID, KindPage, []NewItem{{Title: "A", Data: `{"p":1}`}, {Title: ""}, {Title: "C"}})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(rows) != 3 || rows[0].Title != "A" || rows[1].Title != "Untitled" || rows[2].Data != "" {
+		t.Fatalf("unexpected rows: %+v", rows)
+	}
+	if !(first.Position < rows[0].Position && rows[0].Position < rows[1].Position && rows[1].Position < rows[2].Position) {
+		t.Fatalf("rows out of order")
+	}
+	if _, err := st.CreateItems(ws, db.ID, KindPage, []NewItem{{Title: "ok"}, {Data: "{bad"}}); err == nil {
+		t.Fatalf("invalid data accepted")
+	}
+	if _, err := st.CreateItems(ws, "pg_missing", KindPage, []NewItem{{Title: "x"}}); err == nil {
+		t.Fatalf("missing parent accepted")
+	}
+	snap, err := st.Snapshot(ws)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	count := 0
+	for _, page := range snap.Pages {
+		if page.ParentID == db.ID {
+			count++
+		}
+	}
+	if count != 4 {
+		t.Fatalf("want 4 rows (failed batch must not leave partial rows), got %d", count)
+	}
+}

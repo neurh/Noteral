@@ -318,7 +318,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
             <div className="db-th db-th-fill" aria-hidden />
           </div>
 
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <div
               key={row.id}
               className={`db-tr ${selected.has(row.id) ? "is-selected" : ""} ${dragRow === row.id ? "is-dragging" : ""} ${dropRow?.id === row.id ? `drop-${dropRow.side}` : ""}`}
@@ -333,6 +333,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
               onDrop={onRowDrop}
             >
               <div className="db-td db-gutter" role="gridcell">
+                {view.rowNumbers ? <span className="db-row-num" aria-hidden>{index + 1}</span> : null}
                 <span
                   className={`db-row-handle ${canReorderRows ? "" : "is-disabled"}`}
                   draggable={canReorderRows}
@@ -420,7 +421,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
             {columns.map((property) => {
               const kind = calcs[property.id] ?? "none";
               const result = kind !== "none" ? computeCalc(rows, property, kind) : "";
-              const label = calcsFor(property.type).find((item) => item.kind === kind)?.short ?? "";
+              const label = calcsFor(property).find((item) => item.kind === kind)?.short ?? "";
               return (
                 <button
                   key={property.id}
@@ -502,7 +503,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
       {calcMenu ? (
         <Popover anchor={calcMenu.anchor} onClose={() => setCalcMenu(null)} width={200} label="Calculate">
           <div className="db-menu db-menu-scroll">
-            {calcsFor(calcMenu.property.type).map((item) => (
+            {calcsFor(calcMenu.property).map((item) => (
               <Fragment key={item.kind}>
                 <button
                   type="button"

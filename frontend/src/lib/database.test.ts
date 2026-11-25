@@ -4,7 +4,10 @@ import {
   NO_GROUP,
   TITLE_ID,
   applyView,
+  canGroupBy,
   computeCalc,
+  countRules,
+  emptyFilterGroup,
   convertValue,
   defaultSchema,
   filterIsActive,
@@ -22,6 +25,7 @@ import {
   type DatabaseSchema,
   type Property,
 } from "./database";
+import { withFormulas } from "./databaseFormulas";
 
 function meta(id: string, title: string, parentId: string, position: number, values: Record<string, unknown> = {}): PageMeta {
   return {
@@ -199,3 +203,82 @@ describe("conversion and calculations", () => {
 
 // Keep the helper type exercised so unused-import lint stays quiet.
 export type _Rows = DatabaseRow[];
+
+describe("advanced filters, grouping and formulas", () => {
+  it("matches nested and/or groups together with the simple filters", () => {
+    const { schema, rows, status, tags, done } = fixture();
+    const view = newView("table", schema);
+    // (status is done) OR (tags contain Bug AND estimate > 5)
+    view.advanced = {
+      id: "g0",
+      mode: "or",
+      items: [
+        { id: "a1", propertyId: status.id, op: "is", value: done.id },
+        {
+          id: "g1",
+          mode: "and",
+          items: [
+            { id: "a2", propertyId: tags.id, op: "contains", value: "t_bug" },
+            { id: "a3", propertyId: "prop_est", op: "gt", value: 5 },
+          ],
+        },
+      ],
+    };
+    expect(applyView(rows, schema, view).map((r) => r.id)).toEqual(["r1", "r2"]);
+    expect(countRules(view.advanced)).toBe(3);
+    // Simple filters still apply on top (AND).
+    view.filters = [{ id: "f1", propertyId: "prop_est", op: "lt", value: 5 }];
+    expect(applyView(rows, schema, view).map((r) => r.id)).toEqual(["r1"]);
+    // An empty group matches everything.
+    view.filters = [];
+    view.advanced = emptyFilterGroup("and");
+    expect(applyView(rows, schema, view)).toHaveLength(3);
+  });
+
+  it("groups table rows by number, text and date", () => {
+    const { rows, estimate, date } = fixture();
+    const byNumber = groupRows(rows, estimate);
+    expect(byNumber.find((g) => g.name === "8")?.rows.map((r) => r.id)).toEqual(["r2"]);
+    expect(byNumber[byNumber.length - 1].id).toBe(NO_GROUP);
+    const byDate = groupRows(rows, date);
+    const march = byDate.find((g) => g.id.startsWith("v:2026-03"));
+    expect(march?.rows.map((r) => r.id).sort()).toEqual(["r1", "r3"]);
+    expect(canGroupBy(estimate)).toBe(true);
+  });
+
+  it("computes formula properties that filters, sorts and groups can use", () => {
+    const { schema, rows, estimate } = fixture();
+    const points: Property = { id: "prop_pts", name: "Points", type: "formula", formula: 'prop("Estimate") * 2' };
+    const label: Property = { id: "prop_lbl", name: "Size", type: "formula", formula: 'if({Points} > 10, "Big", "Small")' };
+    schema.properties.push(points, label);
+    const result = withFormulas(rows, schema);
+    expect(result.issues).toEqual([]);
+    const byId = new Map(result.rows.map((r) => [r.id, r]));
+    expect(byId.get("r2")?.values.prop_pts).toBe(16);
+    expect(byId.get("r2")?.values.prop_lbl).toBe("Big");
+    expect(byId.get("r1")?.values.prop_lbl).toBe("Small");
+    expect(result.schema.properties.find((p) => p.id === "prop_pts")?.resultType).toBe("number");
+    const view = newView("table", result.schema);
+    view.filters = [{ id: "f1", propertyId: "prop_pts", op: "gt", value: 10 }];
+    expect(applyView(result.rows, result.schema, view).map((r) => r.id)).toEqual(["r2"]);
+    view.filters = [];
+    view.sorts = [{ propertyId: "prop_pts", direction: "desc" }];
+    expect(applyView(result.rows, result.schema, view)[0].id).toBe("r2");
+    // Source rows are untouched: formula values are never stored.
+    expect(rows.find((r) => r.id === "r2")?.values.prop_pts).toBeUndefined();
+    expect(estimate.type).toBe("number");
+  });
+
+  it("reports cycles and unknown properties as issues", () => {
+    const { schema, rows } = fixture();
+    schema.properties.push(
+      { id: "fa", name: "A", type: "formula", formula: "{B} + 1" },
+      { id: "fb", name: "B", type: "formula", formula: "{A} + 1" },
+      { id: "fc", name: "C", type: "formula", formula: 'prop("Nope")' },
+    );
+    const result = withFormulas(rows, schema);
+    const ids = new Set(result.issues.map((issue) => issue.propertyId));
+    expect(ids.has("fa") || ids.has("fb")).toBe(true);
+    expect(ids.has("fc") || result.rowErrors.size > 0).toBe(true);
+  });
+});

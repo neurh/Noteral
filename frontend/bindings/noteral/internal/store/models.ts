@@ -103,6 +103,14 @@ export interface HomeTabSettings {
 }
 
 /**
+ * NewItem is one item for CreateItems.
+ */
+export interface NewItem {
+    "title": string;
+    "data": string;
+}
+
+/**
  * PageDocument is a full page body loaded on demand.
  */
 export interface PageDocument {

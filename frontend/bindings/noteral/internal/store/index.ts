@@ -6,6 +6,7 @@ export type {
     HomeASCII,
     HomeGradient,
     HomeTabSettings,
+    NewItem,
     PageDocument,
     PageMeta,
     SaveResult,

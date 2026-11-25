@@ -11,41 +11,53 @@ import {
   Brain,
   Check,
   ChevronDown,
+  CircleAlert,
   Database,
+  FileCode,
   FileText,
   Folder,
   Globe,
   Home,
+  Image as ImageIcon,
+  LoaderCircle,
   PanelRight,
+  Plus,
   Rows3,
   Settings2,
   Shapes,
-  Slash,
   Square,
   TextCursorInput,
   TextQuote,
   X,
 } from "lucide-react";
 import { useAppStore } from "../store";
-import { fillPrompt, matchCommands, slashQuery } from "./commands";
+import { commandIcon, fillPrompt, matchCommands, slashQuery } from "./commands";
 import type { SlashCommand, SlashContext } from "./commands";
 import { MENTION_KIND_LABEL, mentionCandidates, readSelection, sameMention } from "./mentions";
 import type { Mention, MentionCandidate, MentionKind } from "./mentions";
-import { DEFAULT_CONTEXT_WINDOW, THINKING_INFO, displayModel, effectiveThinking, estimateTokens, resolveModel } from "./models";
+import { DEFAULT_CONTEXT_WINDOW, THINKING_INFO, displayModel, effectiveThinking, estimateTokens, modelKey, resolveModel } from "./models";
 import type { ThinkingLevel } from "./models";
 import { presetFor } from "./providers";
 import { useAssistant } from "./store";
 import { MODES } from "./tools";
-import type { ChatMessage } from "./types";
+import { contextBreakdown, contextUsage } from "./context";
+import { ACCEPT, MAX_FILES, formatBytes, readAttachment } from "./attachments";
+import type { ContextSlice } from "./context";
+import type { Attachment } from "./types";
 
 // ── shared composer state (the panel's drop zone adds mentions too) ─────────
 
 interface ComposerState {
   draft: string;
   mentions: Mention[];
+  files: Attachment[];
+  /** Files still being read (names), shown as pending chips. */
+  reading: string[];
   setDraft(draft: string): void;
   addMentions(items: Mention[]): void;
   removeMention(item: Mention): void;
+  addFiles(files: File[]): Promise<void>;
+  removeFile(id: string): void;
   clear(): void;
 }
 
@@ -61,8 +73,52 @@ export const useComposer = create<ComposerState>((set, get) => ({
     set({ mentions: next.slice(-MAX_MENTIONS) });
   },
   removeMention: (item) => set({ mentions: get().mentions.filter((existing) => !sameMention(existing, item)) }),
-  clear: () => set({ draft: "", mentions: [] }),
+  files: [],
+  reading: [],
+  async addFiles(files) {
+    const room = MAX_FILES - get().files.length - get().reading.length;
+    if (room <= 0) {
+      useAppStore.getState().notify(`Up to ${MAX_FILES} files per message.`, "error");
+      return;
+    }
+    if (files.length > room) useAppStore.getState().notify(`Only the first ${room} file${room === 1 ? "" : "s"} were attached (up to ${MAX_FILES} per message).`, "error");
+    const batch = files.slice(0, room);
+    set({ reading: [...get().reading, ...batch.map((file) => file.name || "file")] });
+    for (const file of batch) {
+      try {
+        const attachment = await readAttachment(file);
+        set({ files: [...get().files, attachment] });
+      } catch (error) {
+        useAppStore.getState().notify(error instanceof Error ? error.message : String(error), "error");
+      } finally {
+        const reading = [...get().reading];
+        reading.splice(reading.indexOf(file.name || "file"), 1);
+        set({ reading });
+      }
+    }
+    focusComposer();
+  },
+  removeFile: (id) => set({ files: get().files.filter((file) => file.id !== id) }),
+  clear: () => set({ draft: "", mentions: [], files: [] }),
 }));
+
+export function FileChip({ file, onRemove, warn }: { file: Pick<Attachment, "name" | "kind" | "size" | "mime" | "data">; onRemove?: () => void; warn?: string }) {
+  const Icon = file.kind === "image" ? ImageIcon : file.kind === "pdf" ? FileText : FileCode;
+  const [broken, setBroken] = useState(false);
+  const thumb = file.kind === "image" && file.data && !broken ? `data:${file.mime};base64,${file.data}` : "";
+  return (
+    <span className={`assistant-file kind-${file.kind}${warn ? " is-warn" : ""}`} title={warn || `${file.name} · ${formatBytes(file.size)}`}>
+      {thumb ? <img src={thumb} alt="" className="assistant-file-thumb" onError={() => setBroken(true)} /> : <Icon size={12} aria-hidden />}
+      <span className="assistant-file-name">{file.name}</span>
+      <span className="assistant-file-size">{warn ? <CircleAlert size={11} /> : formatBytes(file.size)}</span>
+      {onRemove ? (
+        <button type="button" className="assistant-mention-remove" onClick={onRemove} aria-label={`Remove ${file.name}`}>
+          <X size={10} />
+        </button>
+      ) : null}
+    </span>
+  );
+}
 
 /** Focuses the composer input (after a drop, a slash action…). */
 export function focusComposer() {
@@ -131,66 +187,6 @@ function useDismiss(open: boolean, close: () => void, root: React.RefObject<HTML
       window.removeEventListener("keydown", onKey, true);
     };
   }, [open, close, root]);
-}
-
-// ── context usage ───────────────────────────────────────────────────────────
-
-function partTokens(message: ChatMessage): number {
-  let chars = 0;
-  for (const part of message.parts) {
-    if (part.type === "text" || part.type === "thinking") chars += part.text.length;
-    else chars += JSON.stringify(part.args ?? {}).length + (part.result?.length ?? 0) + (part.error?.length ?? 0);
-  }
-  for (const mention of message.mentions ?? []) chars += (mention.content?.length ?? 0) + 60;
-  return Math.ceil(chars / 4);
-}
-
-/** Tokens the next request will send: the provider's last count plus anything newer, or an estimate. */
-export function contextUsage(messages: ChatMessage[], draftTokens: number): { used: number; exact: boolean } {
-  let lastIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === "assistant" && messages[index].usage?.input) {
-      lastIndex = index;
-      break;
-    }
-  }
-  // System prompt + tool schemas aren't in the messages; ~6k is typical.
-  const overhead = 6000;
-  if (lastIndex < 0) return { used: overhead + messages.reduce((sum, message) => sum + partTokens(message), 0) + draftTokens, exact: false };
-  const usage = messages[lastIndex].usage!;
-  const after = messages.slice(lastIndex + 1).reduce((sum, message) => sum + partTokens(message), 0);
-  return { used: usage.input + usage.output + after + draftTokens, exact: true };
-}
-
-export interface ContextSlice {
-  key: string;
-  label: string;
-  tokens: number;
-  color: string;
-}
-
-/** Roughly where the context goes, scaled to the measured total. */
-export function contextBreakdown(messages: ChatMessage[], draftTokens: number, used: number): ContextSlice[] {
-  const sums = { system: 6000, you: 0, replies: 0, tools: 0, mentions: 0, draft: draftTokens };
-  for (const message of messages) {
-    for (const mention of message.mentions ?? []) sums.mentions += Math.ceil(((mention.content?.length ?? 0) + 60) / 4);
-    for (const part of message.parts) {
-      if (part.type === "tool") sums.tools += Math.ceil((JSON.stringify(part.args ?? {}).length + (part.result?.length ?? 0) + (part.error?.length ?? 0)) / 4);
-      else if (message.role === "user") sums.you += Math.ceil(part.text.length / 4);
-      else sums.replies += Math.ceil(part.text.length / 4);
-    }
-  }
-  const raw = Object.values(sums).reduce((a, b) => a + b, 0) || 1;
-  const scale = used / raw;
-  const slices: ContextSlice[] = [
-    { key: "system", label: "Instructions & tools", tokens: sums.system, color: "var(--text-faint)" },
-    { key: "you", label: "Your messages", tokens: sums.you, color: "var(--accent)" },
-    { key: "replies", label: "Replies & thinking", tokens: sums.replies, color: "color-mix(in srgb, var(--accent) 50%, var(--bg-sunken))" },
-    { key: "tools", label: "Tool calls & results", tokens: sums.tools, color: "var(--warning)" },
-    { key: "mentions", label: "Attached pages", tokens: sums.mentions, color: "var(--success)" },
-    { key: "draft", label: "Draft", tokens: sums.draft, color: "var(--border-strong)" },
-  ];
-  return slices.map((slice) => ({ ...slice, tokens: Math.round(slice.tokens * scale) })).filter((slice) => slice.tokens > 0);
 }
 
 export function formatCount(n: number) {
@@ -358,7 +354,14 @@ export function ModelPicker() {
   const groups = enabled.map((provider) => {
     const known = new Set<string>([...(provider.models ?? []), ...(provider.models?.length ? [] : presetFor(provider.preset)?.models ?? []), provider.defaultModel].filter(Boolean));
     if (provider.id === settings.providerId && settings.model) known.add(settings.model);
-    return { provider, models: [...known].filter((model) => !needle || model.toLowerCase().includes(needle) || provider.name.toLowerCase().includes(needle)) };
+    const labelOf = (model: string) => settings.models[modelKey(provider.id, model)]?.label?.trim() || "";
+    const shown = [...known].filter((model) => {
+      const active = provider.id === settings.providerId && model === settings.model;
+      // Hidden models stay findable by typing their id.
+      if (settings.models[modelKey(provider.id, model)]?.hidden && !active && !needle) return false;
+      return !needle || model.toLowerCase().includes(needle) || labelOf(model).toLowerCase().includes(needle) || provider.name.toLowerCase().includes(needle);
+    });
+    return { provider, models: shown };
   });
   const current = providers.find((item) => item.id === settings.providerId);
   const custom = filter.trim();
@@ -383,7 +386,7 @@ export function ModelPicker() {
         aria-expanded={open}
         title={current && settings.model ? `${settings.model} · ${current.name}` : "Choose model"}
       >
-        <span>{settings.model ? displayModel(settings.model) : "Choose a model"}</span>
+        <span>{settings.model ? settings.models[modelKey(settings.providerId, settings.model)]?.label?.trim() || displayModel(settings.model) : "Choose a model"}</span>
         <ChevronDown size={11} aria-hidden />
       </button>
       {open ? (
@@ -408,7 +411,7 @@ export function ModelPicker() {
                     const active = provider.id === settings.providerId && model === settings.model;
                     return (
                       <button key={model} type="button" role="option" aria-selected={active} className={`assistant-menu-option${active ? " active" : ""}`} onClick={() => pick(provider.id, model)} title={model}>
-                        <span className="assistant-menu-label">{displayModel(model)}</span>
+                        <span className="assistant-menu-label">{settings.models[modelKey(provider.id, model)]?.label?.trim() || displayModel(model)}</span>
                         {active ? <Check size={12} /> : null}
                       </button>
                     );
@@ -448,6 +451,8 @@ interface MenuItem {
   label: ReactNode;
   hint?: string;
   group?: string;
+  /** Draw the icon in a small rounded tile (slash commands). */
+  tile?: boolean;
   run(): void;
 }
 
@@ -476,7 +481,7 @@ function InlineMenu({ items, active, setActive, label }: { items: MenuItem[]; ac
               onPointerMove={() => setActive(index)}
               onClick={item.run}
             >
-              <span className="assistant-menu-icon">{item.icon}</span>
+              <span className={`assistant-menu-icon${item.tile ? " is-tile" : ""}`}>{item.icon}</span>
               <span className="assistant-menu-label">{item.label}</span>
               {item.hint ? <small className="assistant-menu-hint">{item.hint}</small> : null}
             </button>
@@ -512,7 +517,8 @@ export function Composer() {
   const regenerate = useAssistant((state) => state.regenerate);
   const compact = useAssistant((state) => state.compact);
   const hasProvider = providers.some((item) => item.enabled);
-  const { draft, mentions, setDraft, addMentions, removeMention, clear } = useComposer();
+  const { draft, mentions, files, reading, setDraft, addMentions, removeMention, addFiles, removeFile, clear } = useComposer();
+  const filePicker = useRef<HTMLInputElement | null>(null);
   const input = useRef<HTMLTextAreaElement | null>(null);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
@@ -603,19 +609,23 @@ export function Composer() {
 
   let items: MenuItem[] = [];
   if (menuOpen && slash) {
-    items = matchCommands(slash.name, slashCtx).map((command) => ({
-      key: command.name,
-      icon: <Slash size={12} />,
-      label: (
-        <>
-          <span className="assistant-cmd-name">/{command.name}</span>
-          {command.args ? <span className="assistant-cmd-args"> {command.args}</span> : null}
-          <span className="assistant-cmd-desc">{command.description}</span>
-        </>
-      ),
-      group: command.group === "Chat" ? "Actions" : command.group === "Mode" ? "Mode" : "Prompts",
-      run: () => runCommand(command, slash.arg),
-    }));
+    items = matchCommands(slash.name, slashCtx).map((command) => {
+      const Icon = commandIcon(command);
+      return {
+        key: command.name,
+        icon: <Icon size={14} aria-hidden />,
+        tile: true,
+        label: (
+          <>
+            <span className="assistant-cmd-name">/{command.name}</span>
+            {command.args ? <span className="assistant-cmd-args"> {command.args}</span> : null}
+            <span className="assistant-cmd-desc">{command.description}</span>
+          </>
+        ),
+        group: command.group === "Chat" ? "Actions" : command.group === "Mode" ? "Mode" : "Prompts",
+        run: () => runCommand(command, slash.arg),
+      };
+    });
     // Keep groups together in a stable order.
     const order = ["Actions", "Mode", "Prompts"];
     items.sort((a, b) => order.indexOf(a.group!) - order.indexOf(b.group!));
@@ -633,8 +643,9 @@ export function Composer() {
     if (running || !hasProvider) return;
     const command = slash ? matchCommands(slash.name, slashCtx).find((item) => item.name === slash.name) : undefined;
     if (command) return runCommand(command, slash!.arg);
-    if (!draft.trim() && !mentions.length) return;
-    void send(draft.trim() || "Look at what I mentioned.", mentions);
+    if (reading.length) return;
+    if (!draft.trim() && !mentions.length && !files.length) return;
+    void send(draft.trim() || (files.length && !mentions.length ? "Look at the attached file" + (files.length === 1 ? "." : "s.") : "Look at what I mentioned."), mentions, files);
     clear();
     setDismissed("");
   };
@@ -665,6 +676,8 @@ export function Composer() {
     } else if (event.key === "Escape" && running) {
       event.preventDefault();
       stop();
+    } else if (event.key === "Backspace" && !draft && files.length) {
+      removeFile(files[files.length - 1].id);
     } else if (event.key === "Backspace" && !draft && mentions.length) {
       removeMention(mentions[mentions.length - 1]);
     }
@@ -683,14 +696,29 @@ export function Composer() {
           : "Describe a change to the app — / for commands";
 
   const mode = MODES.find((item) => item.id === settings.mode)!;
-  const canSend = hasProvider && (Boolean(draft.trim()) || mentions.length > 0);
+  const canSend = hasProvider && !reading.length && (Boolean(draft.trim()) || mentions.length > 0 || files.length > 0);
+  const noVision = !resolved.vision;
 
   return (
     <div className="assistant-composer">
       {menuOpen ? <InlineMenu items={items} active={activeIndex} setActive={setActive} label={slash ? "Commands" : "Mention"} /> : null}
       <div className={`assistant-input mode-${settings.mode}`}>
-        {mentions.length ? (
-          <div className="assistant-mentions" aria-label="Mentioned">
+        {mentions.length || files.length || reading.length ? (
+          <div className="assistant-mentions" aria-label="Attached">
+            {files.map((file) => (
+              <FileChip
+                key={file.id}
+                file={file}
+                onRemove={() => removeFile(file.id)}
+                warn={noVision && file.kind !== "text" ? `${settings.model || "This model"} can't read ${file.kind === "pdf" ? "PDFs" : "images"}; only its name is sent. Change it in the model's options if it can.` : undefined}
+              />
+            ))}
+            {reading.map((name, index) => (
+              <span key={`reading-${index}`} className="assistant-file is-reading">
+                <LoaderCircle size={11} className="spin" aria-hidden />
+                <span className="assistant-file-name">{name}</span>
+              </span>
+            ))}
             {mentions.map((item) => (
               <MentionChip key={`${item.kind}:${item.id}`} mention={item} onRemove={() => removeMention(item)} />
             ))}
@@ -706,6 +734,12 @@ export function Composer() {
             if (dismissed && !event.target.value.includes(dismissed[0])) setDismissed("");
           }}
           onKeyDown={onKeyDown}
+          onPaste={(event) => {
+            const pasted = [...event.clipboardData.files];
+            if (!pasted.length) return;
+            event.preventDefault();
+            void addFiles(pasted);
+          }}
           onKeyUp={syncCaret}
           onClick={syncCaret}
           onBlur={() => setDismissed(menuKey)}
@@ -735,6 +769,28 @@ export function Composer() {
             ))}
           </div>
           <div className="assistant-input-tools">
+            <input
+              ref={filePicker}
+              type="file"
+              multiple
+              accept={ACCEPT}
+              hidden
+              onChange={(event) => {
+                const picked = [...(event.target.files ?? [])];
+                event.target.value = "";
+                if (picked.length) void addFiles(picked);
+              }}
+            />
+            <button
+              type="button"
+              className="assistant-toggle"
+              onClick={() => filePicker.current?.click()}
+              title="Attach images, PDFs or text files"
+              aria-label="Attach files"
+              disabled={!hasProvider}
+            >
+              <Plus size={14} />
+            </button>
             <button
               type="button"
               className="assistant-toggle"

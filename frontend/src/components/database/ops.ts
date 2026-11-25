@@ -1,6 +1,9 @@
+import { renameRefs } from "../../lib/formula";
 import {
+  BOARD_GROUP_TYPES,
   TITLE_ID,
   convertValue,
+  isFilterGroup,
   defaultStatusOptions,
   hasOptions,
   optionsForTypeChange,
@@ -10,6 +13,8 @@ import {
   uniquePropertyName,
   type DatabaseSchema,
   type DatabaseView,
+  type FilterGroup,
+  type FilterNode,
   type Property,
   type PropertyType,
 } from "../../lib/database";
@@ -61,6 +66,7 @@ export function removeProperty(db: DatabaseApi, propertyId: string) {
     for (const view of schema.views) {
       view.filters = view.filters.filter((rule) => rule.propertyId !== propertyId);
       view.sorts = view.sorts.filter((sort) => sort.propertyId !== propertyId);
+      if (view.advanced) view.advanced = pruneRules(view.advanced, propertyId);
       view.hidden = view.hidden.filter((id) => id !== propertyId);
       view.order = view.order.filter((id) => id !== propertyId);
       delete view.widths[propertyId];
@@ -97,10 +103,17 @@ export function renameProperty(db: DatabaseApi, propertyId: string, name: string
   const clean = name.trim();
   if (!clean) return;
   db.updateSchema((schema) => {
+    const before = propertyId === TITLE_ID ? schema.titleName ?? "Name" : schema.properties.find((p) => p.id === propertyId)?.name;
     if (propertyId === TITLE_ID) schema.titleName = clean;
     else {
       const property = schema.properties.find((p) => p.id === propertyId);
       if (property) property.name = clean;
+    }
+    // Formulas refer to properties by name: keep them pointing at the renamed one.
+    if (before && before !== clean) {
+      for (const property of schema.properties) {
+        if (property.type === "formula" && property.formula) property.formula = renameRefs(property.formula, before, clean);
+      }
     }
   });
 }
@@ -110,7 +123,13 @@ export function changePropertyType(db: DatabaseApi, propertyId: string, type: Pr
   const from = db.schema.properties.find((p) => p.id === propertyId);
   if (!from || from.type === type) return;
   const options = optionsForTypeChange(from, type, db.rows);
-  const to: Property = { ...from, type, options, ...(type === "number" ? { format: from.format ?? "number" } : {}) };
+  const to: Property = {
+    ...from,
+    type,
+    options,
+    ...(type === "number" ? { format: from.format ?? "number" } : {}),
+    ...(type === "formula" ? { formula: from.formula ?? "" } : {}),
+  };
   if (!hasOptions(type)) delete to.options;
   db.updateSchema((schema) => {
     const index = schema.properties.findIndex((p) => p.id === propertyId);
@@ -118,7 +137,8 @@ export function changePropertyType(db: DatabaseApi, propertyId: string, type: Pr
     for (const view of schema.views) {
       // Filters written for the old type no longer mean anything.
       view.filters = view.filters.filter((rule) => rule.propertyId !== propertyId);
-      if (view.groupBy === propertyId && !["select", "status", "checkbox"].includes(type)) view.groupBy = undefined;
+      if (view.advanced) view.advanced = pruneRules(view.advanced, propertyId);
+      if (view.groupBy === propertyId && view.type === "board" && !BOARD_GROUP_TYPES.includes(type)) view.groupBy = undefined;
       if (view.dateProperty === propertyId && type !== "date") view.dateProperty = undefined;
     }
   });
@@ -128,6 +148,18 @@ export function changePropertyType(db: DatabaseApi, propertyId: string, type: Pr
     const next = convertValue(value, from, to);
     db.setValues(row.id, (values) => ({ ...values, [propertyId]: next }));
   }
+}
+
+/** Drops rules about one property from a filter tree (empty groups go too). */
+export function pruneRules(group: FilterGroup, propertyId: string): FilterGroup {
+  const items: FilterNode[] = [];
+  for (const node of group.items) {
+    if (isFilterGroup(node)) {
+      const inner = pruneRules(node, propertyId);
+      if (inner.items.length) items.push(inner);
+    } else if (node.propertyId !== propertyId) items.push(node);
+  }
+  return { ...group, items };
 }
 
 export function updateView(db: DatabaseApi, viewId: string, change: (view: DatabaseView) => void) {

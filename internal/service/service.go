@@ -112,6 +112,11 @@ func (s *AppService) CreateItem(workspaceID, parentID, kind, title, data string)
 	return s.store.CreateItem(workspaceID, parentID, kind, title, data)
 }
 
+// CreateItems creates many items of one kind at once (bulk database rows).
+func (s *AppService) CreateItems(workspaceID, parentID, kind string, items []store.NewItem) ([]store.PageMeta, error) {
+	return s.store.CreateItems(workspaceID, parentID, kind, items)
+}
+
 // SetPageData stores a database schema or a database row's property values.
 func (s *AppService) SetPageData(workspaceID, pageID, data string) (store.PageMeta, error) {
 	return s.store.SetPageData(workspaceID, pageID, data)
