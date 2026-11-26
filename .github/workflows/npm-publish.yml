@@ -22,7 +22,8 @@ jobs:
         run: |
           v=$(node -p "require('./packaging/npm/package.json').version")
           gh release view "v$v" >/dev/null || { echo "::error::No GitHub release v$v"; exit 1; }
-          if npm view "noteral@$v" version >/dev/null 2>&1; then echo "::error::noteral@$v is already on npm"; exit 1; fi
+          n=$(node -p "require('./packaging/npm/package.json').name")
+          if npm view "$n@$v" version >/dev/null 2>&1; then echo "::error::$n@$v is already on npm"; exit 1; fi
       - name: Publish
         working-directory: packaging/npm
         env: { NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" }

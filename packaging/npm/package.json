@@ -1,5 +1,5 @@
 {
-  "name": "noteral",
+  "name": "noteral-app",
   "version": "0.1.0",
   "description": "Install and open Noteral, a quiet, local-first notes app for the desktop.",
   "keywords": ["notes", "note-taking", "local-first", "markdown", "desktop", "knowledge-base"],

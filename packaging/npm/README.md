@@ -1,13 +1,13 @@
-# noteral
+# noteral-app
 
 Installs and opens [Noteral](https://github.com/neurh/Noteral), a quiet, local-first notes app for the desktop.
 
 ```sh
-npm install -g noteral
+npm install -g noteral-app
 noteral
 ```
 
-Or without installing: `npx noteral`.
+Or without installing: `npx noteral-app`.
 
 The first run downloads the Noteral release that matches this package's version for your
 system (Windows, macOS or Linux, x64 or arm64), checks its SHA-256 checksum, and keeps it

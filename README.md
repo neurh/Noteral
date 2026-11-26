@@ -36,7 +36,7 @@ irm https://github.com/neurh/Noteral/releases/latest/download/install.ps1 | iex
 **npm** (any system with Node.js 18+)
 
 ```sh
-npm install -g noteral
+npm install -g noteral-app
 noteral
 ```
 
