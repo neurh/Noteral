@@ -6,16 +6,18 @@ A quiet, local-first notes app for the desktop.
 
 ## Features
 
-- **Block editor**: headings, to-dos, quotes, tables, code, images and links between pages.
+- **Block editor**: headings, to-dos, quotes, callouts, tables, code, images and links between pages.
 - **Nested pages**: a page tree, tabs, split panes and favorites.
 - **Databases**: tables, boards, calendars, charts and formulas.
 - **AI assistant**: ask about a page, rewrite, summarize, or build widgets and themes.
-- **Plugins**: a full SDK for commands, menus, popups, status bar widgets and page backgrounds.
+- **Plugins**: a plugin store and a full SDK for commands, shortcuts, menus, popups, status bar widgets, editing and page backgrounds.
 - **Local-first**: everything stays on your computer. No account and no sync service.
 
 ![Databases](docs/images/database.jpg)
 
 ![AI assistant menu](docs/images/assistant.jpg)
+
+![Plugins](docs/images/plugins.jpg)
 
 ![Dark theme](docs/images/editor-dark.jpg)
 
