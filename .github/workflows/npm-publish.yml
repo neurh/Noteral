@@ -1,7 +1,9 @@
-# Publishes the `noteral` npm package (packaging/npm) by hand. The release
-# workflow also does this on every version tag; use this to publish or
-# republish without making a new release. The GitHub release matching
-# packaging/npm/package.json's version must already exist.
+# Publishes the `noteral-app` npm package (packaging/npm). The release
+# workflow starts this after every version tag; you can also run it by hand.
+# The GitHub release matching packaging/npm/package.json's version must exist.
+#
+# Uses npm trusted publishing (OIDC): no token. On npmjs.com, noteral-app's
+# trusted publisher is GitHub Actions, neurh/Noteral, workflow npm-publish.yml.
 name: Publish npm
 on:
   workflow_dispatch:
@@ -15,16 +17,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Trusted publishing needs npm 11.5.1+, which ships with Node 24.
       - uses: actions/setup-node@v5
-        with: { node-version: "22", registry-url: "https://registry.npmjs.org" }
+        with: { node-version: "24", registry-url: "https://registry.npmjs.org" }
       - name: Check the release exists
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
+          npm --version
           v=$(node -p "require('./packaging/npm/package.json').version")
-          gh release view "v$v" >/dev/null || { echo "::error::No GitHub release v$v"; exit 1; }
           n=$(node -p "require('./packaging/npm/package.json').name")
-          if npm view "$n@$v" version >/dev/null 2>&1; then echo "::error::$n@$v is already on npm"; exit 1; fi
+          gh release view "v$v" >/dev/null || { echo "::error::No GitHub release v$v"; exit 1; }
+          if npm view "$n@$v" version >/dev/null 2>&1; then echo "::notice::$n@$v is already on npm"; echo "skip=1" >> "$GITHUB_ENV"; fi
       - name: Publish
+        if: env.skip != '1'
         working-directory: packaging/npm
-        env: { NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" }
         run: npm publish --provenance --access public

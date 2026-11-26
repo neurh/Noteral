@@ -37,6 +37,11 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} does not match Version ${app} in internal/service/service.go"
             exit 1
           fi
+          npm=$(node -p "require('./packaging/npm/package.json').version")
+          if [ "${npm}" != "${app}" ]; then
+            echo "::error::packaging/npm/package.json is ${npm}, but Version is ${app}"
+            exit 1
+          fi
           echo "version=${app}" >> "$GITHUB_OUTPUT"
 
   linux:
@@ -264,24 +269,15 @@ jobs:
           cd packaging/npm
           node bin/noteral.js --path
 
+  # npm's trusted publisher is npm-publish.yml, so publishing happens there.
+  # A workflow_dispatch made with GITHUB_TOKEN is allowed to start a run.
   npm:
-    needs: [version, test-install]
+    needs: test-install
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write
+      actions: write
     env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with: { node-version: "${{ env.NODE_VERSION }}", registry-url: "https://registry.npmjs.org" }
-      - name: Publish to npm
-        if: env.NODE_AUTH_TOKEN != ''
-        working-directory: packaging/npm
-        run: |
-          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
-          npm publish --provenance --access public
-      - name: Skip npm
-        if: env.NODE_AUTH_TOKEN == ''
-        run: echo "::notice::NPM_TOKEN secret is not set, so the npm package was not published."
+      - name: Start "Publish npm"
+        run: gh workflow run npm-publish.yml --repo "${GITHUB_REPOSITORY}" --ref "${GITHUB_REF_NAME}"
