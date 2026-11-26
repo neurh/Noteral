@@ -37,7 +37,7 @@ export function RowProperties({ databaseId, rowId }: RowPropertiesProps) {
       {db.schema.properties.map((property) => {
         const value = cellValue(row, property);
         const empty = property.type !== "checkbox" && isEmptyValue(property.type === "date" ? dateStart(value) : value);
-        const editable = isEditable(property);
+        const editable = isEditable(property) && !db.locked;
         return (
           <div key={property.id} className="db-rowprop">
             <button type="button" className="db-rowprop-name" onClick={(event) => setMenu({ property, anchor: event.currentTarget })}>
@@ -46,7 +46,9 @@ export function RowProperties({ databaseId, rowId }: RowPropertiesProps) {
             </button>
             <div
               className={`db-rowprop-value type-${property.type} ${editable ? "is-editable" : ""} ${editing?.id === property.id ? "is-editing" : ""}`}
-              role={editable ? "button" : undefined}
+              role={editable ? (property.type === "checkbox" ? "checkbox" : "button") : undefined}
+              aria-checked={property.type === "checkbox" ? !!value : undefined}
+              aria-label={property.type === "checkbox" ? property.name : undefined}
               tabIndex={editable ? 0 : undefined}
               onClick={(event) => {
                 if (!editable) return;

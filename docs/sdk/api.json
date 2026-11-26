@@ -1479,7 +1479,7 @@
                 },
                 "formula": {
                   "type": "string",
-                  "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+                  "description": "Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style(\"Done\", \"green\"), fromNow({Due})) or formatNumber({Ratio}, \"percent\"). May span lines with // comments. Validated; see databases.formulaFunctions.",
                   "maxLength": 4000
                 },
                 "format": {
@@ -1504,6 +1504,49 @@
                     "long",
                     "iso"
                   ]
+                },
+                "display": {
+                  "type": "object",
+                  "description": "How a number (or number-formula) property shows its value. Merged over the current display on updateProperty.",
+                  "properties": {
+                    "style": {
+                      "type": "string",
+                      "description": "number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size.",
+                      "enum": [
+                        "number",
+                        "bar",
+                        "ring",
+                        "rating",
+                        "heat"
+                      ]
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "Fill colour; default = the app accent.",
+                      "enum": [
+                        "default",
+                        "gray",
+                        "brown",
+                        "orange",
+                        "yellow",
+                        "green",
+                        "blue",
+                        "purple",
+                        "pink",
+                        "red"
+                      ]
+                    },
+                    "max": {
+                      "type": "number",
+                      "description": "The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5).",
+                      "minimum": 0
+                    },
+                    "showNumber": {
+                      "type": "boolean",
+                      "description": "Bar / ring: also show the number (default true)."
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -1609,7 +1652,7 @@
                 },
                 "formula": {
                   "type": "string",
-                  "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+                  "description": "Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style(\"Done\", \"green\"), fromNow({Due})) or formatNumber({Ratio}, \"percent\"). May span lines with // comments. Validated; see databases.formulaFunctions.",
                   "maxLength": 4000
                 },
                 "format": {
@@ -1634,6 +1677,49 @@
                     "long",
                     "iso"
                   ]
+                },
+                "display": {
+                  "type": "object",
+                  "description": "How a number (or number-formula) property shows its value. Merged over the current display on updateProperty.",
+                  "properties": {
+                    "style": {
+                      "type": "string",
+                      "description": "number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size.",
+                      "enum": [
+                        "number",
+                        "bar",
+                        "ring",
+                        "rating",
+                        "heat"
+                      ]
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "Fill colour; default = the app accent.",
+                      "enum": [
+                        "default",
+                        "gray",
+                        "brown",
+                        "orange",
+                        "yellow",
+                        "green",
+                        "blue",
+                        "purple",
+                        "pink",
+                        "red"
+                      ]
+                    },
+                    "max": {
+                      "type": "number",
+                      "description": "The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5).",
+                      "minimum": 0
+                    },
+                    "showNumber": {
+                      "type": "boolean",
+                      "description": "Bar / ring: also show the number (default true)."
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -1736,7 +1822,7 @@
           },
           "formula": {
             "type": "string",
-            "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+            "description": "Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style(\"Done\", \"green\"), fromNow({Due})) or formatNumber({Ratio}, \"percent\"). May span lines with // comments. Validated; see databases.formulaFunctions.",
             "maxLength": 4000
           },
           "format": {
@@ -1761,6 +1847,49 @@
               "long",
               "iso"
             ]
+          },
+          "display": {
+            "type": "object",
+            "description": "How a number (or number-formula) property shows its value. Merged over the current display on updateProperty.",
+            "properties": {
+              "style": {
+                "type": "string",
+                "description": "number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size.",
+                "enum": [
+                  "number",
+                  "bar",
+                  "ring",
+                  "rating",
+                  "heat"
+                ]
+              },
+              "color": {
+                "type": "string",
+                "description": "Fill colour; default = the app accent.",
+                "enum": [
+                  "default",
+                  "gray",
+                  "brown",
+                  "orange",
+                  "yellow",
+                  "green",
+                  "blue",
+                  "purple",
+                  "pink",
+                  "red"
+                ]
+              },
+              "max": {
+                "type": "number",
+                "description": "The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5).",
+                "minimum": 0
+              },
+              "showNumber": {
+                "type": "boolean",
+                "description": "Bar / ring: also show the number (default true)."
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [
@@ -2174,6 +2303,11 @@
             "description": "View name.",
             "maxLength": 80
           },
+          "icon": {
+            "type": "string",
+            "description": "Tab icon: an emoji, or \"\" to use the layout icon.",
+            "maxLength": 64
+          },
           "type": {
             "type": "string",
             "description": "Layout.",
@@ -2626,6 +2760,150 @@
                 "type": "string",
                 "description": "Chart title.",
                 "maxLength": 120
+              },
+              "zoom": {
+                "type": "boolean",
+                "description": "Zoom and pan (Ctrl/⌘+wheel, pinch, drag) on bar/column/line/area/scatter/grid heatmaps. Default true."
+              },
+              "zoomSlider": {
+                "type": "boolean",
+                "description": "Range slider under the plot. Default false."
+              },
+              "xTitle": {
+                "type": "string",
+                "description": "Category axis title. \"\" clears.",
+                "maxLength": 80
+              },
+              "yTitle": {
+                "type": "string",
+                "description": "Value axis title. \"\" clears.",
+                "maxLength": 80
+              },
+              "xLabels": {
+                "type": "boolean",
+                "description": "Category axis labels. Default true."
+              },
+              "yLabels": {
+                "type": "boolean",
+                "description": "Value axis labels. Default true."
+              },
+              "labelAngle": {
+                "type": "integer",
+                "description": "Category label angle in degrees: 0, 30, 45, 60 or 90; unset rotates when crowded.",
+                "minimum": 0,
+                "maximum": 90
+              },
+              "logScale": {
+                "type": "boolean",
+                "description": "Logarithmic value axis (zero/negative values are left out)."
+              },
+              "labelContent": {
+                "type": "string",
+                "description": "What data labels show. Default value (bars/lines), namePercent (pies), nameValue (funnels).",
+                "enum": [
+                  "value",
+                  "percent",
+                  "name",
+                  "nameValue",
+                  "namePercent"
+                ]
+              },
+              "labelPosition": {
+                "type": "string",
+                "description": "Where data labels sit; unset picks per chart.",
+                "enum": [
+                  "inside",
+                  "outside"
+                ]
+              },
+              "colorBy": {
+                "type": "string",
+                "description": "Single-series bars: a colour per category, or one colour. Unset follows option colours.",
+                "enum": [
+                  "category",
+                  "single"
+                ]
+              },
+              "color": {
+                "type": "string",
+                "description": "Colour of single-colour charts: accent or an option colour (gray, brown, orange, yellow, green, blue, purple, pink, red).",
+                "maxLength": 20
+              },
+              "curve": {
+                "type": "string",
+                "description": "Line shape (line/area/radar); overrides smooth. Default straight.",
+                "enum": [
+                  "straight",
+                  "smooth",
+                  "step"
+                ]
+              },
+              "points": {
+                "type": "boolean",
+                "description": "Point markers on lines; unset shows them when there are few points."
+              },
+              "gradient": {
+                "type": "boolean",
+                "description": "Area fill fades out. Default true."
+              },
+              "donutWidth": {
+                "type": "integer",
+                "description": "Donut ring thickness, % of the radius. Default 34.",
+                "minimum": 10,
+                "maximum": 90
+              },
+              "other": {
+                "type": "boolean",
+                "description": "With limit: merge the rest into Other (default true) or drop it."
+              },
+              "aggregate2": {
+                "type": "string",
+                "description": "Combo chart (column/line/area): a second measure drawn as a line on a right axis. \"\" clears.",
+                "enum": [
+                  "",
+                  "count",
+                  "countValues",
+                  "countUnique",
+                  "sum",
+                  "average",
+                  "median",
+                  "min",
+                  "max"
+                ]
+              },
+              "y2": {
+                "type": "string",
+                "description": "Property (name) measured by aggregate2. \"\" clears.",
+                "maxLength": 100
+              },
+              "legendPosition": {
+                "type": "string",
+                "description": "Legend position. Default top.",
+                "enum": [
+                  "top",
+                  "bottom",
+                  "left",
+                  "right"
+                ]
+              },
+              "tooltip": {
+                "type": "string",
+                "description": "Tooltip: group (all series at a category, default), item (one mark) or off.",
+                "enum": [
+                  "group",
+                  "item",
+                  "off"
+                ]
+              },
+              "goalLabel": {
+                "type": "string",
+                "description": "Goal line label. Default \"Goal\".",
+                "maxLength": 60
+              },
+              "emptyText": {
+                "type": "string",
+                "description": "Message shown when the view has no rows.",
+                "maxLength": 160
               }
             },
             "additionalProperties": false
@@ -2683,6 +2961,11 @@
             "type": "string",
             "description": "View name.",
             "maxLength": 80
+          },
+          "icon": {
+            "type": "string",
+            "description": "Tab icon: an emoji, or \"\" to use the layout icon.",
+            "maxLength": 64
           },
           "type": {
             "type": "string",
@@ -3135,6 +3418,150 @@
                 "type": "string",
                 "description": "Chart title.",
                 "maxLength": 120
+              },
+              "zoom": {
+                "type": "boolean",
+                "description": "Zoom and pan (Ctrl/⌘+wheel, pinch, drag) on bar/column/line/area/scatter/grid heatmaps. Default true."
+              },
+              "zoomSlider": {
+                "type": "boolean",
+                "description": "Range slider under the plot. Default false."
+              },
+              "xTitle": {
+                "type": "string",
+                "description": "Category axis title. \"\" clears.",
+                "maxLength": 80
+              },
+              "yTitle": {
+                "type": "string",
+                "description": "Value axis title. \"\" clears.",
+                "maxLength": 80
+              },
+              "xLabels": {
+                "type": "boolean",
+                "description": "Category axis labels. Default true."
+              },
+              "yLabels": {
+                "type": "boolean",
+                "description": "Value axis labels. Default true."
+              },
+              "labelAngle": {
+                "type": "integer",
+                "description": "Category label angle in degrees: 0, 30, 45, 60 or 90; unset rotates when crowded.",
+                "minimum": 0,
+                "maximum": 90
+              },
+              "logScale": {
+                "type": "boolean",
+                "description": "Logarithmic value axis (zero/negative values are left out)."
+              },
+              "labelContent": {
+                "type": "string",
+                "description": "What data labels show. Default value (bars/lines), namePercent (pies), nameValue (funnels).",
+                "enum": [
+                  "value",
+                  "percent",
+                  "name",
+                  "nameValue",
+                  "namePercent"
+                ]
+              },
+              "labelPosition": {
+                "type": "string",
+                "description": "Where data labels sit; unset picks per chart.",
+                "enum": [
+                  "inside",
+                  "outside"
+                ]
+              },
+              "colorBy": {
+                "type": "string",
+                "description": "Single-series bars: a colour per category, or one colour. Unset follows option colours.",
+                "enum": [
+                  "category",
+                  "single"
+                ]
+              },
+              "color": {
+                "type": "string",
+                "description": "Colour of single-colour charts: accent or an option colour (gray, brown, orange, yellow, green, blue, purple, pink, red).",
+                "maxLength": 20
+              },
+              "curve": {
+                "type": "string",
+                "description": "Line shape (line/area/radar); overrides smooth. Default straight.",
+                "enum": [
+                  "straight",
+                  "smooth",
+                  "step"
+                ]
+              },
+              "points": {
+                "type": "boolean",
+                "description": "Point markers on lines; unset shows them when there are few points."
+              },
+              "gradient": {
+                "type": "boolean",
+                "description": "Area fill fades out. Default true."
+              },
+              "donutWidth": {
+                "type": "integer",
+                "description": "Donut ring thickness, % of the radius. Default 34.",
+                "minimum": 10,
+                "maximum": 90
+              },
+              "other": {
+                "type": "boolean",
+                "description": "With limit: merge the rest into Other (default true) or drop it."
+              },
+              "aggregate2": {
+                "type": "string",
+                "description": "Combo chart (column/line/area): a second measure drawn as a line on a right axis. \"\" clears.",
+                "enum": [
+                  "",
+                  "count",
+                  "countValues",
+                  "countUnique",
+                  "sum",
+                  "average",
+                  "median",
+                  "min",
+                  "max"
+                ]
+              },
+              "y2": {
+                "type": "string",
+                "description": "Property (name) measured by aggregate2. \"\" clears.",
+                "maxLength": 100
+              },
+              "legendPosition": {
+                "type": "string",
+                "description": "Legend position. Default top.",
+                "enum": [
+                  "top",
+                  "bottom",
+                  "left",
+                  "right"
+                ]
+              },
+              "tooltip": {
+                "type": "string",
+                "description": "Tooltip: group (all series at a category, default), item (one mark) or off.",
+                "enum": [
+                  "group",
+                  "item",
+                  "off"
+                ]
+              },
+              "goalLabel": {
+                "type": "string",
+                "description": "Goal line label. Default \"Goal\".",
+                "maxLength": 60
+              },
+              "emptyText": {
+                "type": "string",
+                "description": "Message shown when the view has no rows.",
+                "maxLength": 160
               }
             },
             "additionalProperties": false
@@ -3317,7 +3744,7 @@
           },
           "formula": {
             "type": "string",
-            "description": "Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.",
+            "description": "Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style(\"Done\", \"green\"), fromNow({Due})) or formatNumber({Ratio}, \"percent\"). May span lines with // comments. Validated; see databases.formulaFunctions.",
             "maxLength": 4000
           },
           "format": {
@@ -3342,6 +3769,49 @@
               "long",
               "iso"
             ]
+          },
+          "display": {
+            "type": "object",
+            "description": "How a number (or number-formula) property shows its value. Merged over the current display on updateProperty.",
+            "properties": {
+              "style": {
+                "type": "string",
+                "description": "number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size.",
+                "enum": [
+                  "number",
+                  "bar",
+                  "ring",
+                  "rating",
+                  "heat"
+                ]
+              },
+              "color": {
+                "type": "string",
+                "description": "Fill colour; default = the app accent.",
+                "enum": [
+                  "default",
+                  "gray",
+                  "brown",
+                  "orange",
+                  "yellow",
+                  "green",
+                  "blue",
+                  "purple",
+                  "pink",
+                  "red"
+                ]
+              },
+              "max": {
+                "type": "number",
+                "description": "The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5).",
+                "minimum": 0
+              },
+              "showNumber": {
+                "type": "boolean",
+                "description": "Bar / ring: also show the number (default true)."
+              }
+            },
+            "additionalProperties": false
           },
           "options": {
             "type": "array",
@@ -3398,7 +3868,7 @@
     },
     {
       "name": "databases.formulaFunctions",
-      "summary": "The formula language: syntax and every function, one line each.",
+      "summary": "The formula language: syntax and every function (math, text, style/link formatting, dates, lists, lambdas), one line each.",
       "permission": "databases.read",
       "tier": "read",
       "callers": [
@@ -3415,7 +3885,7 @@
     },
     {
       "name": "databases.checkFormula",
-      "summary": "Check a formula against a database without saving: errors, result type and sample results.",
+      "summary": "Check a formula against a database without saving: errors (with line/column and did-you-mean hints), result type and sample results.",
       "permission": "databases.read",
       "tier": "read",
       "callers": [
@@ -3509,6 +3979,36 @@
         "additionalProperties": false
       },
       "returns": "{ deleted: number }"
+    },
+    {
+      "name": "databases.setLocked",
+      "summary": "Lock or unlock a database. A locked database refuses row edits, new rows and deletes (from the user, plugins and the assistant); properties and views can still change.",
+      "permission": "databases.write",
+      "tier": "content",
+      "callers": [
+        "plugin",
+        "assistant"
+      ],
+      "confirm": true,
+      "params": {
+        "type": "object",
+        "properties": {
+          "databaseId": {
+            "type": "string",
+            "description": "Database id."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "true to lock, false to unlock."
+          }
+        },
+        "required": [
+          "databaseId",
+          "locked"
+        ],
+        "additionalProperties": false
+      },
+      "returns": "{ locked: boolean }"
     },
     {
       "name": "databases.rename",

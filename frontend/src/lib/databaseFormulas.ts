@@ -17,7 +17,17 @@ import {
   type FormulaResultType,
   type Property,
 } from "./database";
-import { compileFormula, formatFormulaValue, typeOfValue, type FormulaValue } from "./formula";
+import {
+  StyledText,
+  compileFormula,
+  formatFormulaValue,
+  formulaErrorSpan,
+  formulaSpans,
+  isDateRange,
+  typeOfValue,
+  type FormulaValue,
+  type RichSpan,
+} from "./formula";
 
 export interface FormulaIssue {
   propertyId: string;
@@ -72,14 +82,18 @@ function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** A formula result as a stored-like cell value. */
+function dateCell(value: Date): string {
+  const midnight = value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0;
+  const day = `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+  return midnight ? day : value.toISOString();
+}
+
+/** A formula result as a stored-like cell value (styled text becomes its plain text). */
 function toCell(value: FormulaValue): unknown {
   if (value === null || value === undefined) return undefined;
-  if (value instanceof Date) {
-    const midnight = value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0;
-    const day = `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
-    return { start: midnight ? day : value.toISOString() };
-  }
+  if (value instanceof Date) return { start: dateCell(value) };
+  if (isDateRange(value)) return { start: dateCell(value[0]), end: dateCell(value[1]) };
+  if (value instanceof StyledText) return value.text || undefined;
   if (Array.isArray(value)) return value.length ? formatFormulaValue(value) : undefined;
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
   return value;
@@ -98,6 +112,18 @@ function resultTypeOf(counts: Map<FormulaResultType, number>): FormulaResultType
 }
 
 const cache = new WeakMap<DatabaseRow[], { schema: DatabaseSchema; result: FormulaResult }>();
+
+/** Styled formula output per computed row (keyed by its values object, which row copies share). */
+const richCells = new WeakMap<object, Record<string, RichSpan[]>>();
+
+/**
+ * The formatting of a formula cell (from style(), link() …), or undefined when
+ * the result is plain. The cell value itself stays plain text so filters,
+ * sorts, search and charts keep working.
+ */
+export function formulaRich(row: DatabaseRow, propertyId: string): RichSpan[] | undefined {
+  return richCells.get(row.values)?.[propertyId];
+}
 
 /**
  * Evaluates the schema's formula properties for every row. Formulas may refer
@@ -154,6 +180,7 @@ export function withFormulas(rows: DatabaseRow[], schema: DatabaseSchema, now: D
       return property.type === "formula" ? evaluate(property) : formulaInput(row, property);
     };
     const values = { ...row.values };
+    let rich: Record<string, RichSpan[]> | undefined;
     for (const property of formulas) {
       let value: FormulaValue = null;
       try {
@@ -165,6 +192,8 @@ export function withFormulas(rows: DatabaseRow[], schema: DatabaseSchema, now: D
         results.set(property.id, null);
       }
       values[property.id] = toCell(value);
+      const spans = formulaSpans(value);
+      if (spans) (rich ??= {})[property.id] = spans;
       const kind = typeOfValue(value);
       if (kind !== "empty") {
         const type: FormulaResultType = kind === "list" ? "text" : kind;
@@ -173,6 +202,7 @@ export function withFormulas(rows: DatabaseRow[], schema: DatabaseSchema, now: D
         counts.set(property.id, tally);
       }
     }
+    if (rich) richCells.set(values, rich);
     return { ...row, values };
   });
 
@@ -190,9 +220,14 @@ export function withFormulas(rows: DatabaseRow[], schema: DatabaseSchema, now: D
 }
 
 /** Evaluates one formula against one row (live preview in the editor). */
-export function previewFormula(source: string, row: DatabaseRow | undefined, schema: DatabaseSchema, now: Date = new Date()): { value: FormulaValue; error?: string } {
+export function previewFormula(
+  source: string,
+  row: DatabaseRow | undefined,
+  schema: DatabaseSchema,
+  now: Date = new Date(),
+): { value: FormulaValue; error?: string; span?: { start: number; end: number } } {
   const program = compileFormula(source);
-  if (!program.ok) return { value: null, error: program.error.message };
+  if (!program.ok) return { value: null, error: program.error.message, span: { start: program.error.start, end: program.error.end } };
   if (!row) return { value: null };
   const result = withFormulas([row], schema, now);
   // Other formulas resolve to their computed cells.
@@ -207,7 +242,14 @@ export function previewFormula(source: string, row: DatabaseRow | undefined, sch
         if (!property) throw new Error(`No property named "${name}"`);
         if (property.type === "formula") {
           const cell = computed.values[property.id];
-          if (cell && typeof cell === "object" && "start" in (cell as object)) return toDate(String((cell as { start: string }).start));
+          const spans = formulaRich(computed, property.id);
+          if (spans) return new StyledText(spans);
+          if (cell && typeof cell === "object" && "start" in (cell as object)) {
+            const { start, end } = cell as { start: string; end?: string };
+            const a = toDate(String(start));
+            const b = end ? toDate(String(end)) : null;
+            return a && b ? [a, b] : a;
+          }
           return (cell as FormulaValue) ?? null;
         }
         return formulaInput(row, property);
@@ -215,6 +257,6 @@ export function previewFormula(source: string, row: DatabaseRow | undefined, sch
     });
     return { value };
   } catch (error) {
-    return { value: null, error: error instanceof Error ? error.message : String(error) };
+    return { value: null, error: error instanceof Error ? error.message : String(error), span: formulaErrorSpan(error) };
   }
 }

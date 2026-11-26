@@ -4,6 +4,8 @@ import "@fontsource-variable/newsreader";
 import "@blocknote/mantine/style.css";
 import "./styles.css";
 import "./styles/database.css";
+import "./styles/database-formula.css";
+import "./styles/database-cells.css";
 import "./styles/home.css";
 import "./styles/home-custom.css";
 import "./styles/extensions.css";

@@ -69,9 +69,23 @@ export interface Property {
    * as a property of this type.
    */
   resultType?: FormulaResultType;
+  /** How number values show (number properties and number formulas). Absent = plain number. */
+  display?: NumberDisplay;
 }
 
 export type FormulaResultType = "text" | "number" | "checkbox" | "date";
+
+/** "Show as" for numbers: the plain number, a progress bar or ring, a star rating or a colour scale. */
+export type NumberDisplayStyle = "number" | "bar" | "ring" | "rating" | "heat";
+export interface NumberDisplay {
+  style: NumberDisplayStyle;
+  /** Fill colour from the option palette; "default" (or absent) uses the accent. */
+  color?: OptionColor;
+  /** The value that means full ("Divide by"). Defaults: 100, 1 for percent, 5 for ratings. */
+  max?: number;
+  /** Show the number beside the bar / ring (default true). */
+  showNumber?: boolean;
+}
 
 export type ViewType = "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
 
@@ -136,7 +150,65 @@ export interface ChartConfig {
   /** Number format for values; defaults to the measured property's. */
   format?: NumberFormat;
   title?: string;
+
+  // ── Interaction ──
+  /** Zoom and pan (cartesian, scatter and grid heatmaps). Default on. */
+  zoom?: boolean;
+  /** A range slider under the plot. Default off. */
+  zoomSlider?: boolean;
+
+  // ── Axes ──
+  /** Title of the category axis (x for columns/lines, y for bars). */
+  xTitle?: string;
+  /** Title of the value axis. */
+  yTitle?: string;
+  /** Category axis labels. Default on. */
+  xLabels?: boolean;
+  /** Value axis labels. Default on. */
+  yLabels?: boolean;
+  /** Category label angle in degrees (0, 30, 45, 60 or 90); unset rotates when crowded. */
+  labelAngle?: number;
+  /** Logarithmic value axis (zero and negative values are left out). */
+  logScale?: boolean;
+
+  // ── Data labels ──
+  /** What data labels show. Default "value" (bars/lines), "namePercent" (pies), "nameValue" (funnels). */
+  labelContent?: ChartLabelContent;
+  /** Where data labels sit; unset picks per chart. */
+  labelPosition?: "inside" | "outside";
+
+  // ── Colours & marks ──
+  /** Single-series bars: one colour per category, or one colour for all. Unset follows option colours. */
+  colorBy?: "category" | "single";
+  /** Mark colour for single-colour charts: "accent" or an option colour name. Default "accent". */
+  color?: string;
+  /** Line shape (line, area, radar). Overrides `smooth`. Default "straight". */
+  curve?: "straight" | "smooth" | "step";
+  /** Point markers on lines; unset shows them when there are few points. */
+  points?: boolean;
+  /** Area charts fade their fill. Default on. */
+  gradient?: boolean;
+  /** Donut ring thickness, percent of the radius (10–90). Default 34. */
+  donutWidth?: number;
+
+  // ── Grouping ──
+  /** With a limit, merge the rest into "Other" (default on) or drop it. */
+  other?: boolean;
+  /** Combo: a second measure drawn as a line on its own axis (column/line/area). */
+  aggregate2?: ChartAggregate;
+  y2?: string;
+
+  // ── Legend, tooltip, reference line, empty state ──
+  legendPosition?: "top" | "bottom" | "left" | "right";
+  /** "group" lists every series at a category (default for bars/lines), "item" one mark, "off" none. */
+  tooltip?: "group" | "item" | "off";
+  /** Label of the goal line. Default "Goal". */
+  goalLabel?: string;
+  /** Message shown when the view has no rows. */
+  emptyText?: string;
 }
+
+export type ChartLabelContent = "value" | "percent" | "name" | "nameValue" | "namePercent";
 
 /** A fully custom view: HTML (with optional CSS/JS) rendered in a sandboxed frame. */
 export interface CustomViewConfig {
@@ -255,6 +327,13 @@ export interface DatabaseView {
   id: string;
   name: string;
   type: ViewType;
+  /** Icon shown on the tab (emoji or icon value from the icon picker). */
+  icon?: string;
+  /**
+   * Set on views a database block created for itself (block id). Owned views
+   * only appear in the blocks that reference them, not on the database page.
+   */
+  owner?: string;
   filters: FilterRule[];
   /** "and": every rule must match; "or": any rule. */
   filterMode?: "and" | "or";
@@ -323,6 +402,8 @@ export interface DatabaseSchema {
   titleName: string;
   properties: Property[];
   views: DatabaseView[];
+  /** Locked databases keep their rows as they are: no cell edits, new, moved or removed rows. Properties and views can still change. */
+  locked?: boolean;
 }
 
 export interface DateValue {
@@ -490,7 +571,9 @@ export function parseSchema(raw: string | undefined | null): DatabaseSchema {
       widths: v.widths && typeof v.widths === "object" ? v.widths : {},
     }));
   if (!views.length) views = [newView("table", undefined, "Table")];
-  return { version: 1, titleName: String(value.titleName || "Name"), properties, views };
+  const schema: DatabaseSchema = { version: 1, titleName: String(value.titleName || "Name"), properties, views };
+  if (value.locked === true) schema.locked = true;
+  return schema;
 }
 
 export function serializeSchema(schema: DatabaseSchema): string {

@@ -6,12 +6,54 @@
  * arity, names in scope) → tree-walking evaluator. Also provides editor
  * support: syntax tokens, autocompletion, function docs and ref renaming.
  */
-import { formatNumber } from "./database";
+import { OPTION_COLORS, formatNumber, normalizeUrl } from "./database";
 import type { NumberFormat } from "./database";
 
 // ───────────────────────────── Public types ─────────────────────────────
 
-export type FormulaValue = null | number | string | boolean | Date | FormulaValue[];
+/** One run of styled formula text (see style() and link()). */
+export interface RichSpan {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  code?: boolean;
+  /** A tone name from OPTION_COLORS, e.g. "red". */
+  color?: string;
+  background?: string;
+  /** Sanitised http(s), mailto or tel link. */
+  href?: string;
+}
+
+const SPAN_KEYS = ["bold", "italic", "underline", "strike", "code", "color", "background", "href"] as const;
+const sameStyle = (a: RichSpan, b: RichSpan) => SPAN_KEYS.every((k) => a[k] === b[k]);
+
+/**
+ * Text with formatting. Behaves like text everywhere (comparisons, text
+ * functions, filters see the plain text); cells render the styles.
+ */
+export class StyledText {
+  readonly spans: RichSpan[];
+  constructor(spans: RichSpan[]) {
+    const out: RichSpan[] = [];
+    for (const s of spans) {
+      if (!s.text) continue;
+      const prev = out[out.length - 1];
+      if (prev && sameStyle(prev, s)) out[out.length - 1] = { ...prev, text: prev.text + s.text };
+      else out.push(s);
+    }
+    this.spans = out;
+  }
+  get text(): string {
+    return this.spans.map((s) => s.text).join("");
+  }
+  toString(): string {
+    return this.text;
+  }
+}
+
+export type FormulaValue = null | number | string | boolean | Date | StyledText | FormulaValue[];
 export type FormulaType = "number" | "text" | "checkbox" | "date" | "list" | "empty";
 export interface FormulaContext {
   prop(name: string): FormulaValue;
@@ -24,7 +66,7 @@ export interface FormulaError {
   end: number;
 }
 export type Compiled =
-  | { ok: true; run(ctx: FormulaContext): FormulaValue; refs: string[] }
+  | { ok: true; run(ctx: FormulaContext): FormulaValue; refs: string[]; refSpans: { name: string; start: number; end: number }[] }
   | { ok: false; error: FormulaError };
 export interface FormulaFunctionDoc {
   name: string;
@@ -57,8 +99,16 @@ const MAX_TEXT = 100_000;
 const MAX_STEPS = 1_000_000; // evaluation work units (nodes + list items)
 const CACHE_CAP = 500;
 
-/** Runtime failure with a human-readable message. */
-class FormulaFail extends Error {}
+/** Runtime failure with a human-readable message and, once known, the source span that failed. */
+class FormulaFail extends Error {
+  start?: number;
+  end?: number;
+}
+
+/** Source span of a runtime formula error (the innermost expression that failed), when known. */
+export function formulaErrorSpan(error: unknown): { start: number; end: number } | undefined {
+  return error instanceof FormulaFail && error.start !== undefined ? { start: error.start, end: error.end ?? error.start } : undefined;
+}
 /** Compile-time failure with source offsets. */
 class SyntaxFail {
   constructor(
@@ -193,6 +243,7 @@ class Parser {
   private i = 0;
   private nesting = 0;
   readonly refs: string[] = [];
+  readonly refSpans: { name: string; start: number; end: number }[] = [];
 
   constructor(private src: string) {
     const all = lex(src);
@@ -212,7 +263,7 @@ class Parser {
 
   private peek = () => this.toks[this.i];
   private next = () => this.toks[this.i++];
-  private prev = () => this.toks[this.i - 2];
+  private prev = () => this.toks[this.i - 1];
 
   private expr(rbp: number): Node {
     const t = this.next();
@@ -297,6 +348,7 @@ class Parser {
 
   private ref(name: string, span: { s: number; e: number }): Node {
     if (!this.refs.includes(name)) this.refs.push(name);
+    this.refSpans.push({ name, start: span.s, end: span.e });
     return { k: "prop", name, ...span };
   }
 
@@ -398,6 +450,11 @@ function resolve(n: Node, scope: ReadonlySet<string>, depth = 0): void {
         const inner = new Set(scope).add("current").add("index");
         return args.slice(1).forEach((x) => r(x, inner));
       }
+      if (fn.scope === "acc") {
+        r(args[0]);
+        if (args[2]) r(args[2]);
+        return r(args[1], new Set(scope).add("current").add("index").add("acc"));
+      }
       if (fn.scope === "let") {
         if (args.length % 2 === 0)
           throw new SyntaxFail(`${fn.name}() needs name, value pairs followed by an expression`, n.s, n.e);
@@ -420,7 +477,8 @@ const isBareCallable = (name: string) => FUNCS.get(name.toLowerCase())?.min === 
 
 function unknownName(name: string, scope: ReadonlySet<string>): string {
   if (name === "current" || name === "index")
-    return `"${name}" only works inside map(), filter(), find(), findIndex(), some(), every(), sort() or count()`;
+    return `"${name}" only works inside map(), filter(), find(), findIndex(), some(), every(), sort(), count() or reduce()`;
+  if (name === "acc") return `"acc" only works inside reduce(list, expression, initial)`;
   const bare = [...FUNCS.values()].filter((f) => f.min === 0).map((f) => f.name);
   const hint = suggest(name, [...scope, ...bare, "true", "false", "current", "index"]);
   if (hint) return `Unknown name "${name}". Did you mean "${hint}"?`;
@@ -432,23 +490,43 @@ function unknownName(name: string, scope: ReadonlySet<string>): string {
 export function typeOfValue(v: FormulaValue): FormulaType {
   if (v === null || v === undefined) return "empty";
   if (typeof v === "number") return "number";
-  if (typeof v === "string") return "text";
+  if (typeof v === "string" || v instanceof StyledText) return "text";
   if (typeof v === "boolean") return "checkbox";
   if (v instanceof Date) return "date";
   return Array.isArray(v) ? "list" : "empty";
 }
 
+type PlainValue = Exclude<FormulaValue, StyledText>;
+/** Styled text as its plain text; everything else unchanged. */
+const plain = (v: FormulaValue): PlainValue => (v instanceof StyledText ? v.text : v);
+
 function truthy(v: FormulaValue): boolean {
   if (v === null || v === undefined) return false;
   if (Array.isArray(v)) return v.length > 0;
   if (v instanceof Date) return true;
-  return !!v;
+  return !!plain(v);
 }
 
 /** null, "" and [] are empty (0 and false are real values). */
-const isEmpty = (v: FormulaValue) => v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
+const isEmpty = (x: FormulaValue) => {
+  const v = plain(x);
+  return v === null || v === undefined || v === "" || (Array.isArray(v) && v.length === 0);
+};
 
-function same(a: FormulaValue, b: FormulaValue): boolean {
+const RANGE = Symbol("dateRange");
+/** A two-date list produced by dateRange(); stored as a date cell with an end. */
+export function isDateRange(v: FormulaValue): v is [Date, Date] {
+  return Array.isArray(v) && (v as unknown as Record<symbol, boolean>)[RANGE] === true;
+}
+function mkRange(a: Date, b: Date): FormulaValue[] {
+  const pair = a.getTime() <= b.getTime() ? [a, b] : [b, a];
+  Object.defineProperty(pair, RANGE, { value: true });
+  return pair;
+}
+
+function same(x: FormulaValue, y: FormulaValue): boolean {
+  const a = plain(x);
+  const b = plain(y);
   if (a === null || b === null) return isEmpty(a) && isEmpty(b);
   if (typeof a === "number" && typeof b === "number") return cmpNum(a, b) === 0;
   if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
@@ -463,7 +541,9 @@ function cmpNum(a: number, b: number): number {
 
 const TYPE_RANK: Record<FormulaType, number> = { number: 0, text: 1, date: 2, checkbox: 3, list: 4, empty: 5 };
 /** Total order used by sort(): by type, then naturally; empties last. */
-function order(a: FormulaValue, b: FormulaValue): number {
+function order(x: FormulaValue, y: FormulaValue): number {
+  const a = plain(x);
+  const b = plain(y);
   const ta = typeOfValue(a);
   const tb = typeOfValue(b);
   if (ta !== tb) return TYPE_RANK[ta] - TYPE_RANK[tb];
@@ -482,7 +562,8 @@ function order(a: FormulaValue, b: FormulaValue): number {
 }
 
 /** Stable identity key for unique(). */
-function keyOf(v: FormulaValue): string {
+function keyOf(x: FormulaValue): string {
+  const v = plain(x);
   if (Array.isArray(v)) return `l[${v.map(keyOf).join(",")}]`;
   if (v instanceof Date) return `d${v.getTime()}`;
   return `${typeOfValue(v)[0]}${JSON.stringify(v)}`;
@@ -511,9 +592,10 @@ function work(rt: Rt, units: number) {
 function clean(v: FormulaValue | undefined, rt: Rt): FormulaValue {
   if (v === undefined || v === null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? tidy(v) : null;
-  if (typeof v === "string") {
-    if (v.length > MAX_TEXT) fail("Text is too long (over 100,000 characters)");
-    work(rt, v.length >> 8);
+  if (typeof v === "string" || v instanceof StyledText) {
+    const len = typeof v === "string" ? v.length : v.text.length;
+    if (len > MAX_TEXT) fail("Text is too long (over 100,000 characters)");
+    work(rt, len >> 8);
   } else if (Array.isArray(v)) {
     if (v.length > MAX_LIST) fail("List is too long (over 10,000 items)");
     work(rt, v.length);
@@ -521,8 +603,29 @@ function clean(v: FormulaValue | undefined, rt: Rt): FormulaValue {
   return v;
 }
 
+/** Evaluate a node; a runtime error is tagged with the span of the innermost node that failed. */
 function ev(n: Node, env: Env, rt: Rt): FormulaValue {
-  work(rt, 1);
+  try {
+    work(rt, 1);
+    return evNode(n, env, rt);
+  } catch (e) {
+    if (n.k === "prop" && e instanceof Error && !(e instanceof RangeError)) {
+      // Property lookups fail with plain errors ("No property named …") or with errors from
+      // another formula's source; keep the message, point at this reference.
+      const tagged = new FormulaFail(e.message);
+      tagged.start = n.s;
+      tagged.end = n.e;
+      throw tagged;
+    }
+    if (e instanceof FormulaFail && e.start === undefined) {
+      e.start = n.s;
+      e.end = n.e;
+    }
+    throw e;
+  }
+}
+
+function evNode(n: Node, env: Env, rt: Rt): FormulaValue {
   switch (n.k) {
     case "lit":
       return n.v;
@@ -540,7 +643,7 @@ function ev(n: Node, env: Env, rt: Rt): FormulaValue {
     case "if":
       return truthy(ev(n.c, env, rt)) ? ev(n.a, env, rt) : ev(n.b, env, rt);
     case "un": {
-      const x = ev(n.x, env, rt);
+      const x = plain(ev(n.x, env, rt));
       if (n.op === "!") return !truthy(x);
       if (x === null) return null;
       if (typeof x !== "number") return fail(`"${n.op}" needs a number, got ${typeOfValue(x)}`);
@@ -558,13 +661,20 @@ function invoke(fn: FnDef, args: Node[], env: Env, rt: Rt): FormulaValue {
   const out = fn.lazy
     ? fn.lazy(args, env, rt)
     : fn.eager!(
-        args.map((a) => ev(a, env, rt)),
+        args.map((a) => (fn.rich ? ev(a, env, rt) : plain(ev(a, env, rt)))),
         rt,
       );
   return clean(out, rt);
 }
 
-function binary(op: string, a: FormulaValue, b: FormulaValue): FormulaValue {
+/** Spans for any value (plain values become one unstyled span). */
+const toSpans = (v: FormulaValue): RichSpan[] => (v instanceof StyledText ? v.spans : [{ text: toText(v) }]);
+
+function binary(op: string, x: FormulaValue, y: FormulaValue): FormulaValue {
+  if (op === "+" && (x instanceof StyledText || y instanceof StyledText) && !Array.isArray(x) && !Array.isArray(y))
+    return new StyledText([...toSpans(x), ...toSpans(y)]);
+  const a = plain(x);
+  const b = plain(y);
   switch (op) {
     case "==":
       return same(a, b);
@@ -777,14 +887,24 @@ function isoWeek(d: Date): number {
 }
 
 const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-const DATE_TOKENS = /\[([^\]]*)\]|YYYY|YY|MMMM|MMM|MM|M|DD|D|dddd|ddd|HH|H|hh|h|mm|ss|A|a/g;
+const DATE_TOKENS = /\[([^\]]*)\]|YYYY|YY|Q|MMMM|MMM|MM|M|Do|DD|D|dddd|ddd|dd|WW|W|HH|H|hh|h|mm|ss|SSS|A|a/g;
+const ordinal = (n: number) => {
+  const t = n % 100;
+  return n + (t >= 11 && t <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th");
+};
 
-/** Format with tokens YYYY YY MMMM MMM MM M DD D dddd ddd HH H hh h mm ss A a and [literal]. */
+/** Format with tokens YYYY YY Q MMMM MMM MM M Do DD D dddd ddd dd WW W HH H hh h mm ss SSS A a and [literal]. */
 function formatDatePattern(d: Date, pattern: string): string {
   const h12 = d.getHours() % 12 || 12;
   return pattern.replace(DATE_TOKENS, (tok: string, literal?: string) => {
     if (literal !== undefined) return literal;
     switch (tok) {
+      case "Q": return String(Math.floor(d.getMonth() / 3) + 1);
+      case "Do": return ordinal(d.getDate());
+      case "dd": return DAYS[d.getDay()].slice(0, 2);
+      case "WW": return pad(isoWeek(d));
+      case "W": return String(isoWeek(d));
+      case "SSS": return pad(d.getMilliseconds(), 3);
       case "YYYY": return String(d.getFullYear());
       case "YY": return pad(d.getFullYear() % 100);
       case "MMMM": return MONTHS[d.getMonth()];
@@ -831,8 +951,10 @@ interface FnDef {
   max: number;
   eager?: Eager;
   lazy?: Lazy;
-  /** "iter": args after the first see `current`/`index`; "let": name/value pairs. */
-  scope?: "iter" | "let";
+  /** "iter": args after the first see `current`/`index`; "let": name/value pairs; "acc": reduce(). */
+  scope?: "iter" | "let" | "acc";
+  /** Receives styled text as-is (others get plain text). */
+  rich?: boolean;
 }
 type Category = FormulaFunctionDoc["category"];
 
@@ -846,7 +968,7 @@ function def(
   description: string,
   example: string,
   [min, max]: [number, number],
-  impl: Eager | { lazy: Lazy; scope?: FnDef["scope"] },
+  impl: Eager | { lazy: Lazy; scope?: FnDef["scope"] } | { eager: Eager; rich: true },
 ) {
   const name = signature.slice(0, signature.indexOf("("));
   const [ex, result] = example.split(" → ");
@@ -916,12 +1038,22 @@ function extreme(args: FormulaValue[], fn: string, dir: 1 | -1): FormulaValue {
 }
 
 // Text
-def("Text", "concat(values...)", "Joins text together, or lists into one list when every value is a list.", 'concat("a", "b", 1) → "ab1"', [1, Infinity], (a) =>
-  a.every(Array.isArray) ? flatten(a, 1) : a.map(toText).join(""),
-);
-def("Text", "join(list, separator?)", 'Joins list items into text with a separator (default ", ").', 'join(["a", "b"], "-") → "a-b"', [1, 2], ([l, sep]) =>
-  asList(l, "join").map(toText).join(sep === undefined ? ", " : toText(sep)),
-);
+def("Text", "concat(values...)", "Joins text together, or lists into one list when every value is a list.", 'concat("a", "b", 1) → "ab1"', [1, Infinity], {
+  rich: true,
+  eager: (a) => {
+    if (a.every(Array.isArray)) return flatten(a, 1);
+    return a.some((x) => x instanceof StyledText) ? new StyledText(a.flatMap(toSpans)) : a.map(toText).join("");
+  },
+});
+def("Text", "join(list, separator?)", 'Joins list items into text with a separator (default ", ").', 'join(["a", "b"], "-") → "a-b"', [1, 2], {
+  rich: true,
+  eager: ([l, s]) => {
+    const items = asList(plain(l) as FormulaValue, "join");
+    const sep = s === undefined ? ", " : toText(s);
+    if (!items.some((x) => x instanceof StyledText)) return items.map(toText).join(sep);
+    return new StyledText(items.flatMap((x, i) => (i ? [{ text: sep }, ...toSpans(x)] : toSpans(x))));
+  },
+});
 def("Text", "length(text or list)", "Number of characters in text, or items in a list.", 'length("hello") → 5', ONE, ([v]) =>
   Array.isArray(v) ? v.length : textOf(v).length,
 );
@@ -1053,9 +1185,14 @@ def("Date", "daysUntil(date)", "Whole days from today until the date (negative i
   const d = asDate(v, "daysUntil");
   return d ? dateBetween(startOfDay(d), startOfDay(rt.now), "day") : null;
 });
-def("Date", "formatDate(date, pattern?)", "Formats a date. Tokens: YYYY YY MMMM MMM MM M DD D dddd ddd HH H hh h mm ss A a; [text] is literal.", 'formatDate(parseDate("2024-03-05"), "ddd, MMM D") → "Tue, Mar 5"', [1, 2], ([v, p]) => {
+def("Date", "formatDate(date, pattern?)", 'Formats a date. Tokens: YYYY YY Q MMMM MMM MM M Do DD D dddd ddd dd W WW HH H hh h mm ss SSS A a; [text] is literal. Or a style: "relative", "short", "long", "full", "iso".', 'formatDate(parseDate("2024-03-05"), "ddd, MMM Do") → "Tue, Mar 5th"', [1, 2], ([v, p], rt) => {
   const d = asDate(v, "formatDate");
-  return d ? formatDatePattern(d, p === undefined || p === null ? "MMMM D, YYYY" : toText(p)) : null;
+  if (!d) return null;
+  const pattern = p === undefined || p === null ? "MMMM D, YYYY" : toText(p);
+  const style = pattern.trim().toLowerCase();
+  if (style === "relative" || style === "short" || style === "long" || style === "iso") return formatDateValue(d, style, rt.now);
+  if (style === "full") return formatDatePattern(d, "dddd, MMMM D, YYYY");
+  return formatDatePattern(d, pattern);
 });
 def("Date", "parseDate(text)", 'Reads a date from text like "2024-03-05" or "2024-03-05T14:30". Returns empty if it can\'t.', 'parseDate("2024-03-05")', ONE, ([v]) =>
   v instanceof Date ? v : v === null ? null : parseDateText(toText(v)),
@@ -1175,6 +1312,281 @@ def("Type", "toBoolean(value)", 'Converts to a checkbox: empty, 0, "", [] and te
   typeof v === "string" && ["false", "no", "0", "off"].includes(v.trim().toLowerCase()) ? false : truthy(v),
 );
 
+// ── More math ──
+def("Math", "clamp(number, min, max)", "Keeps a number between min and max.", "clamp(12, 0, 10) → 10", [3, 3], ([x, lo, hi]) => {
+  if (x === null) return null;
+  const [n, a, b] = [asNum(x, "clamp"), asNum(lo, "clamp"), asNum(hi, "clamp")];
+  return Math.min(Math.max(n, Math.min(a, b)), Math.max(a, b));
+});
+def("Math", "between(value, low, high)", "True if low ≤ value ≤ high (numbers, text or dates).", "between(5, 1, 10) → true", [3, 3], ([v, lo, hi]) =>
+  v === null || lo === null || hi === null ? false : compare("between", v, lo) >= 0 && compare("between", v, hi) <= 0,
+);
+def("Math", "percent(part, total, digits?)", "part as a percentage of total (0–100), rounded to `digits` (default 0). Empty if total is 0.", "percent(3, 8) → 38", [2, 3], ([p, t, d]) => {
+  if (p === null || t === null) return null;
+  const total = asNum(t, "percent");
+  if (total === 0) return null;
+  const k = 10 ** Math.max(0, Math.min(10, asInt(d, "percent", 0)));
+  return Math.round((asNum(p, "percent") / total) * 100 * k) / k;
+});
+def("Math", "product(values...)", "Multiplies numbers. Accepts numbers or lists; empties are skipped.", "product([2, 3, 4]) → 24", [1, Infinity], (a) => {
+  const xs = numbers(a, "product");
+  return xs.length ? xs.reduce((s, x) => s * x, 1) : null;
+});
+def("Math", "stdev(values...)", "Sample standard deviation of the numbers.", "stdev([2, 4, 4, 4, 5, 5, 7, 9]) → 2.1380899353", [1, Infinity], (a) => {
+  const xs = numbers(a, "stdev");
+  if (xs.length < 2) return null;
+  const m = xs.reduce((s, x) => s + x, 0) / xs.length;
+  return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / (xs.length - 1));
+});
+alias("avg", "mean");
+def("Math", "toFixed(number, digits?)", "Text with exactly `digits` decimals (default 2).", 'toFixed(3.14159, 2) → "3.14"', [1, 2], ([x, d]) =>
+  x === null ? null : asNum(x, "toFixed").toFixed(Math.max(0, Math.min(20, asInt(d, "toFixed", 2)))),
+);
+const NUMBER_STYLES: NumberFormat[] = ["number", "commas", "percent", "dollar", "euro", "pound", "yen"];
+def("Math", "formatNumber(number, format?, digits?)", 'Number as text. Formats: "number", "commas" (default), "percent", "dollar", "euro", "pound", "yen"; `digits` fixes the decimals.', 'formatNumber(1234.5, "commas", 2) → "1,234.50"', [1, 3], ([x, f, d]) => {
+  if (x === null) return null;
+  const n = asNum(x, "formatNumber");
+  const raw = f === undefined || f === null ? "commas" : toText(f).trim().toLowerCase();
+  const format = NUMBER_STYLES.find((s) => s === raw) ?? fail(`formatNumber(): unknown format "${raw}" — use ${NUMBER_STYLES.join(", ")}`);
+  const digits = d === undefined || d === null ? undefined : Math.max(0, Math.min(10, asInt(d, "formatNumber", 0)));
+  const fixed = digits === undefined ? {} : { minimumFractionDigits: digits, maximumFractionDigits: digits };
+  const currency = { dollar: ["en-US", "USD"], euro: ["de-DE", "EUR"], pound: ["en-GB", "GBP"], yen: ["ja-JP", "JPY"] } as Record<string, [string, string]>;
+  if (currency[format]) return n.toLocaleString(currency[format][0], { style: "currency", currency: currency[format][1], ...fixed });
+  if (format === "percent") return `${(n * 100).toLocaleString("en-US", digits === undefined ? { maximumFractionDigits: 4 } : fixed)}%`;
+  if (format === "commas") return n.toLocaleString("en-US", digits === undefined ? { maximumFractionDigits: 6 } : fixed);
+  return digits === undefined ? formatNumber(n, "number") : n.toFixed(digits);
+});
+
+// ── More text ──
+def("Text", "left(text, count)", "The first `count` characters.", 'left("Noteral", 4) → "Note"', TWO, ([t, n]) => [...textOf(t)].slice(0, Math.max(0, asInt(n, "left", 0))).join(""));
+def("Text", "right(text, count)", "The last `count` characters.", 'right("report.pdf", 3) → "pdf"', TWO, ([t, n]) => {
+  const k = Math.max(0, asInt(n, "right", 0));
+  return k ? [...textOf(t)].slice(-k).join("") : "";
+});
+def("Text", "wordCount(text)", "Number of words.", 'wordCount("one two  three") → 3', ONE, ([t]) => (textOf(t).match(/[\p{L}\p{N}'’_-]+/gu) ?? []).length);
+def("Text", "slugify(text)", "Lowercase, accent-free, dash-separated text for URLs and ids.", 'slugify("Hello, Wörld!") → "hello-world"', ONE, ([t]) =>
+  textOf(t).normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, ""),
+);
+def("Text", "titleCase(text)", "Capitalizes the first letter of every word.", 'titleCase("the quick fox") → "The Quick Fox"', ONE, ([t]) =>
+  textOf(t).toLowerCase().replace(/(^|[\s\-_/([{"'])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase()),
+);
+def("Text", "truncate(text, length, ending?)", 'Shortens text to `length` characters, adding an ending (default "…").', 'truncate("Quarterly report", 9) → "Quarterl…"', [2, 3], ([t, n, e]) => {
+  const chars = [...textOf(t)];
+  const len = Math.max(0, asInt(n, "truncate", 0));
+  if (chars.length <= len) return chars.join("");
+  const end = e === undefined || e === null ? "…" : toText(e);
+  return chars.slice(0, Math.max(0, len - [...end].length)).join("") + end;
+});
+def("Text", "pluralize(count, word, plural?)", 'Count with the right word form: 1 task, 3 tasks. `plural` defaults to word + "s".', 'pluralize(3, "task") → "3 tasks"', [2, 3], ([c, w, p]) => {
+  const n = c === null ? 0 : asNum(c, "pluralize");
+  const word = toText(w);
+  return `${toText(n)} ${n === 1 ? word : p === undefined || p === null ? word + "s" : toText(p)}`;
+});
+
+// ── Styled text ──
+const STYLE_FLAGS: Record<string, "bold" | "italic" | "underline" | "strike" | "code"> = {
+  b: "bold", bold: "bold", i: "italic", italic: "italic", u: "underline", underline: "underline",
+  s: "strike", strike: "strike", strikethrough: "strike", c: "code", code: "code",
+};
+const TONES = OPTION_COLORS.filter((c) => c !== "default") as string[];
+const STYLE_NAMES = [...Object.keys(STYLE_FLAGS), ...TONES, ...TONES.map((c) => `${c}_background`)];
+
+/** One style argument → a span transform. */
+function styleOf(raw: FormulaValue, fn: string, on: boolean): (s: RichSpan) => RichSpan {
+  const name = toText(raw).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const flag = STYLE_FLAGS[name];
+  if (flag) return (s) => ({ ...s, [flag]: on || undefined });
+  const bg = /^(.+?)_?(background|bg)$/.exec(name);
+  const tone = bg ? bg[1] : name;
+  if (tone === "default" || TONES.includes(tone)) {
+    const key = bg ? "background" : "color";
+    return (s) => ({ ...s, [key]: on && tone !== "default" ? tone : undefined });
+  }
+  const hint = suggest(name, STYLE_NAMES);
+  return fail(`${fn}(): unknown style "${toText(raw)}".${hint ? ` Did you mean "${hint}"?` : ""} Use b, i, u, s, c, a color like "red" or "red_background"`);
+}
+const stripUndefined = (s: RichSpan): RichSpan =>
+  Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined)) as unknown as RichSpan;
+
+def("Text", "style(text, styles...)", 'Formats text: "b" bold, "i" italic, "u" underline, "s" strikethrough, "c" code, a color ("red", "blue"…) or a background ("red_background").', 'style("Overdue", "b", "red")', [2, Infinity], {
+  rich: true,
+  eager: ([t, ...styles]) => {
+    const fns = styles.flatMap((s) => (Array.isArray(s) ? s : [s])).map((s) => styleOf(s, "style", true));
+    return new StyledText(toSpans(t).map((s) => stripUndefined(fns.reduce((acc, f) => f(acc), s))));
+  },
+});
+def("Text", "unstyle(text, styles...?)", "Removes formatting: all of it, or only the styles given.", 'unstyle(style("Hi", "b"))', [1, Infinity], {
+  rich: true,
+  eager: ([t, ...styles]) => {
+    if (!styles.length || !(t instanceof StyledText)) return toText(t);
+    const fns = styles.flatMap((s) => (Array.isArray(s) ? s : [s])).map((s) => styleOf(s, "unstyle", false));
+    return new StyledText(t.spans.map((s) => stripUndefined(fns.reduce((acc, f) => f(acc), s))));
+  },
+});
+/** http(s), mailto and tel only; bare domains get https://. */
+function safeHref(raw: string): string | null {
+  const url = normalizeUrl(raw);
+  return /^(https?:\/\/|mailto:|tel:)/i.test(url) && !/\s/.test(url) ? url : null;
+}
+def("Text", "link(label, url?)", "A clickable link (web, mailto: or tel:). With one argument the text is the URL.", 'link("Docs", "noteral.app/docs")', [1, 2], {
+  rich: true,
+  eager: ([label, u]) => {
+    const target = toText(plain(u === undefined ? label : u)).trim();
+    if (!target) return label;
+    const href = safeHref(target) ?? fail(`link(): "${target.slice(0, 40)}" isn't a web, email or phone link`);
+    return new StyledText(toSpans(label).map((s) => ({ ...s, href })));
+  },
+});
+
+// ── More logic ──
+def("Logic", "switch(value, case1, result1, case2, result2, ..., default?)", "Compares the value with each case and returns the matching result, else the default (or empty).", 'switch("b", "a", 1, "b", 2, 0) → 2', [3, Infinity], {
+  lazy: (args, env, rt) => {
+    const v = ev(args[0], env, rt);
+    for (let i = 1; i + 1 < args.length; i += 2) if (same(v, ev(args[i], env, rt))) return ev(args[i + 1], env, rt);
+    return args.length % 2 === 0 ? ev(args[args.length - 1], env, rt) : null;
+  },
+});
+def("Logic", "ifError(value, fallback)", "The value, or the fallback if computing it fails.", 'ifError(sqrt("x"), 0) → 0', TWO, {
+  lazy: ([a, b], env, rt) => {
+    try {
+      return ev(a, env, rt);
+    } catch (e) {
+      if (!(e instanceof Error) || e instanceof RangeError || rt.steps > MAX_STEPS) throw e;
+      return ev(b, env, rt);
+    }
+  },
+});
+
+// ── More dates ──
+const isWeekendDay = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
+/** Weekdays (Mon–Fri) from a to b, both included; negative when b is before a. */
+function workdays(a: Date, b: Date): number {
+  if (startOfDay(b) < startOfDay(a)) return -workdays(b, a);
+  const total = dateBetween(startOfDay(b), startOfDay(a), "day") + 1;
+  let count = Math.floor(total / 7) * 5;
+  for (let i = 0; i < total % 7; i++) {
+    const day = (a.getDay() + i) % 7;
+    if (day !== 0 && day !== 6) count++;
+  }
+  return count;
+}
+function addWorkdays(d: Date, amount: number): Date {
+  const n = Math.trunc(amount);
+  const r = new Date(d.getTime());
+  if (!n) return r;
+  const step = n > 0 ? 1 : -1;
+  // From a weekend, count from the nearest weekday behind us.
+  while (isWeekendDay(r)) r.setDate(r.getDate() - step);
+  let left = Math.abs(n);
+  r.setDate(r.getDate() + step * Math.floor(left / 5) * 7);
+  left %= 5;
+  while (left > 0) {
+    r.setDate(r.getDate() + step);
+    if (!isWeekendDay(r)) left--;
+  }
+  return r;
+}
+function startOfUnit(d: Date, unit: Unit): Date {
+  const [y, m] = [d.getFullYear(), d.getMonth()];
+  switch (unit) {
+    case "year": return new Date(y, 0, 1);
+    case "quarter": return new Date(y, m - (m % 3), 1);
+    case "month": return new Date(y, m, 1);
+    case "week": return new Date(y, m, d.getDate() - ((d.getDay() + 6) % 7));
+    case "day": return startOfDay(d);
+    case "hour": return new Date(y, m, d.getDate(), d.getHours());
+    case "minute": return new Date(y, m, d.getDate(), d.getHours(), d.getMinutes());
+    case "second": return new Date(y, m, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds());
+    default: return new Date(d.getTime());
+  }
+}
+/** "in 3 days", "2 weeks ago", "today", "in 5 minutes"… relative to now. */
+function fromNow(d: Date, now: Date): string {
+  const days = dateBetween(startOfDay(d), startOfDay(now), "day");
+  const timed = d.getHours() || d.getMinutes() || d.getSeconds();
+  const say = (n: number, unit: string) => {
+    const k = Math.abs(n);
+    const word = `${k} ${unit}${k === 1 ? "" : "s"}`;
+    return n > 0 ? `in ${word}` : `${word} ago`;
+  };
+  if (days === 0 && timed) {
+    const mins = Math.round((d.getTime() - now.getTime()) / 6e4);
+    if (Math.abs(mins) < 1) return "just now";
+    return Math.abs(mins) < 60 ? say(mins, "minute") : say(Math.trunc(mins / 60), "hour");
+  }
+  if (days === 0) return "today";
+  if (days === 1) return "tomorrow";
+  if (days === -1) return "yesterday";
+  if (Math.abs(days) < 7) return say(days, "day");
+  if (Math.abs(days) < 30) return say(Math.trunc(days / 7), "week");
+  const months = monthsBetween(startOfDay(d), startOfDay(now));
+  if (Math.abs(months) < 12) return say(months || Math.sign(days), "month");
+  return say(Math.trunc(months / 12), "year");
+}
+
+def("Date", "dateRange(start, end)", "A date range; as a formula result it shows as a date with an end. start() and end() read it back.", 'dateRange(today(), dateAdd(today(), 7))', TWO, ([a, b]) => {
+  const x = asDate(a, "dateRange");
+  const y = asDate(b, "dateRange");
+  return x && y ? mkRange(x, y) : x ?? y;
+});
+alias("dateStart", "start");
+alias("dateEnd", "end");
+def("Date", "quarter(date)", "The quarter, 1–4.", 'quarter(parseDate("2024-08-01")) → 3', ONE, d1("quarter", (d) => Math.floor(d.getMonth() / 3) + 1));
+def("Date", "isWeekend(date)", "True on Saturday and Sunday.", 'isWeekend(parseDate("2024-03-09")) → true', ONE, d1("isWeekend", isWeekendDay));
+def("Date", "workdaysBetween(start, end)", "Weekdays (Mon–Fri) from start to end, both included. Negative if end is earlier.", 'workdaysBetween(parseDate("2024-03-01"), parseDate("2024-03-08")) → 6', TWO, ([a, b]) => {
+  const x = asDate(a, "workdaysBetween");
+  const y = asDate(b, "workdaysBetween");
+  return x && y ? workdays(x, y) : null;
+});
+def("Date", "addWorkdays(date, days)", "Moves by a number of weekdays, skipping Saturdays and Sundays.", 'addWorkdays(parseDate("2024-03-08"), 1) → Mar 11, 2024', TWO, ([v, n]) => {
+  const d = asDate(v, "addWorkdays");
+  return d && n !== null ? addWorkdays(d, asNum(n, "addWorkdays")) : d;
+});
+def("Date", "startOf(date, unit)", "Start of the year, quarter, month, week (Monday), day, hour or minute.", 'startOf(parseDate("2024-03-15"), "month") → Mar 1, 2024', TWO, ([v, u]) => {
+  const d = asDate(v, "startOf");
+  return d ? startOfUnit(d, unitOf(u, "startOf")) : null;
+});
+def("Date", "endOf(date, unit)", "Last day of the year, quarter, month or week (Sunday); for day/hour/minute the last moment.", 'endOf(parseDate("2024-02-10"), "month") → Feb 29, 2024', TWO, ([v, u]) => {
+  const d = asDate(v, "endOf");
+  if (!d) return null;
+  const unit = unitOf(u, "endOf");
+  const next = dateAdd(startOfUnit(d, unit), 1, unit);
+  return ["year", "quarter", "month", "week"].includes(unit) ? dateAdd(next, -1, "day") : new Date(next.getTime() - 1);
+});
+def("Date", "fromNow(date)", 'Relative text like "in 3 days", "2 weeks ago", "today", "in 5 minutes".', 'fromNow(dateAdd(today(), 3)) → "in 3 days"', ONE, ([v], rt) => {
+  const d = asDate(v, "fromNow");
+  return d ? fromNow(d, rt.now) : null;
+});
+
+// ── More lists ──
+def("List", "zip(lists...)", "Pairs up items by position: one list per position.", 'zip([1, 2], ["a", "b"]) → [[1, "a"], [2, "b"]]', [1, Infinity], (args) => {
+  const lists = args.map((l) => asList(l, "zip"));
+  const n = Math.min(...lists.map((l) => l.length));
+  return Array.from({ length: n }, (_, i) => lists.map((l) => l[i] ?? null));
+});
+def("List", "chunk(list, size)", "Splits a list into lists of `size` items.", "chunk([1, 2, 3, 4, 5], 2) → [[1, 2], [3, 4], [5]]", TWO, ([l, s]) => {
+  const items = asList(l, "chunk");
+  const size = asInt(s, "chunk", 1);
+  if (size < 1) return fail("chunk() size must be at least 1");
+  return Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, i * size + size));
+});
+def("List", "compact(list)", 'Removes empty items (empty, "" and []).', 'compact([1, "", 2, empty()]) → [1, 2]', ONE, ([l]) => asList(l, "compact").filter((x) => !isEmpty(x)));
+def("List", "reduce(list, expression, initial?)", "Folds a list into one value: `acc` is the result so far, `current` the item.", "reduce([1, 2, 3], acc + current, 0) → 6", [2, 3], {
+  lazy: (args, env, rt) => {
+    const items = asList(ev(args[0], env, rt), "reduce");
+    let acc: FormulaValue = args[2] ? ev(args[2], env, rt) : null;
+    items.forEach((item, i) => {
+      const scope = Object.create(env) as Env;
+      scope.current = item;
+      scope.index = i;
+      scope.acc = acc;
+      acc = ev(args[1], scope, rt);
+    });
+    return acc;
+  },
+  scope: "acc",
+});
+
 /** Docs for every function plus the language's non-function constructs. */
 export const FORMULA_FUNCTIONS: FormulaFunctionDoc[] = [
   { name: "prop", category: "Properties", signature: 'prop("Name")', description: "The value of a property of this row.", example: 'prop("Price") * 2' },
@@ -1234,9 +1646,29 @@ export function formatFormulaValue(
     return opts?.numberFormat && opts.numberFormat !== "number" ? formatNumber(n, opts.numberFormat) : String(n);
   }
   if (typeof v === "string") return v;
+  if (v instanceof StyledText) return v.text;
   if (typeof v === "boolean") return v ? "true" : "false";
   if (v instanceof Date) return Number.isNaN(v.getTime()) ? "" : formatDateValue(v, opts?.dateFormat ?? "short", new Date());
+  if (isDateRange(v)) return v.map((x) => formatFormulaValue(x, opts)).join(" → ");
   return v.map((x) => formatFormulaValue(x, opts)).join(", ");
+}
+
+/**
+ * Display spans when a value carries formatting (styled text, or a list with
+ * styled items); null for plain values, which render as ordinary text.
+ */
+export function formulaSpans(v: FormulaValue): RichSpan[] | null {
+  if (v instanceof StyledText) return v.spans;
+  if (!Array.isArray(v) || !v.some((x) => x instanceof StyledText || Array.isArray(x))) return null;
+  const out: RichSpan[] = [];
+  let rich = false;
+  v.forEach((x, i) => {
+    if (i) out.push({ text: ", " });
+    const inner = formulaSpans(x);
+    if (inner) rich = true;
+    out.push(...(inner ?? [{ text: formatFormulaValue(x) }]));
+  });
+  return rich ? new StyledText(out).spans : null;
 }
 
 // ───────────────────────────── Compile & evaluate ─────────────────────────────
@@ -1266,6 +1698,7 @@ function compileUncached(source: string): Compiled {
     return {
       ok: true,
       refs,
+      refSpans: [...parser.refSpans],
       run(ctx: FormulaContext): FormulaValue {
         if (!ast) return null;
         const rt: Rt = { ctx, now: ctx.now ?? new Date(), steps: 0 };
@@ -1279,13 +1712,18 @@ function compileUncached(source: string): Compiled {
   }
 }
 
-/** Compile and run; never throws. Errors come back as `{ value: null, error }`. */
-export function evaluateFormula(source: string, ctx: FormulaContext): { value: FormulaValue; error?: string } {
+/** Compile and run; never throws. Errors come back as `{ value: null, error, span? }`. */
+export function evaluateFormula(
+  source: string,
+  ctx: FormulaContext,
+): { value: FormulaValue; error?: string; span?: { start: number; end: number } } {
   const c = compileFormula(source);
-  if (!c.ok) return { value: null, error: c.error.message };
+  if (!c.ok) return { value: null, error: c.error.message, span: { start: c.error.start, end: c.error.end } };
   try {
     return { value: c.run(ctx) };
   } catch (e) {
+    const span = formulaErrorSpan(e);
+    if (span) return { value: null, error: (e as Error).message, span };
     if (e instanceof RangeError && /call stack/i.test(e.message)) return { value: null, error: "Formula is nested too deeply" };
     return { value: null, error: e instanceof Error ? e.message : String(e) };
   }
@@ -1333,7 +1771,102 @@ const KEYWORDS: { label: string; detail: string }[] = [
   { label: "not", detail: "operator" },
   { label: "current", detail: "item in map/filter/…" },
   { label: "index", detail: "position in map/filter/…" },
+  { label: "acc", detail: "result so far in reduce()" },
 ];
+
+/** Closest name within typo distance (case-insensitive), for "did you mean" hints. */
+export const suggestName = (name: string, candidates: string[]): string | undefined => suggest(name, candidates);
+
+const propRef = (name: string) => (name.includes("}") ? `prop("${name.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")` : `{${name}}`);
+
+/**
+ * Compile-time check against a schema's property names: syntax and functions
+ * (like compileFormula) plus unknown property references, with "did you mean"
+ * hints. Returns null when the formula is fine.
+ */
+export function checkFormula(source: string, propertyNames?: string[]): FormulaError | null {
+  const compiled = compileFormula(source);
+  if (!compiled.ok) {
+    const e = compiled.error;
+    const bare = /^Unknown name "([^"]+)"/.exec(e.message);
+    if (bare && propertyNames?.length) {
+      const exact = propertyNames.find((p) => p.toLowerCase() === bare[1].toLowerCase());
+      const near = exact ?? suggest(bare[1], propertyNames);
+      if (exact) return { ...e, message: `"${bare[1]}" is a property — write ${propRef(exact)} or prop("${exact}")` };
+      if (near && !e.message.includes("Did you mean")) return { ...e, message: `Unknown name "${bare[1]}". Did you mean ${propRef(near)}?` };
+    }
+    return e;
+  }
+  if (!propertyNames) return null;
+  const known = new Set(propertyNames.map((p) => p.trim().toLowerCase()));
+  for (const ref of compiled.refSpans) {
+    if (known.has(ref.name.trim().toLowerCase())) continue;
+    const hint = suggest(ref.name, propertyNames);
+    return {
+      message: `No property named "${ref.name}".${hint ? ` Did you mean prop("${hint}")?` : ""}`,
+      start: ref.start,
+      end: ref.end,
+    };
+  }
+  return null;
+}
+
+/** 1-based line and column of an offset, for messages like "line 2, col 5". */
+export function formulaPosition(source: string, offset: number): { line: number; column: number } {
+  const before = source.slice(0, Math.max(0, Math.min(offset, source.length)));
+  const line = before.split("\n").length;
+  return { line, column: before.length - before.lastIndexOf("\n") };
+}
+
+/**
+ * The function call the caret is inside, and which argument it is on — for
+ * signature help. Method calls (x.fn(…)) count the receiver as argument 0.
+ */
+export function signatureAt(source: string, cursor: number): { doc: FormulaFunctionDoc; arg: number } | null {
+  const toks = significant(lex(source.slice(0, cursor)));
+  const stack: { name: string | null; arg: number }[] = [];
+  toks.forEach((t, i) => {
+    if (t.type !== "punct") return;
+    if (t.text === "(") {
+      const prev = toks[i - 1];
+      const named = prev && (prev.type === "ident" || (prev.type === "op" && WORD_OPS.has(prev.text.toLowerCase())));
+      const method = named && isPunct(toks[i - 2], ".");
+      stack.push({ name: named ? prev.text : null, arg: method ? 1 : 0 });
+    } else if (t.text === "[") stack.push({ name: null, arg: 0 });
+    else if (t.text === ")" || t.text === "]") stack.pop();
+    else if (t.text === "," && stack.length) stack[stack.length - 1].arg++;
+  });
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const frame = stack[i];
+    if (!frame.name) continue;
+    const low = frame.name.toLowerCase();
+    const doc = low === "prop" ? FORMULA_FUNCTIONS[0] : DOCS.find((d) => d.name.toLowerCase() === low);
+    return doc ? { doc, arg: frame.arg } : null;
+  }
+  return null;
+}
+
+/** Offsets of the bracket at/just before the caret and its partner, ignoring strings and comments. */
+export function matchingBracket(source: string, cursor: number): [number, number] | null {
+  const toks = lex(source).filter((t) => t.type === "punct" && "()[]".includes(t.text));
+  const pairs = new Map<number, number>();
+  const open: Tok[] = [];
+  for (const t of toks) {
+    if (t.text === "(" || t.text === "[") open.push(t);
+    else {
+      const o = open.pop();
+      if (o && (o.text === "(") === (t.text === ")")) {
+        pairs.set(o.start, t.start);
+        pairs.set(t.start, o.start);
+      }
+    }
+  }
+  for (const at of [cursor - 1, cursor]) {
+    const other = pairs.get(at);
+    if (other !== undefined) return [Math.min(at, other), Math.max(at, other)];
+  }
+  return null;
+}
 
 /**
  * Autocomplete at `cursor`: property names inside prop("…") or {…}; functions
@@ -1407,6 +1940,9 @@ export function completionsAt(
   }
   if (!afterDot) {
     for (const k of KEYWORDS) if (match(prefix, k.label)) items.push({ label: k.label, insert: k.label, kind: "keyword", detail: k.detail });
+    // Typing a property's name bare offers the {Name} reference.
+    for (const p of propertyNames)
+      if (p && match(prefix, p) && !hasParen) items.push({ label: p, insert: propRef(p), kind: "property", detail: "property" });
     if (match(prefix, "prop")) items.unshift({ label: "prop", insert: hasParen ? "prop" : 'prop("', kind: "function", detail: 'prop("Name")' });
   }
   // Exact match first, then prop(), then shorter names.

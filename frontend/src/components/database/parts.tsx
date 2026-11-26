@@ -1,3 +1,4 @@
+import { PageIcon } from "../PageIcon";
 import {
   AlignLeft,
   Blocks,
@@ -60,6 +61,16 @@ const viewIcons: Record<ViewType, LucideIcon> = {
 export function ViewIcon({ type, size = 14 }: { type: ViewType; size?: number }) {
   const Icon = viewIcons[type] ?? Table2;
   return <Icon size={size} aria-hidden />;
+}
+
+/** A view's own icon when it has one, otherwise its layout icon. */
+export function ViewGlyph({ view, size = 14 }: { view: { type: ViewType; icon?: string }; size?: number }) {
+  if (!view.icon) return <ViewIcon type={view.type} size={size} />;
+  return (
+    <span className="db-view-glyph" aria-hidden>
+      <PageIcon value={view.icon} size={size} fallback={<ViewIcon type={view.type} size={size} />} />
+    </span>
+  );
 }
 
 export function OptionChip({

@@ -516,7 +516,7 @@ To put a database inside a page's content, use databases.embed instead. Property
 | --- | --- | --- | --- |
 | `title` | `string` | yes | Database title. |
 | `parentId` | `string` |  | Parent page/folder id. |
-| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; }[]` |  | Columns besides the title. |
+| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; /** How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. */ display?: { /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */ style?: "number" \| "bar" \| "ring" \| "rating" \| "heat"; /** Fill colour; default = the app accent. */ color?: "default" \| "gray" \| "brown" \| "orange" \| "yellow" \| "green" \| "blue" \| "purple" \| "pink" \| "red"; /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */ max?: number; /** Bar / ring: also show the number (default true). */ showNumber?: boolean; }; }[]` |  | Columns besides the title. |
 | `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | First view type. Default `"table"`. |
 | `open` | `boolean` |  | Open it in a tab. Default `true`. |
 
@@ -533,7 +533,7 @@ With databaseId the block links that database (it stays where it is). Without it
 | `pageId` | `string` |  | Page to insert into. Defaults to the page open in the focused pane. |
 | `databaseId` | `string` |  | Existing database to link. Omit to create a new inline database. |
 | `title` | `string` |  | New database title. |
-| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; }[]` |  | Columns besides the title. |
+| `properties` | `{ /** Property name. */ name: string; /** Property type. */ type: "text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"; /** Options for select / multiSelect / status. */ options?: string[]; /** Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. */ formula?: string; /** Number format (number and formula properties). */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** How date results of a formula show. */ dateFormat?: "relative" \| "short" \| "long" \| "iso"; /** How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. */ display?: { /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */ style?: "number" \| "bar" \| "ring" \| "rating" \| "heat"; /** Fill colour; default = the app accent. */ color?: "default" \| "gray" \| "brown" \| "orange" \| "yellow" \| "green" \| "blue" \| "purple" \| "pink" \| "red"; /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */ max?: number; /** Bar / ring: also show the number (default true). */ showNumber?: boolean; }; }[]` |  | Columns besides the title. |
 | `view` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | First view type of a new database. Default `"table"`. |
 | `position` | `"start" \| "end" \| "before" \| "after"` |  | Where in the page. Default `"end"`. |
 | `blockId` | `string` |  | Anchor block for before/after. |
@@ -555,9 +555,10 @@ Add a property (column) to a database.
 | `name` | `string` | yes | Property name. |
 | `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"` | yes | Property type. |
 | `options` | `string[]` |  | Options for select / multiSelect / status. |
-| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. |
+| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. |
 | `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format (number and formula properties). |
 | `dateFormat` | `"relative" \| "short" \| "long" \| "iso"` |  | How date results of a formula show. |
+| `display` | `{ /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */ style?: "number" \| "bar" \| "ring" \| "rating" \| "heat"; /** Fill colour; default = the app accent. */ color?: "default" \| "gray" \| "brown" \| "orange" \| "yellow" \| "green" \| "blue" \| "purple" \| "pink" \| "red"; /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */ max?: number; /** Bar / ring: also show the number (default true). */ showNumber?: boolean; }` |  | How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. |
 
 ### `databases.addRow`
 
@@ -654,6 +655,7 @@ Add a view (table, board, gallery, list, calendar, chart or custom) with optiona
 | --- | --- | --- | --- |
 | `databaseId` | `string` | yes | Database id. |
 | `name` | `string` |  | View name. |
+| `icon` | `string` |  | Tab icon: an emoji, or "" to use the layout icon. |
 | `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | Layout. Default `"table"`. |
 | `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | Match all rules (and) or any (or). |
@@ -678,7 +680,7 @@ Add a view (table, board, gallery, list, calendar, chart or custom) with optiona
 | `showIcons` | `boolean` |  | Show page icons beside titles (default true). |
 | `limit` | `number` |  | Rows shown before "Load more" (0 = default). |
 | `openIn` | `"modal" \| "side" \| "tab" \| "current"` |  | Where row pages open: modal (center peek, default), side (side peek), tab, current. |
-| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; }` |  | Chart settings (chart views); merged into the current ones. |
+| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; /** Zoom and pan (Ctrl/⌘+wheel, pinch, drag) on bar/column/line/area/scatter/grid heatmaps. Default true. */ zoom?: boolean; /** Range slider under the plot. Default false. */ zoomSlider?: boolean; /** Category axis title. "" clears. */ xTitle?: string; /** Value axis title. "" clears. */ yTitle?: string; /** Category axis labels. Default true. */ xLabels?: boolean; /** Value axis labels. Default true. */ yLabels?: boolean; /** Category label angle in degrees: 0, 30, 45, 60 or 90; unset rotates when crowded. */ labelAngle?: number; /** Logarithmic value axis (zero/negative values are left out). */ logScale?: boolean; /** What data labels show. Default value (bars/lines), namePercent (pies), nameValue (funnels). */ labelContent?: "value" \| "percent" \| "name" \| "nameValue" \| "namePercent"; /** Where data labels sit; unset picks per chart. */ labelPosition?: "inside" \| "outside"; /** Single-series bars: a colour per category, or one colour. Unset follows option colours. */ colorBy?: "category" \| "single"; /** Colour of single-colour charts: accent or an option colour (gray, brown, orange, yellow, green, blue, purple, pink, red). */ color?: string; /** Line shape (line/area/radar); overrides smooth. Default straight. */ curve?: "straight" \| "smooth" \| "step"; /** Point markers on lines; unset shows them when there are few points. */ points?: boolean; /** Area fill fades out. Default true. */ gradient?: boolean; /** Donut ring thickness, % of the radius. Default 34. */ donutWidth?: number; /** With limit: merge the rest into Other (default true) or drop it. */ other?: boolean; /** Combo chart (column/line/area): a second measure drawn as a line on a right axis. "" clears. */ aggregate2?: "" \| "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Property (name) measured by aggregate2. "" clears. */ y2?: string; /** Legend position. Default top. */ legendPosition?: "top" \| "bottom" \| "left" \| "right"; /** Tooltip: group (all series at a category, default), item (one mark) or off. */ tooltip?: "group" \| "item" \| "off"; /** Goal line label. Default "Goal". */ goalLabel?: string; /** Message shown when the view has no rows. */ emptyText?: string; }` |  | Chart settings (chart views); merged into the current ones. |
 | `custom` | `{ /** HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined. */ html?: string; /** Frame height in px (inline databases). */ height?: number; }` |  | Custom view settings (custom views). |
 
 ```ts
@@ -698,6 +700,7 @@ Only the fields you pass change. `filters`, `sorts` and `advanced` replace the e
 | `databaseId` | `string` | yes | Database id. |
 | `viewId` | `string` | yes | View id. |
 | `name` | `string` |  | View name. |
+| `icon` | `string` |  | Tab icon: an emoji, or "" to use the layout icon. |
 | `type` | `"table" \| "board" \| "gallery" \| "list" \| "calendar" \| "chart" \| "custom"` |  | Layout. |
 | `filters` | `{ /** Property name or id ("title" or the title column's name for the title). */ property: string; /** Operator. */ op: "contains" \| "notContains" \| "is" \| "isNot" \| "startsWith" \| "endsWith" \| "isEmpty" \| "isNotEmpty" \| "eq" \| "neq" \| "gt" \| "lt" \| "gte" \| "lte" \| "before" \| "after" \| "onOrBefore" \| "onOrAfter" \| "within"; /** Value to compare with (omit for isEmpty / isNotEmpty). */ value?: unknown; }[]` |  | Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek\|pastMonth\|pastYear\|nextWeek\|nextMonth\|nextYear\|thisWeek\|thisMonth\|thisYear. Formulas filter as their result type. |
 | `filterMode` | `"and" \| "or"` |  | Match all rules (and) or any (or). |
@@ -722,7 +725,7 @@ Only the fields you pass change. `filters`, `sorts` and `advanced` replace the e
 | `showIcons` | `boolean` |  | Show page icons beside titles (default true). |
 | `limit` | `number` |  | Rows shown before "Load more" (0 = default). |
 | `openIn` | `"modal" \| "side" \| "tab" \| "current"` |  | Where row pages open: modal (center peek, default), side (side peek), tab, current. |
-| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; }` |  | Chart settings (chart views); merged into the current ones. |
+| `chart` | `{ /** Chart kind. */ kind?: "bar" \| "column" \| "line" \| "area" \| "pie" \| "donut" \| "scatter" \| "funnel" \| "radar" \| "heatmap" \| "number"; /** Category property (name), or createdTime / lastEdited. "" clears. */ x?: string; /** Group dates on x by. */ dateBucket?: "day" \| "week" \| "month" \| "quarter" \| "year"; /** Measure. count = rows; sum/average/median/min/max need a number y; countValues/countUnique count y's values. */ aggregate?: "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Measured property (name). "" clears. */ y?: string; /** Property that splits each category into series. "" clears. */ series?: string; /** Stack series. */ stacked?: boolean; /** Stack to 100%. */ normalize?: boolean; /** Running total. */ cumulative?: boolean; /** Category order. */ sort?: "default" \| "label" \| "labelDesc" \| "value" \| "valueDesc"; /** Show the first N categories (the rest merge into Other). */ limit?: number; /** Skip the empty category. */ omitEmpty?: boolean; /** Smooth lines. */ smooth?: boolean; /** Value labels. */ labels?: boolean; /** Legend. */ legend?: boolean; /** Grid lines. */ grid?: boolean; /** Palette id. */ palette?: string; /** Height in px (inline databases). */ height?: number; /** Reference line value. */ goal?: number; /** Y axis minimum. */ yMin?: number; /** Y axis maximum. */ yMax?: number; /** Value number format. */ format?: "number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"; /** Chart title. */ title?: string; /** Zoom and pan (Ctrl/⌘+wheel, pinch, drag) on bar/column/line/area/scatter/grid heatmaps. Default true. */ zoom?: boolean; /** Range slider under the plot. Default false. */ zoomSlider?: boolean; /** Category axis title. "" clears. */ xTitle?: string; /** Value axis title. "" clears. */ yTitle?: string; /** Category axis labels. Default true. */ xLabels?: boolean; /** Value axis labels. Default true. */ yLabels?: boolean; /** Category label angle in degrees: 0, 30, 45, 60 or 90; unset rotates when crowded. */ labelAngle?: number; /** Logarithmic value axis (zero/negative values are left out). */ logScale?: boolean; /** What data labels show. Default value (bars/lines), namePercent (pies), nameValue (funnels). */ labelContent?: "value" \| "percent" \| "name" \| "nameValue" \| "namePercent"; /** Where data labels sit; unset picks per chart. */ labelPosition?: "inside" \| "outside"; /** Single-series bars: a colour per category, or one colour. Unset follows option colours. */ colorBy?: "category" \| "single"; /** Colour of single-colour charts: accent or an option colour (gray, brown, orange, yellow, green, blue, purple, pink, red). */ color?: string; /** Line shape (line/area/radar); overrides smooth. Default straight. */ curve?: "straight" \| "smooth" \| "step"; /** Point markers on lines; unset shows them when there are few points. */ points?: boolean; /** Area fill fades out. Default true. */ gradient?: boolean; /** Donut ring thickness, % of the radius. Default 34. */ donutWidth?: number; /** With limit: merge the rest into Other (default true) or drop it. */ other?: boolean; /** Combo chart (column/line/area): a second measure drawn as a line on a right axis. "" clears. */ aggregate2?: "" \| "count" \| "countValues" \| "countUnique" \| "sum" \| "average" \| "median" \| "min" \| "max"; /** Property (name) measured by aggregate2. "" clears. */ y2?: string; /** Legend position. Default top. */ legendPosition?: "top" \| "bottom" \| "left" \| "right"; /** Tooltip: group (all series at a category, default), item (one mark) or off. */ tooltip?: "group" \| "item" \| "off"; /** Goal line label. Default "Goal". */ goalLabel?: string; /** Message shown when the view has no rows. */ emptyText?: string; }` |  | Chart settings (chart views); merged into the current ones. |
 | `custom` | `{ /** HTML/CSS/JS for a custom view, rendered in a sandboxed frame. The script gets window.noteral.database = { schema, view, rows } plus onChange(fn), openRow(id), setValue(rowId, propertyName, value), addRow(values?). Theme tokens are CSS variables; kit classes n-btn, n-card, n-list, n-item, n-chip, n-muted are predefined. */ html?: string; /** Frame height in px (inline databases). */ height?: number; }` |  | Custom view settings (custom views). |
 
 ### `databases.removeView`
@@ -774,14 +777,15 @@ Rename a property, change its type, formula, number/date format or select option
 | `property` | `string` | yes | Property name or id ("title" or the title column's name for the title). |
 | `name` | `string` |  | New name. |
 | `type` | `"text" \| "number" \| "select" \| "multiSelect" \| "status" \| "date" \| "checkbox" \| "url" \| "email" \| "phone" \| "createdTime" \| "lastEdited" \| "formula"` |  | New type. |
-| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. |
+| `formula` | `string` |  | Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. |
 | `format` | `"number" \| "commas" \| "percent" \| "dollar" \| "euro" \| "pound" \| "yen"` |  | Number format (number and formula properties). |
 | `dateFormat` | `"relative" \| "short" \| "long" \| "iso"` |  | How date results of a formula show. |
+| `display` | `{ /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */ style?: "number" \| "bar" \| "ring" \| "rating" \| "heat"; /** Fill colour; default = the app accent. */ color?: "default" \| "gray" \| "brown" \| "orange" \| "yellow" \| "green" \| "blue" \| "purple" \| "pink" \| "red"; /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */ max?: number; /** Bar / ring: also show the number (default true). */ showNumber?: boolean; }` |  | How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. |
 | `options` | `{ /** Option name. */ name: string; /** Color name. */ color?: "default" \| "gray" \| "brown" \| "orange" \| "yellow" \| "green" \| "blue" \| "purple" \| "pink" \| "red"; /** Status group. */ group?: "todo" \| "inProgress" \| "complete"; }[]` |  | Options (select / multi-select / status). |
 
 ### `databases.formulaFunctions`
 
-The formula language: syntax and every function, one line each.
+The formula language: syntax and every function (math, text, style/link formatting, dates, lists, lambdas), one line each.
 
 **Permission:** `databases.read` · **Returns:** `string` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
 
@@ -789,7 +793,7 @@ No parameters.
 
 ### `databases.checkFormula`
 
-Check a formula against a database without saving: errors, result type and sample results.
+Check a formula against a database without saving: errors (with line/column and did-you-mean hints), result type and sample results.
 
 **Permission:** `databases.read` · **Returns:** `{ ok: boolean; error?: string; resultType?: string; sample?: { title: string; value: unknown; error?: string }[] }` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
 
@@ -819,6 +823,17 @@ Move rows to the trash.
 | Param | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `rowIds` | `string[]` | yes | Row ids. |
+
+### `databases.setLocked`
+
+Lock or unlock a database. A locked database refuses row edits, new rows and deletes (from the user, plugins and the assistant); properties and views can still change.
+
+**Permission:** `databases.write` · **Returns:** `{ locked: boolean }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator · **Asks first**
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `databaseId` | `string` | yes | Database id. |
+| `locked` | `boolean` | yes | true to lock, false to unlock. |
 
 ### `databases.rename`
 
@@ -2236,12 +2251,16 @@ export interface DatabasePropertyInfo {
   dateFormat?: string;
   /** Formula properties: why the formula fails, if it does. */
   error?: string;
+  /** Number properties (and number formulas): how the value is shown, when not as a plain number. */
+  display?: { style: "number" | "bar" | "ring" | "rating" | "heat"; color?: string; max?: number; showNumber?: boolean };
 }
 
 export interface DatabaseSchemaInfo {
   databaseId: string;
   title: string;
   titleName: string;
+  /** Present (true) when the database is locked: row writes are refused. */
+  locked?: boolean;
   properties: DatabasePropertyInfo[];
   views: { id: string; name: string; type: string }[];
 }
@@ -2276,6 +2295,30 @@ export interface DatabaseChartInfo {
   yMax?: number;
   format?: string;
   title?: string;
+  zoom?: boolean;
+  zoomSlider?: boolean;
+  xTitle?: string;
+  yTitle?: string;
+  xLabels?: boolean;
+  yLabels?: boolean;
+  labelAngle?: number;
+  logScale?: boolean;
+  labelContent?: "value" | "percent" | "name" | "nameValue" | "namePercent";
+  labelPosition?: "inside" | "outside";
+  colorBy?: "category" | "single";
+  color?: string;
+  curve?: "straight" | "smooth" | "step";
+  points?: boolean;
+  gradient?: boolean;
+  donutWidth?: number;
+  other?: boolean;
+  aggregate2?: "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+  /** Property name. */
+  y2?: string;
+  legendPosition?: "top" | "bottom" | "left" | "right";
+  tooltip?: "group" | "item" | "off";
+  goalLabel?: string;
+  emptyText?: string;
 }
 
 export interface DatabaseViewInfo {
@@ -2306,6 +2349,10 @@ export interface DatabaseViewInfo {
   /** Rows shown before "Load more". */
   limit?: number;
   showIcons?: boolean;
+  /** Tab icon (emoji or icon value). */
+  icon?: string;
+  /** Set when a database block created this view for itself: the block id. It shows only in that block. */
+  owner?: string;
   /** Where row pages open: modal (default) | side | tab | current. */
   openIn?: "modal" | "side" | "tab" | "current";
   rowNumbers?: boolean;

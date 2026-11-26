@@ -308,3 +308,41 @@ describe("formatting", () => {
     expect(niceStep(98, 12)).toBe(10);
   });
 });
+
+describe("chart options", () => {
+  const rows = [
+    row({ status: "done", price: 10, qty: 1, city: "Paris" }),
+    row({ status: "done", price: 5, qty: 3, city: "Rome" }),
+    row({ status: "doing", price: 20, qty: 2, city: "Oslo" }),
+    row({ status: "todo", qty: 4, city: "Lima" }),
+    row({ status: "todo", price: 1, city: "Kyiv" }),
+  ];
+
+  it("adds a second measure per category for combo charts", () => {
+    const data = build(rows, { kind: "column", x: "status", aggregate: "count", aggregate2: "sum", y2: "price" });
+    expect(data.series[0].values).toEqual([2, 1, 2]);
+    expect(data.secondary?.label).toBe("Sum of Price");
+    expect(data.secondary?.format).toBe("dollar");
+    expect(data.secondary?.values).toEqual([1, 20, 15]);
+  });
+
+  it("follows the running total and skips kinds without a value axis", () => {
+    const cumulative = build(rows, { kind: "line", x: "status", aggregate2: "average", y2: "qty", cumulative: true });
+    expect(cumulative.secondary?.values).toEqual([4, 6, 8]);
+    expect(build(rows, { kind: "pie", x: "status", aggregate2: "sum", y2: "price" }).secondary).toBeUndefined();
+    expect(build(rows, { kind: "bar", x: "status", aggregate2: "sum", y2: "price" }).secondary).toBeUndefined();
+    // A numeric aggregate needs a number property.
+    expect(build(rows, { kind: "column", x: "status", aggregate2: "sum", y2: "city" }).secondary).toBeUndefined();
+  });
+
+  it("drops the rest instead of merging into Other when asked", () => {
+    const merged = build(rows, { kind: "column", x: "city", sort: "label", limit: 3 });
+    expect(merged.categories.map((c) => c.label).slice(0, 2)).toEqual(["Kyiv", "Lima"]);
+    expect(merged.categories[merged.categories.length - 1]?.key).toBe(OTHER_KEY);
+    expect(merged.categories[merged.categories.length - 1]?.other).toBe(true);
+    const dropped = build(rows, { kind: "column", x: "city", sort: "label", limit: 3, other: false });
+    expect(dropped.categories.map((c) => c.label)).toEqual(["Kyiv", "Lima", "Oslo"]);
+    expect(dropped.categories.some((c) => c.other)).toBe(false);
+    expect(dropped.truncated).toBe(true);
+  });
+});

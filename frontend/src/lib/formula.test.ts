@@ -391,8 +391,8 @@ describe("errors", () => {
   });
 
   it("never throws from evaluateFormula", () => {
-    expect(evaluateFormula("1 +", ctx())).toEqual({ value: null, error: 'Missing a value after "+"' });
-    expect(evaluateFormula('"a" * 2', ctx())).toEqual({ value: null, error: '"*" needs numbers, got text' });
+    expect(evaluateFormula("1 +", ctx())).toEqual({ value: null, error: 'Missing a value after "+"', span: { start: 2, end: 3 } });
+    expect(evaluateFormula('"a" * 2', ctx())).toEqual({ value: null, error: '"*" needs numbers, got text', span: { start: 0, end: 7 } });
     expect(evaluateFormula("", ctx())).toEqual({ value: null });
     expect(evaluateFormula("  // nothing", ctx())).toEqual({ value: null });
   });

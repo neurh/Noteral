@@ -6,7 +6,8 @@
  * as a marker line that converts back into the same block:
  *
  *   <!-- database:DATABASE_ID Title -->   an inline or linked database (Title is a label only)
- *   <!-- block:BLOCK_ID kind -->           a custom block, restored from the current document
+ *   <!-- block:BLOCK_ID kind -->           a custom block, or a database block with its own views
+ *                                          (kind "database …"), restored from the current document
  *
  * Markers are only recognised on a line of their own, outside fenced code.
  */
@@ -36,6 +37,9 @@ export function blockMarker(blockId: string, kind: string): string {
 function markerFor(block: EmbedBlock, titleOf: TitleOf): string | undefined {
   if (block.type === "database") {
     const id = String(block.props?.databaseId ?? block.props?.pageId ?? "");
+    // A block with its own views (several sources) keeps its identity, so the
+    // views survive a Markdown round trip.
+    if (block.id && block.props?.views) return blockMarker(block.id, `database ${titleOf(id) || "Untitled"}`);
     return id ? databaseMarker(id, titleOf(id) || "Untitled") : undefined;
   }
   if (block.type === "custom" && block.id) return blockMarker(block.id, String(block.props?.kind ?? "custom"));
@@ -113,7 +117,7 @@ export function markdownToEmbedBlocks(markdown: string, parse: (markdown: string
     if (kind === "database") out.push(withId({ type: "database", props: { databaseId: id }, children: [] }));
     else {
       const found = options.lookup?.(id);
-      if (found?.type === "custom") out.push(withId({ type: found.type, props: { ...(found.props ?? {}) }, children: found.children ?? [] }));
+      if (found?.type === "custom" || found?.type === "database") out.push(withId({ type: found.type, props: { ...(found.props ?? {}) }, children: found.children ?? [] }));
     }
   }
   flush();

@@ -8,6 +8,7 @@
  */
 import {
   BOARD_GROUP_TYPES,
+  parseSchema,
   DATE_RANGES,
   OPEN_MODES,
   RELATIVE_DATES,
@@ -20,6 +21,7 @@ import {
   DEFAULT_CUSTOM_VIEW,
   defaultChart,
   isFilterGroup,
+  OPTION_COLORS,
   convertValue as convertStoredValue,
   filterOpsFor,
   hasOptions,
@@ -34,9 +36,9 @@ import {
   uid,
 } from "../lib/database";
 import type { CalcKind, ChartConfig, DatabaseRow, DatabaseSchema, DatabaseView, FilterGroup, FilterNode, FilterOp, FilterRule, OptionColor, Property, PropertyType, SelectOption, SortRule, StatusGroup, ViewType } from "../lib/database";
-import { FORMULA_FUNCTIONS, renameRefs } from "../lib/formula";
+import { FORMULA_FUNCTIONS, checkFormula as checkFormulaSource, formulaPosition, renameRefs } from "../lib/formula";
 import { withFormulas } from "../lib/databaseFormulas";
-import { activePageId, applyPropertyExtras, buildProperty, displayTitle, findMeta, formulaRows, insertStoredBlock, isTitleKey, propertyByName, requireDatabase, requireMeta, rowInfos, schemaInfo, store } from "./handlers";
+import { activePageId, applyPropertyExtras, assertUnlocked, buildProperty, displayTitle, findMeta, formulaRows, insertStoredBlock, isTitleKey, propertyByName, requireDatabase, requireMeta, rowInfos, schemaInfo, store } from "./handlers";
 import { editorBridge } from "../lib/editorBridge";
 import { databaseMarker } from "../lib/markdownEmbeds";
 import type { DatabaseChartInfo, DatabaseFilterNode, DatabaseRowInfo, DatabaseViewInfo } from "./types";
@@ -185,7 +187,7 @@ function chartAxisName(schema: DatabaseSchema, id: string | undefined): string |
 
 function chartInfo(schema: DatabaseSchema, chart: ChartConfig): DatabaseChartInfo {
   const info: DatabaseChartInfo = { ...chart };
-  for (const key of ["x", "y", "series"] as const) {
+  for (const key of ["x", "y", "series", "y2"] as const) {
     if (chart[key]) info[key] = chartAxisName(schema, chart[key]);
   }
   return info;
@@ -217,6 +219,8 @@ export function viewInfo(databaseId: string, schema: DatabaseSchema, view: Datab
   if (view.dateProperty) info.dateProperty = propertyNameOf(schema, view.dateProperty);
   if (view.cardPreview) info.cardPreview = view.cardPreview;
   if (view.wrap) info.wrap = true;
+  if (view.icon) info.icon = view.icon;
+  if (view.owner) info.owner = view.owner;
   if (Object.keys(view.widths ?? {}).length) info.widths = Object.fromEntries(Object.entries(view.widths).map(([id, width]) => [propertyNameOf(schema, id), width]));
   if (view.calcs && Object.keys(view.calcs).length) info.calcs = Object.fromEntries(Object.entries(view.calcs).map(([id, calc]) => [propertyNameOf(schema, id), calc]));
   if (view.advanced?.items.length) info.advanced = groupInfo(schema, view.advanced);
@@ -265,7 +269,7 @@ const NUMERIC_AGGREGATES = ["sum", "average", "median", "min", "max"];
 function patchChart(schema: DatabaseSchema, current: ChartConfig, patch: Params): ChartConfig {
   const chart: ChartConfig = { ...current };
   for (const [key, value] of Object.entries(patch)) {
-    if (key === "x" || key === "y" || key === "series") {
+    if (key === "x" || key === "y" || key === "series" || key === "y2") {
       const ref = String(value ?? "").trim();
       if (!ref) delete chart[key];
       else if (CHART_AXES.includes(ref) && !propertyByName(schema, ref)) chart[key] = ref;
@@ -280,6 +284,15 @@ function patchChart(schema: DatabaseSchema, current: ChartConfig, patch: Params)
   }
   if ((chart.aggregate === "countValues" || chart.aggregate === "countUnique") && !chart.y) throw new Error(`aggregate "${chart.aggregate}" needs y: the property whose values are counted.`);
   if (chart.yMin !== undefined && chart.yMax !== undefined && chart.yMin >= chart.yMax) throw new Error("yMin must be below yMax.");
+  if (chart.aggregate2 && NUMERIC_AGGREGATES.includes(chart.aggregate2)) {
+    if (!chart.y2) throw new Error(`aggregate2 "${chart.aggregate2}" needs y2: a number property to measure.`);
+    const measured = propertyById(schema, chart.y2);
+    if (!measured || asValueProperty(measured).type !== "number") throw new Error(`aggregate2 "${chart.aggregate2}" needs a number property as y2; "${measured?.name ?? chart.y2}" is ${measured ? asValueProperty(measured).type : "unknown"}.`);
+  }
+  if ((chart.aggregate2 === "countValues" || chart.aggregate2 === "countUnique") && !chart.y2) throw new Error(`aggregate2 "${chart.aggregate2}" needs y2: the property whose values are counted.`);
+  if (!chart.aggregate2) delete chart.y2;
+  if (chart.labelAngle !== undefined) chart.labelAngle = [0, 30, 45, 60, 90].reduce((a, b) => (Math.abs(b - chart.labelAngle!) < Math.abs(a - chart.labelAngle!) ? b : a), 0);
+  if (chart.color !== undefined && chart.color !== "accent" && !OPTION_COLORS.includes(chart.color as OptionColor)) throw new Error(`color must be "accent" or an option colour (${OPTION_COLORS.filter((c) => c !== "default").join(", ")}).`);
   return chart;
 }
 
@@ -346,6 +359,7 @@ function patchView(schema: DatabaseSchema, view: DatabaseView, p: Params) {
   if (typeof p.rowNumbers === "boolean") view.rowNumbers = p.rowNumbers || undefined;
   if (typeof p.showFilterBar === "boolean") view.showFilterBar = p.showFilterBar ? undefined : false;
   if (typeof p.showIcons === "boolean") view.showIcons = p.showIcons ? undefined : false;
+  if (typeof p.icon === "string") view.icon = p.icon.trim() || undefined;
   if (typeof p.limit === "number") view.limit = p.limit > 0 ? p.limit : undefined;
   if (typeof p.openIn === "string") {
     if (!OPEN_MODES.some((mode) => mode.id === p.openIn)) throw new Error(`openIn is one of ${OPEN_MODES.map((mode) => mode.id).join(", ")}.`);
@@ -486,11 +500,11 @@ function uniqueProbeName(schema: DatabaseSchema): string {
 
 /** The formula reference, one compact line per function (databases.formulaFunctions). */
 const FORMULA_HELP = [
-  "Formula syntax: refer to properties as {Name} or prop(\"Name\"); strings in quotes; operators + - * / % ^, == != > < >= <=, and or not, cond ? a : b. Dates compare and subtract; results are number, text, checkbox, date or list.",
+  "Formula syntax: refer to properties as {Name} or prop(\"Name\"); strings in quotes; lists [1, 2]; operators + - * / % ^, == != > < >= <=, and or not, cond ? a : b; x.fn(args) is fn(x, args). Formulas may span lines and use // or /* */ comments. In map/filter/find/some/every/count/sort `current` is the item and `index` its position; reduce(list, acc + current, 0) folds. Dates compare and subtract; results are number, text (style() and link() give formatted text), checkbox, date (dateRange() for a range) or list.",
   ...FORMULA_FUNCTIONS.map((item) => `${item.signature} — ${item.description} e.g. ${item.example}${item.result ? ` → ${item.result}` : ""}`),
 ].join("\n");
 
-type NewProperty = { name: string; type: PropertyType; options?: string[]; formula?: string; format?: string; dateFormat?: string };
+type NewProperty = { name: string; type: PropertyType; options?: string[]; formula?: string; format?: string; dateFormat?: string; display?: unknown };
 
 /** A new database schema from the friendly create/embed params. Formulas may use any property in the list. */
 function newSchema(properties: NewProperty[] | undefined, viewType: ViewType): DatabaseSchema {
@@ -629,7 +643,7 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
     const { meta, schema } = requireDatabase(p.databaseId);
     const id = resolveProperty(schema, p.property);
     if (id === TITLE_ID) {
-      if (p.type || p.options || p.format || p.formula !== undefined || p.dateFormat !== undefined) throw new Error("The title column is always text; only its name can change (use name or databases.rename).");
+      if (p.type || p.options || p.format || p.formula !== undefined || p.dateFormat !== undefined || p.display !== undefined) throw new Error("The title column is always text; only its name can change (use name or databases.rename).");
       if (typeof p.name === "string" && p.name.trim()) renameTitle(schema, p.name.trim().slice(0, 100));
       await saveSchema(meta.id, schema);
       return schemaInfo(meta, schema);
@@ -654,13 +668,16 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
       const sourceRows = computed?.rows ?? rows;
       next = { ...next, type, options: type === "formula" ? undefined : optionsForTypeChange(source, type, sourceRows), ...(type === "number" ? { format: from.format ?? "number" } : {}) };
       if (!hasOptions(type)) delete next.options;
-      if (type !== "number" && type !== "formula") delete next.format;
+      if (type !== "number" && type !== "formula") {
+        delete next.format;
+        delete next.display;
+      }
       if (type !== "formula") {
         delete next.formula;
         delete next.dateFormat;
       }
     }
-    applyPropertyExtras(schema, next, { formula: p.formula, format: p.format, dateFormat: p.dateFormat });
+    applyPropertyExtras(schema, next, { formula: p.formula, format: p.format, dateFormat: p.dateFormat, display: p.display });
     let removedOptions: Set<string> | undefined;
     if (Array.isArray(p.options)) {
       if (!hasOptions(next.type)) throw new Error(`"${next.name}" is ${next.type}; only select, multi-select and status have options.`);
@@ -722,6 +739,12 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
     const self = p.property ? schema.properties.find((item) => item.id === resolveProperty(schema, p.property)) : undefined;
     const probe: Property = self ? { ...self, type: "formula" } : { id: "__check", name: uniqueProbeName(schema), type: "formula" };
     const trial: DatabaseSchema = { ...schema, properties: [...schema.properties.filter((item) => item.id !== probe.id), { ...probe, formula: p.formula }] };
+    const names = [propertyById(schema, TITLE_ID)?.name ?? "Name", ...schema.properties.filter((item) => item.id !== probe.id).map((item) => item.name)];
+    const problem = checkFormulaSource(p.formula, names);
+    if (problem) {
+      const at = formulaPosition(p.formula, problem.start);
+      return { ok: false, error: `${problem.message} (line ${at.line}, column ${at.column})` };
+    }
     try {
       applyPropertyExtras(trial, probe, { formula: p.formula });
     } catch (error) {
@@ -760,6 +783,10 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
           chart.aggregate = "count";
         }
         if (chart.series === id) delete chart.series;
+        if (chart.y2 === id) {
+          delete chart.y2;
+          delete chart.aggregate2;
+        }
         view.chart = chart;
       }
     }
@@ -777,11 +804,19 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
       const row = requireMeta(rowId, "Row");
       const parent = row.parentId ? findMeta(row.parentId) : undefined;
       if (!parent || parent.kind !== "database") throw new Error(`"${displayTitle(rowId)}" is not a database row.`);
+      assertUnlocked(parent, parseSchema(parent.data));
       if (row.deletedAt) continue;
       await store().trashPage(rowId, { quiet: true });
       deleted += 1;
     }
     return { deleted };
+  },
+  "databases.setLocked": async (p) => {
+    const { meta, schema } = requireDatabase(p.databaseId);
+    if (p.locked) schema.locked = true;
+    else delete schema.locked;
+    await saveSchema(meta.id, schema);
+    return { locked: !!schema.locked };
   },
   "databases.rename": async (p) => {
     const { meta, schema } = requireDatabase(p.databaseId);

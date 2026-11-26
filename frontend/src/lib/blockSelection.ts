@@ -320,7 +320,7 @@ function extendRange(view: EditorView, up: boolean): void {
  * browser would otherwise paint across it, and gives the selection its keys.
  */
 /** Node views that handle their own pointer input. */
-export const ISOLATED_EMBEDS = ".db-block, [data-editor-isolated]";
+export const ISOLATED_EMBEDS = ".db-block, .bn-block-content[data-content-type=\"database\"], [data-editor-isolated]";
 
 export function blockSelectionPlugin(actions: BlockSelectionActions): Plugin {
   return new Plugin({

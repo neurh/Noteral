@@ -141,9 +141,19 @@ const FILTER_OPS = ["contains", "notContains", "is", "isNot", "startsWith", "end
 const NUMBER_FORMATS = ["number", "commas", "percent", "dollar", "euro", "pound", "yen"];
 /** Formula settings shared by create / addProperty / updateProperty. */
 const formulaFields = {
-  formula: s.str("Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, \"✓\", \"\"). Validated; see databases.formulaFunctions.", { maxLength: 4000 }),
+  formula: s.str("Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style(\"Done\", \"green\"), fromNow({Due})) or formatNumber({Ratio}, \"percent\"). May span lines with // comments. Validated; see databases.formulaFunctions.", { maxLength: 4000 }),
   format: s.str("Number format (number and formula properties).", { enum: NUMBER_FORMATS }),
   dateFormat: s.str("How date results of a formula show.", { enum: ["relative", "short", "long", "iso"] }),
+  display: s.obj(
+    {
+      style: s.str("number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size.", { enum: ["number", "bar", "ring", "rating", "heat"] }),
+      color: s.str("Fill colour; default = the app accent.", { enum: ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"] }),
+      max: s.num("The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5).", { minimum: 0 }),
+      showNumber: s.bool("Bar / ring: also show the number (default true)."),
+    },
+    [],
+    "How a number (or number-formula) property shows its value. Merged over the current display on updateProperty.",
+  ),
 };
 const CALCS = ["none", "countAll", "countValues", "countUnique", "countEmpty", "countNotEmpty", "percentEmpty", "percentNotEmpty", "checked", "unchecked", "percentChecked", "sum", "average", "median", "min", "max", "range", "earliest", "latest"];
 const filterRules = s.arr(
@@ -185,12 +195,36 @@ const chartPatch = s.obj(
     yMax: s.num("Y axis maximum."),
     format: s.str("Value number format.", { enum: NUMBER_FORMATS }),
     title: s.str("Chart title.", { maxLength: 120 }),
+    zoom: s.bool("Zoom and pan (Ctrl/⌘+wheel, pinch, drag) on bar/column/line/area/scatter/grid heatmaps. Default true."),
+    zoomSlider: s.bool("Range slider under the plot. Default false."),
+    xTitle: s.str("Category axis title. \"\" clears.", { maxLength: 80 }),
+    yTitle: s.str("Value axis title. \"\" clears.", { maxLength: 80 }),
+    xLabels: s.bool("Category axis labels. Default true."),
+    yLabels: s.bool("Value axis labels. Default true."),
+    labelAngle: s.int("Category label angle in degrees: 0, 30, 45, 60 or 90; unset rotates when crowded.", { minimum: 0, maximum: 90 }),
+    logScale: s.bool("Logarithmic value axis (zero/negative values are left out)."),
+    labelContent: s.str("What data labels show. Default value (bars/lines), namePercent (pies), nameValue (funnels).", { enum: ["value", "percent", "name", "nameValue", "namePercent"] }),
+    labelPosition: s.str("Where data labels sit; unset picks per chart.", { enum: ["inside", "outside"] }),
+    colorBy: s.str("Single-series bars: a colour per category, or one colour. Unset follows option colours.", { enum: ["category", "single"] }),
+    color: s.str("Colour of single-colour charts: accent or an option colour (gray, brown, orange, yellow, green, blue, purple, pink, red).", { maxLength: 20 }),
+    curve: s.str("Line shape (line/area/radar); overrides smooth. Default straight.", { enum: ["straight", "smooth", "step"] }),
+    points: s.bool("Point markers on lines; unset shows them when there are few points."),
+    gradient: s.bool("Area fill fades out. Default true."),
+    donutWidth: s.int("Donut ring thickness, % of the radius. Default 34.", { minimum: 10, maximum: 90 }),
+    other: s.bool("With limit: merge the rest into Other (default true) or drop it."),
+    aggregate2: s.str("Combo chart (column/line/area): a second measure drawn as a line on a right axis. \"\" clears.", { enum: ["", "count", "countValues", "countUnique", "sum", "average", "median", "min", "max"] }),
+    y2: s.str("Property (name) measured by aggregate2. \"\" clears.", { maxLength: 100 }),
+    legendPosition: s.str("Legend position. Default top.", { enum: ["top", "bottom", "left", "right"] }),
+    tooltip: s.str("Tooltip: group (all series at a category, default), item (one mark) or off.", { enum: ["group", "item", "off"] }),
+    goalLabel: s.str("Goal line label. Default \"Goal\".", { maxLength: 60 }),
+    emptyText: s.str("Message shown when the view has no rows.", { maxLength: 160 }),
   },
   [],
   "Chart settings (chart views); merged into the current ones.",
 );
 const viewPatch = {
   name: s.str("View name.", { maxLength: 80 }),
+  icon: s.str("Tab icon: an emoji, or \"\" to use the layout icon.", { maxLength: 64 }),
   type: s.str("Layout.", { enum: VIEW_TYPES }),
   filters: filterRules,
   filterMode: s.str("Match all rules (and) or any (or).", { enum: ["and", "or"] }),
@@ -810,7 +844,7 @@ export const METHODS: MethodSpec[] = [
   },
   {
     name: "databases.formulaFunctions",
-    summary: "The formula language: syntax and every function, one line each.",
+    summary: "The formula language: syntax and every function (math, text, style/link formatting, dates, lists, lambdas), one line each.",
     permission: "databases.read",
     tier: "read",
     params: EMPTY,
@@ -818,7 +852,7 @@ export const METHODS: MethodSpec[] = [
   },
   {
     name: "databases.checkFormula",
-    summary: "Check a formula against a database without saving: errors, result type and sample results.",
+    summary: "Check a formula against a database without saving: errors (with line/column and did-you-mean hints), result type and sample results.",
     permission: "databases.read",
     tier: "read",
     params: s.obj({ databaseId: s.str("Database id."), formula: s.str("Formula source.", { maxLength: 4000 }), property: s.str("Formula property it is for (so it may use the others).", { maxLength: 100 }) }, ["databaseId", "formula"]),
@@ -841,6 +875,15 @@ export const METHODS: MethodSpec[] = [
     confirm: true,
     params: s.obj({ rowIds: s.arr("Row ids.", s.str("Row id."), 500) }, ["rowIds"]),
     returns: "{ deleted: number }",
+  },
+  {
+    name: "databases.setLocked",
+    summary: "Lock or unlock a database. A locked database refuses row edits, new rows and deletes (from the user, plugins and the assistant); properties and views can still change.",
+    permission: "databases.write",
+    tier: "content",
+    confirm: true,
+    params: s.obj({ databaseId: s.str("Database id."), locked: s.bool("true to lock, false to unlock.") }, ["databaseId", "locked"]),
+    returns: "{ locked: boolean }",
   },
   {
     name: "databases.rename",

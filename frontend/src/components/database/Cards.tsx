@@ -13,6 +13,7 @@ import {
   type Property,
 } from "../../lib/database";
 import { PageIcon } from "../PageIcon";
+import { CheckboxToggle } from "./CellMarks";
 import { CellDisplay } from "./CellValue";
 import { Popover } from "./Popover";
 import type { DatabaseApi } from "./useDatabase";
@@ -68,16 +69,20 @@ export function RowActions({ db, row, anchor, onClose, onRename }: { db: Databas
         <button type="button" className="db-menu-item" onClick={() => { onClose(); db.openRow(row.id); }}>
           <ArrowUpRight size={14} /> Open
         </button>
-        <button type="button" className="db-menu-item" onClick={() => { onClose(); onRename(); }}>
-          <Pencil size={14} /> Rename
-        </button>
-        <button type="button" className="db-menu-item" onClick={() => { onClose(); void db.duplicateRow(row.id); }}>
-          <Copy size={14} /> Duplicate
-        </button>
-        <div className="db-menu-sep" />
-        <button type="button" className="db-menu-item danger" onClick={() => { onClose(); void db.deleteRows([row.id]); }}>
-          <Trash2 size={14} /> Delete
-        </button>
+        {db.locked ? null : (
+          <>
+            <button type="button" className="db-menu-item" onClick={() => { onClose(); onRename(); }}>
+              <Pencil size={14} /> Rename
+            </button>
+            <button type="button" className="db-menu-item" onClick={() => { onClose(); void db.duplicateRow(row.id); }}>
+              <Copy size={14} /> Duplicate
+            </button>
+            <div className="db-menu-sep" />
+            <button type="button" className="db-menu-item danger" onClick={() => { onClose(); void db.deleteRows([row.id]); }}>
+              <Trash2 size={14} /> Delete
+            </button>
+          </>
+        )}
       </div>
     </Popover>
   );
@@ -107,7 +112,7 @@ export function RowCard({ db, view, row, hideProperty, editingTitle, onTitleDone
     <article
       className={`db-card ${dragging ? "is-dragging" : ""} ${preview ? "has-preview" : ""}`}
       data-row-id={row.id}
-      draggable={!!onDragStart && !editing}
+      draggable={!!onDragStart && !editing && !db.locked}
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("application/x-noteral-row", row.id);
@@ -152,7 +157,11 @@ export function RowCard({ db, view, row, hideProperty, editingTitle, onTitleDone
         </div>
         {properties.map((property) => (
           <div key={property.id} className={`db-card-prop type-${property.type}`} title={property.name}>
-            <CellDisplay property={property} row={row} compact />
+            {property.type === "checkbox" ? (
+              <CheckboxToggle checked={!!cellValue(row, property)} name={property.name} showName onToggle={() => db.setValue(row.id, property.id, !cellValue(row, property))} />
+            ) : (
+              <CellDisplay property={property} row={row} compact />
+            )}
           </div>
         ))}
       </div>
@@ -241,7 +250,11 @@ function ListRow({ db, view, row, editingTitle, onTitleDone }: { db: DatabaseApi
       <span className="db-list-props">
         {properties.map((property) => (
           <span key={property.id} className={`db-list-prop type-${property.type}`} title={property.name}>
-            <CellDisplay property={property} row={row} compact />
+            {property.type === "checkbox" ? (
+              <CheckboxToggle checked={!!cellValue(row, property)} name={property.name} onToggle={() => db.setValue(row.id, property.id, !cellValue(row, property))} />
+            ) : (
+              <CellDisplay property={property} row={row} compact />
+            )}
           </span>
         ))}
       </span>

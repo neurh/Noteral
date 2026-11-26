@@ -87,6 +87,66 @@ describe("chart engine", () => {
     chart.dispose();
     el.remove();
   });
+
+  it.each([
+    ["column", { x: "status" }],
+    ["bar", { x: "status", aggregate: "sum", y: "price", labelContent: "percent", labelPosition: "inside", colorBy: "single", color: "accent" }],
+    ["line", { x: "due", dateBucket: "month", curve: "step", points: false, xTitle: "Month", yTitle: "Tasks", xLabels: false, labelAngle: 45, legendPosition: "right" }],
+    ["column", { x: "status", aggregate: "sum", y: "price", logScale: true, aggregate2: "average", y2: "qty", goal: 50, goalLabel: "Budget", tooltip: "item" }],
+    ["area", { x: "due", dateBucket: "month", gradient: false, tooltip: "off", legendPosition: "left", series: "status" }],
+    ["donut", { x: "status", donutWidth: 70, labelContent: "nameValue", labelPosition: "inside", legendPosition: "bottom" }],
+    ["scatter", { x: "price", y: "qty", logScale: true, xTitle: "Price", color: "green", colorBy: "single" }],
+  ] as [ChartKind, ChartConfig][])("builds a %s option with display options", async (kind, config) => {
+    const { buildOption } = await import("./chartEngine");
+    const data = buildChartData(rows, schema, { kind, ...config }, { now: new Date(2026, 10, 25) });
+    expect(data.issue).toBeUndefined();
+    const option = buildOption(data, readChartTheme(), { width: 640, height: 320 }, false);
+    expect(option.series).toBeTruthy();
+  });
+
+  it("adds a combo line on its own axis", async () => {
+    const { buildOption } = await import("./chartEngine");
+    const data = buildChartData(rows, schema, { kind: "column", x: "status", aggregate2: "sum", y2: "price" });
+    const option = buildOption(data, readChartTheme(), { width: 640, height: 320 }, false);
+    const series = option.series as { type: string; yAxisIndex?: number }[];
+    expect(series.map((s) => s.type)).toEqual(["bar", "line"]);
+    expect(series[1].yAxisIndex).toBe(1);
+    expect(option.yAxis).toHaveLength(2);
+  });
+
+  it("zooms cartesian charts only, and only when allowed", async () => {
+    const { buildOption, zoomAxes } = await import("./chartEngine");
+    const build = (config: ChartConfig) => buildChartData(rows, schema, config, { now: new Date(2026, 10, 25) });
+    const zoomIds = (config: ChartConfig) =>
+      ((buildOption(build(config), readChartTheme(), { width: 640, height: 320 }, false).dataZoom as { id: string; type: string; zoomOnMouseWheel?: unknown }[] | undefined) ?? []).map((z) => `${z.type}:${z.id}:${z.zoomOnMouseWheel ?? ""}`);
+    expect(zoomIds({ kind: "column", x: "status" })).toEqual(["inside:zoomX:ctrl"]);
+    expect(zoomIds({ kind: "bar", x: "status" })).toEqual(["inside:zoomY:ctrl"]);
+    expect(zoomIds({ kind: "line", x: "due", zoomSlider: true })).toEqual(["inside:zoomX:ctrl", "slider:zoomSlider:"]);
+    expect(zoomIds({ kind: "scatter", x: "price", y: "qty" })).toEqual(["inside:zoomX:ctrl", "inside:zoomY:ctrl"]);
+    expect(zoomIds({ kind: "column", x: "status", zoom: false })).toEqual([]);
+    for (const kind of ["pie", "donut", "funnel", "radar"] as ChartKind[]) {
+      expect(zoomAxes(build({ kind, x: "status" }))).toBeNull();
+      expect(zoomIds({ kind, x: "status" })).toEqual([]);
+    }
+    expect(zoomAxes(build({ kind: "heatmap", x: "due" }))).toBeNull();
+  });
+
+  it("zooms in, out and back through the handle", async () => {
+    const { mountChart } = await import("./chartEngine");
+    const states: { zoomed: boolean; available: boolean }[] = [];
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const chart = mountChart(el, () => {}, (state) => states.push(state));
+    const data = buildChartData(rows, schema, { kind: "line", x: "due", dateBucket: "day" });
+    chart.update(data, readChartTheme(), { width: 640, height: 320 });
+    expect(states[states.length - 1]).toMatchObject({ available: true, zoomed: false });
+    chart.zoom(2);
+    expect(states[states.length - 1]).toMatchObject({ zoomed: true });
+    chart.resetZoom();
+    expect(states[states.length - 1]).toMatchObject({ zoomed: false });
+    chart.dispose();
+    el.remove();
+  });
 });
 
 describe("ChartView", () => {
@@ -131,6 +191,87 @@ describe("ChartView", () => {
     render(<ChartView db={{ ...api(), rows: [] } as DatabaseApi} view={viewWith({ kind: "column", x: "status" })} rows={[]} />);
     expect(screen.getByText("No rows to chart.")).toBeTruthy();
   });
+
+  it("uses a custom empty-state message", () => {
+    render(<ChartView db={{ ...api(), rows: [] } as DatabaseApi} view={viewWith({ kind: "column", x: "status", emptyText: "Nothing logged yet" })} rows={[]} />);
+    expect(screen.getByText("Nothing logged yet")).toBeTruthy();
+  });
+});
+
+describe("ChartView zoom and expand", () => {
+  const flush = () =>
+    act(async () => {
+      await import("./chartEngine");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+  it("offers zoom tools on cartesian charts and resets", async () => {
+    const { container } = render(<ChartView db={api()} view={viewWith({ kind: "line", x: "due", dateBucket: "day" })} rows={rows} inline />);
+    await flush();
+    const toolbar = screen.getByRole("toolbar", { name: "Chart tools" });
+    expect(toolbar).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reset zoom" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Zoom out" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(screen.getByRole("button", { name: "Reset zoom" })).toBeTruthy();
+    expect(toolbar.className).toContain("is-active");
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
+    expect(screen.queryByRole("button", { name: "Reset zoom" })).toBeNull();
+    // Keyboard: the plot is focusable while zoom is on.
+    const plot = container.querySelector(".db-chart-plot") as HTMLElement;
+    expect(plot.tabIndex).toBe(0);
+    fireEvent.keyDown(plot, { key: "+" });
+    expect(screen.getByRole("button", { name: "Reset zoom" })).toBeTruthy();
+    fireEvent.keyDown(plot, { key: "0" });
+    expect(screen.queryByRole("button", { name: "Reset zoom" })).toBeNull();
+  });
+
+  it("toggles box zoom", async () => {
+    render(<ChartView db={api()} view={viewWith({ kind: "column", x: "status" })} rows={rows} inline />);
+    await flush();
+    const box = screen.getByRole("button", { name: "Zoom to a range" });
+    fireEvent.click(box);
+    expect(box.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("status").textContent).toContain("Drag across the chart");
+    fireEvent.click(box);
+    expect(box.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("hints instead of hijacking a plain wheel", async () => {
+    const { container } = render(<ChartView db={api()} view={viewWith({ kind: "column", x: "status" })} rows={rows} inline />);
+    await flush();
+    const plot = container.querySelector(".db-chart-plot") as HTMLElement;
+    fireEvent.wheel(plot, { deltaY: 40, ctrlKey: true });
+    expect(screen.queryByRole("status")).toBeNull();
+    fireEvent.wheel(plot, { deltaY: 40 });
+    expect(screen.getByRole("status").textContent).toMatch(/scroll to zoom/);
+  });
+
+  it("has no zoom on pies but can expand them; Esc closes", async () => {
+    render(<ChartView db={api()} view={viewWith({ kind: "pie", x: "status" })} rows={rows} inline />);
+    await flush();
+    expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand chart" }));
+    await flush();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector(".db-chart-canvas svg")).not.toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("zooms inside the expanded chart too", async () => {
+    render(<ChartView db={api()} view={viewWith({ kind: "column", x: "due", dateBucket: "day", zoomSlider: true })} rows={rows} inline />);
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Expand chart" }));
+    await flush();
+    const dialog = screen.getByRole("dialog");
+    const zoomIn = dialog.querySelector("button[aria-label='Zoom in']") as HTMLButtonElement;
+    expect(zoomIn).not.toBeNull();
+    fireEvent.click(zoomIn);
+    expect(dialog.querySelector("button[aria-label='Reset zoom']")).not.toBeNull();
+    // No nested expand inside the dialog.
+    expect(dialog.querySelector("button[aria-label='Expand chart']")).toBeNull();
+  });
 });
 
 describe("ChartSettings", () => {
@@ -154,5 +295,18 @@ describe("ChartSettings", () => {
     const draft: DatabaseSchema = { ...schema, views: [structuredClone(view)] };
     (updateSchema.mock.calls[0][0] as (s: DatabaseSchema) => void)(draft);
     expect(draft.views[0].chart?.grid).toBe(false);
+  });
+
+  it("has no title field and round-trips zoom off", () => {
+    const updateSchema = vi.fn();
+    const view = viewWith({ kind: "column", x: "status" });
+    render(<ChartSettings db={api(updateSchema)} view={view} />);
+    expect(screen.queryByLabelText("Chart title")).toBeNull();
+    const zoomSwitch = screen.queryByRole("switch", { name: /zoom/i });
+    if (!zoomSwitch) fireEvent.click(screen.getByRole("button", { name: /^Zoom/ }));
+    fireEvent.click(screen.getAllByRole("switch", { name: /zoom/i })[0]);
+    const draft: DatabaseSchema = { ...schema, views: [structuredClone(view)] };
+    (updateSchema.mock.calls[updateSchema.mock.calls.length - 1][0] as (s: DatabaseSchema) => void)(draft);
+    expect(draft.views[0].chart?.zoom).toBe(false);
   });
 });

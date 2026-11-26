@@ -20,6 +20,15 @@ describe("markdownEmbeds", () => {
     expect(embedsToMarkdown(blocks, toMd, titleOf)).toBe("Intro\n\n<!-- database:db_1 Tasks -->\n\nOutro\n\n<!-- block:b2 kanban -->");
   });
 
+  it("keeps a multi-source database block by id so its views survive", () => {
+    const views = JSON.stringify([{ db: "db_1", view: "v1" }, { db: "db_2", view: "v2" }]);
+    const block: EmbedBlock = { id: "b9", type: "database", props: { databaseId: "db_1", views }, children: [] };
+    const markdown = embedsToMarkdown([para("Intro"), block], toMd, titleOf);
+    expect(markdown).toBe("Intro\n\n<!-- block:b9 database Tasks -->");
+    const back = markdownToEmbedBlocks(markdown, parse, { lookup: (id) => (id === "b9" ? block : undefined) });
+    expect(back[1]).toMatchObject({ type: "database", props: { databaseId: "db_1", views } });
+  });
+
   it("keeps titles comment-safe", () => {
     expect(databaseMarker("db_2", titles.db_2)).toBe("<!-- database:db_2 Reading – list -->");
   });

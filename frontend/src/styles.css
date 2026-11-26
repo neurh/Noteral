@@ -1311,6 +1311,11 @@ body.is-block-marquee .bn-side-menu { visibility: hidden; }
 .picker-item { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: transparent; color: var(--text-soft); text-align: left; padding: 7px; border-radius: 5px; font-size: 12.5px; }
 .picker-item:hover, .picker-item.active { background: var(--accent-soft); color: var(--text); }
 .picker-item.missing { color: var(--text-muted); }
+.picker-item-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.picker-item-hint { color: var(--text-muted); font-size: 11.5px; }
+.picker-create .tree-icon { color: var(--accent); }
+.picker-section { padding: 8px 7px 3px; color: var(--text-faint); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+.picker-item .picker-enter { margin-left: auto; flex: 0 0 auto; }
 .picker-enter { margin-left: auto; opacity: 0.5; }
 
 /* Page appearance pickers */

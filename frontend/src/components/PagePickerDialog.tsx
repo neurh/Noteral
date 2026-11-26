@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { CornerDownLeft, Search } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { CornerDownLeft, Plus, Search } from "lucide-react";
 import { useAppStore } from "../store";
 import type { PageMeta } from "../lib/api";
 import { Modal } from "./Modal";
@@ -14,10 +14,25 @@ interface PagePickerProps {
   /** Limits which items can be picked, e.g. only databases. */
   filter?: (page: PageMeta) => boolean;
   emptyText?: string;
+  subtitle?: string;
+  /** Adds a first row that creates something new instead of picking. */
+  create?: { label: string; hint?: string; icon?: ReactNode; onCreate: () => void };
+  placeholder?: string;
 }
 
-export function PagePickerDialog({ open, onClose, onPick, title = "Link to a page", filter, emptyText }: PagePickerProps) {
+export function PagePickerDialog({
+  open,
+  onClose,
+  onPick,
+  title = "Link to a page",
+  filter,
+  emptyText,
+  subtitle = "Insert a stable link that survives page renames.",
+  create,
+  placeholder = "Find a page…",
+}: PagePickerProps) {
   const pages = useAppStore((state) => state.pages);
+  const titleById = useMemo(() => new Map(pages.map((page) => [page.id, page.title])), [pages]);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const filtered = useMemo(() => {
@@ -35,17 +50,31 @@ export function PagePickerDialog({ open, onClose, onPick, title = "Link to a pag
     }
   }, [open]);
 
+  // With a create row, index 0 is "create" and pages start at 1.
+  const offset = create ? 1 : 0;
+  const total = filtered.length + offset;
+
   useEffect(() => {
-    if (index >= filtered.length) setIndex(Math.max(0, filtered.length - 1));
-  }, [filtered.length, index]);
+    if (index >= total) setIndex(Math.max(0, total - 1));
+  }, [total, index]);
 
   function pick(pageId: string) {
     onPick(pageId);
     onClose();
   }
 
+  function choose(row: number) {
+    if (create && row === 0) {
+      create.onCreate();
+      onClose();
+      return;
+    }
+    const page = filtered[row - offset];
+    if (page) pick(page.id);
+  }
+
   return (
-    <Modal open={open} title={title} subtitle="Insert a stable link that survives page renames." onClose={onClose} width="small">
+    <Modal open={open} title={title} subtitle={subtitle} onClose={onClose} width="small">
       <div className="picker-search">
         <Search size={15} aria-hidden="true" />
         <input
@@ -54,26 +83,46 @@ export function PagePickerDialog({ open, onClose, onPick, title = "Link to a pag
             setQuery(event.target.value);
             setIndex(0);
           }}
-          placeholder="Find a page…"
-          aria-label="Find a page"
+          placeholder={placeholder}
+          aria-label={placeholder.replace(/…$/, "")}
           autoFocus
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") {
               event.preventDefault();
-              setIndex((current) => Math.min(filtered.length - 1, current + 1));
+              setIndex((current) => Math.min(total - 1, current + 1));
             } else if (event.key === "ArrowUp") {
               event.preventDefault();
               setIndex((current) => Math.max(0, current - 1));
-            } else if (event.key === "Enter" && filtered[index]) {
+            } else if (event.key === "Enter" && index < total) {
               event.preventDefault();
-              pick(filtered[index].id);
+              choose(index);
             }
           }}
         />
       </div>
       <div className="picker-list" role="listbox" aria-label="Pages">
-        {filtered.length === 0 ? <div className="empty-hint small"><p>{emptyText ?? "No pages match."}</p></div> : null}
-        {filtered.map((page, itemIndex) => (
+        {create ? (
+          <button
+            type="button"
+            role="option"
+            aria-selected={index === 0}
+            className={`picker-item picker-create ${index === 0 ? "active" : ""}`}
+            onMouseEnter={() => setIndex(0)}
+            onClick={() => choose(0)}
+          >
+            <span className="tree-icon" aria-hidden="true">{create.icon ?? <Plus size={14} />}</span>
+            <span className="picker-item-text">
+              <span>{create.label}</span>
+              {create.hint ? <span className="picker-item-hint">{create.hint}</span> : null}
+            </span>
+            {index === 0 ? <CornerDownLeft size={13} className="picker-enter" /> : null}
+          </button>
+        ) : null}
+        {create && filtered.length ? <div className="picker-section">Existing</div> : null}
+        {filtered.length === 0 && !(create && !query.trim()) ? <div className="empty-hint small"><p>{emptyText ?? "No pages match."}</p></div> : null}
+        {filtered.map((page, pageIndex) => {
+          const itemIndex = pageIndex + offset;
+          return (
           <button
             key={page.id}
             type="button"
@@ -84,10 +133,21 @@ export function PagePickerDialog({ open, onClose, onPick, title = "Link to a pag
             onClick={() => pick(page.id)}
           >
             <span className="tree-icon" aria-hidden="true"><PageIcon value={page.icon} size={14} fallback={<KindIcon page={page} size={14} />} /></span>
-            <span>{page.title}</span>
+            {(() => {
+              const parent = page.parentId ? titleById.get(page.parentId) : undefined;
+              return parent !== undefined ? (
+                <span className="picker-item-text">
+                  <span>{page.title || "Untitled"}</span>
+                  <span className="picker-item-hint">in {parent || "Untitled"}</span>
+                </span>
+              ) : (
+                <span>{page.title}</span>
+              );
+            })()}
             {itemIndex === index ? <CornerDownLeft size={13} className="picker-enter" /> : null}
           </button>
-        ))}
+          );
+        })}
       </div>
     </Modal>
   );

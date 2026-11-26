@@ -1,11 +1,12 @@
-import { ArrowDownRight, ArrowRight, ArrowUpRight, ChartColumn, FileText, Settings2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, ChartColumn, FileText, Maximize2, RotateCcw, ScanSearch, Settings2, ZoomIn, ZoomOut } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { buildChartData, chartConfigOf, formatChartValue, type ChartData, type ChartIssue } from "../../lib/chartData";
 import type { DatabaseRow, DatabaseView } from "../../lib/database";
 import { useAppStore } from "../../store";
 import "../../styles/database-chart.css";
+import { Modal } from "../Modal";
 import { PageIcon } from "../PageIcon";
-import type { ChartHandle, ChartPick } from "./chartEngine";
+import type { ChartHandle, ChartPick, ZoomState } from "./chartEngine";
 import { readChartTheme, type ChartTheme } from "./chartTheme";
 import { Popover } from "./Popover";
 import type { DatabaseApi } from "./useDatabase";
@@ -28,6 +29,9 @@ const loadEngine = () => (engine ??= import("./chartEngine"));
 const INLINE_HEIGHT = 320;
 const MIN_HEIGHT = 280;
 const MAX_PICK_ROWS = 200;
+const HEAD_HEIGHT = 28;
+const NO_ZOOM: ZoomState = { available: false, zoomed: false, boxing: false };
+const MOD_KEY = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl";
 
 const ISSUES: Record<ChartIssue, { text: string; action?: string }> = {
   noRows: { text: "No rows to chart." },
@@ -67,6 +71,12 @@ function usePaneHeight(ref: React.RefObject<HTMLElement | null>, enabled: boolea
   return height;
 }
 
+/** Plot height of the expanded chart: most of the window. */
+function expandedHeight(): number {
+  const h = typeof window !== "undefined" ? window.innerHeight : 800;
+  return Math.max(300, Math.min(820, Math.round(h * 0.86) - 150));
+}
+
 export function ChartView({ db, view, rows, inline = false, onOpenSettings }: ChartViewProps) {
   const config = useMemo(() => chartConfigOf(view, db.schema), [view, db.schema]);
   const data = useMemo(() => buildChartData(rows, db.schema, config), [rows, db.schema, config]);
@@ -74,52 +84,63 @@ export function ChartView({ db, view, rows, inline = false, onOpenSettings }: Ch
   const rootRef = useRef<HTMLDivElement>(null);
   const paneHeight = usePaneHeight(rootRef, !inline);
   const height = inline ? Math.max(180, config.height ?? INLINE_HEIGHT) : paneHeight ?? 420;
+  const [expanded, setExpanded] = useState(false);
 
   const issue = data.issue;
   const kpi = data.kind === "number" && !issue;
-  const head = !issue && !kpi ? <ChartHead data={data} /> : null;
+  const title = config.title?.trim() || view.name || "Chart";
 
   return (
     <div ref={rootRef} className={`db-chart ${inline ? "is-inline" : ""}`} data-kind={data.kind}>
       {issue ? (
-        <ChartEmpty issue={issue} onOpenSettings={onOpenSettings} filtered={issue === "noRows" && db.rows.length > 0} />
+        <ChartEmpty issue={issue} onOpenSettings={onOpenSettings} filtered={issue === "noRows" && db.rows.length > 0} custom={config.emptyText} />
       ) : kpi ? (
         <KpiTile data={data} />
       ) : (
         <>
-          {head}
-          <ChartPlot db={db} rows={rows} data={data} height={height - 28} themeKey={resolvedTheme} />
+          <ChartPlot db={db} rows={rows} data={data} height={height - HEAD_HEIGHT} themeKey={resolvedTheme} head={<ChartHead data={data} />} onExpand={() => setExpanded(true)} />
+          <Modal open={expanded} title={title} subtitle={chartLabel(data)} width="large" className="db-chart-modal" bodyClassName="db-chart-modal-body" onClose={() => setExpanded(false)}>
+            <div className="db-chart is-expanded" data-kind={data.kind}>
+              <ChartPlot db={db} rows={rows} data={data} height={expandedHeight()} themeKey={resolvedTheme} head={<ChartHead data={data} bare />} expanded />
+            </div>
+          </Modal>
         </>
       )}
     </div>
   );
 }
 
-function ChartHead({ data }: { data: ChartData }) {
+function chartLabel(data: ChartData): string {
   const series = data.series.length;
+  if (data.kind === "scatter") return `${data.yProperty?.name ?? ""} by ${data.xProperty?.name ?? ""}`;
+  return `${data.measureLabel} by ${data.xProperty?.name ?? ""}${data.seriesProperty && series > 1 ? ` and ${data.seriesProperty.name}` : ""}${data.secondary ? ` · ${data.secondary.label}` : ""}`;
+}
+
+function ChartHead({ data, bare = false }: { data: ChartData; bare?: boolean }) {
   const showTotal = data.kind !== "scatter" && (data.aggregate === "count" || data.aggregate === "sum" || data.aggregate === "countValues" || data.aggregate === "countUnique");
-  const label = data.kind === "scatter" ? `${data.yProperty?.name ?? ""} by ${data.xProperty?.name ?? ""}` : `${data.measureLabel} by ${data.xProperty?.name ?? ""}${data.seriesProperty && series > 1 ? ` and ${data.seriesProperty.name}` : ""}`;
-  const note = data.truncated ? (data.kind === "scatter" ? "Showing the first points" : "Smaller groups merged into Other") : data.config.cumulative ? "Running total" : data.normalized ? "Share of each group" : "";
+  const merged = data.config.other === false ? "Showing the top groups" : "Smaller groups merged into Other";
+  const note = data.truncated ? (data.kind === "scatter" ? "Showing the first points" : merged) : data.config.cumulative ? "Running total" : data.normalized ? "Share of each group" : "";
   return (
-    <div className="db-chart-head">
-      {data.config.title ? <strong>{data.config.title}</strong> : null}
-      <span>{label}</span>
+    <>
+      {!bare && data.config.title ? <strong>{data.config.title}</strong> : null}
+      {!bare ? <span>{chartLabel(data)}</span> : null}
       {data.kind === "scatter" ? (
-        <span>· {data.points.length.toLocaleString()} rows</span>
+        <span>{bare ? "" : "· "}{data.points.length.toLocaleString()} rows</span>
       ) : showTotal && data.total !== null ? (
-        <span>· {formatChartValue(data.total, data.aggregate === "sum" ? data.valueFormat : "number")} total</span>
+        <span>{bare ? "" : "· "}{formatChartValue(data.total, data.aggregate === "sum" ? data.valueFormat : "number")} total</span>
       ) : null}
       {note ? <span className="db-chart-note">{note}</span> : null}
-    </div>
+    </>
   );
 }
 
-function ChartEmpty({ issue, onOpenSettings, filtered }: { issue: ChartIssue; onOpenSettings?: (anchor?: HTMLElement) => void; filtered: boolean }) {
+function ChartEmpty({ issue, onOpenSettings, filtered, custom }: { issue: ChartIssue; onOpenSettings?: (anchor?: HTMLElement) => void; filtered: boolean; custom?: string }) {
   const info = ISSUES[issue];
+  const text = issue === "noRows" && custom?.trim() ? custom.trim() : filtered ? "No rows match this view’s filters." : info.text;
   return (
     <div className="db-empty-state db-chart-empty">
       <ChartColumn size={22} strokeWidth={1.6} />
-      <p>{filtered ? "No rows match this view’s filters." : info.text}</p>
+      <p>{text}</p>
       {info.action && onOpenSettings ? (
         <button type="button" className="db-ghost" onClick={(event) => onOpenSettings(event.currentTarget)}>
           <Settings2 size={14} />
@@ -130,7 +151,21 @@ function ChartEmpty({ issue, onOpenSettings, filtered }: { issue: ChartIssue; on
   );
 }
 
-function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows: DatabaseRow[]; data: ChartData; height: number; themeKey: string }) {
+interface ChartPlotProps {
+  db: DatabaseApi;
+  rows: DatabaseRow[];
+  data: ChartData;
+  height: number;
+  themeKey: string;
+  /** Text of the head row; the zoom tools sit at its end. */
+  head?: ReactNode;
+  /** Shows the Expand button. */
+  onExpand?: () => void;
+  /** The big copy in the modal: the wheel zooms freely, tools stay visible. */
+  expanded?: boolean;
+}
+
+function ChartPlot({ db, rows, data, height, themeKey, head, onExpand, expanded = false }: ChartPlotProps) {
   const plotRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const handle = useRef<ChartHandle | null>(null);
@@ -138,6 +173,11 @@ function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows
   const [failed, setFailed] = useState(false);
   const [pick, setPick] = useState<ChartPick | null>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const [zoom, setZoom] = useState<ZoomState>(NO_ZOOM);
+  // After a click into the chart the plain wheel zooms too, until the pointer leaves.
+  const [engaged, setEngaged] = useState(false);
+  const [hint, setHint] = useState(false);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSize = useRef<{ width: number; height: number } | null>(null);
   // Re-read tokens whenever the theme flips (custom accents too, through the store).
   const theme = useMemo<ChartTheme>(() => readChartTheme(plotRef.current), [themeKey, ready]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -167,10 +207,14 @@ function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows
     loadEngine()
       .then((mod) => {
         if (cancelled || !canvasRef.current) return;
-        handle.current = mod.mountChart(canvasRef.current, (next) => {
-          if (next.rowId) openRowRef.current(next.rowId);
-          else if (next.rowIds.length) setPick(next);
-        });
+        handle.current = mod.mountChart(
+          canvasRef.current,
+          (next) => {
+            if (next.rowId) openRowRef.current(next.rowId);
+            else if (next.rowIds.length) setPick(next);
+          },
+          setZoom,
+        );
         // A fresh instance has drawn nothing yet; make the draw effect run.
         lastSize.current = null;
         setReady(true);
@@ -181,6 +225,7 @@ function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows
       handle.current?.dispose();
       handle.current = null;
       setReady(false);
+      setZoom(NO_ZOOM);
     };
   }, []);
 
@@ -200,19 +245,134 @@ function ChartPlot({ db, rows, data, height, themeKey }: { db: DatabaseApi; rows
   useEffect(() => {
     if (ready) handle.current?.quiet(!!pick);
   }, [ready, pick]);
+  // The plain wheel zooms in the expanded view, or once the chart was clicked into.
+  const freeWheel = expanded || engaged;
+  useEffect(() => {
+    if (ready) handle.current?.setFreeWheel(freeWheel);
+  }, [ready, freeWheel]);
+  useEffect(() => () => {
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+  }, []);
+
+  const onWheel = useCallback(
+    (event: React.WheelEvent) => {
+      if (!zoom.available || freeWheel || event.ctrlKey || event.metaKey || Math.abs(event.deltaY) < 1) return;
+      setHint(true);
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+      hintTimer.current = setTimeout(() => setHint(false), 1400);
+    },
+    [zoom.available, freeWheel],
+  );
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    const chart = handle.current;
+    if (!chart || !zoom.available || event.target !== event.currentTarget) return;
+    if (event.key === "+" || event.key === "=") chart.zoom(1.5);
+    else if (event.key === "-") chart.zoom(1 / 1.5);
+    else if (event.key === "0") chart.resetZoom();
+    else if (event.key === "Escape" && zoom.boxing) chart.boxZoom(false);
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const tools = ready ? (
+    <ChartTools
+      zoom={zoom}
+      pinned={expanded}
+      onZoomIn={() => handle.current?.zoom(1.5)}
+      onZoomOut={() => handle.current?.zoom(1 / 1.5)}
+      onReset={() => handle.current?.resetZoom()}
+      onBox={() => handle.current?.boxZoom(!zoom.boxing)}
+      onExpand={onExpand}
+    />
+  ) : null;
 
   return (
-    <div ref={plotRef} className="db-chart-plot" style={{ height }}>
-      <div ref={canvasRef} className="db-chart-canvas" role="img" aria-label={`${data.measureLabel} by ${data.xProperty?.name ?? "category"}`} />
-      {!ready && !failed ? (
-        <div className="db-chart-loading" aria-hidden>
-          {[0.45, 0.8, 0.6, 1, 0.7, 0.35].map((h, i) => (
-            <span key={i} style={{ height: `${h * 100}%` }} />
-          ))}
+    <>
+      {head !== undefined || tools ? (
+        <div className="db-chart-head">
+          {head}
+          {tools}
         </div>
       ) : null}
-      {failed ? <div className="db-empty-state db-chart-empty"><p>The chart could not be drawn.</p></div> : null}
-      {pick ? <PickPopover pick={pick} rows={rows} data={data} onOpen={openRow} onClose={() => setPick(null)} /> : null}
+      <div
+        ref={plotRef}
+        className={`db-chart-plot ${zoom.boxing ? "is-boxing" : ""}`}
+        style={{ height }}
+        tabIndex={zoom.available ? 0 : undefined}
+        aria-keyshortcuts={zoom.available ? "+ - 0" : undefined}
+        onPointerDown={() => zoom.available && setEngaged(true)}
+        onPointerLeave={() => setEngaged(false)}
+        onBlur={(event) => !event.currentTarget.contains(event.relatedTarget as Node | null) && setEngaged(false)}
+        onWheel={onWheel}
+        onKeyDown={onKeyDown}
+      >
+        <div ref={canvasRef} className="db-chart-canvas" role="img" aria-label={`${data.measureLabel} by ${data.xProperty?.name ?? "category"}`} />
+        {!ready && !failed ? (
+          <div className="db-chart-loading" aria-hidden>
+            {[0.45, 0.8, 0.6, 1, 0.7, 0.35].map((h, i) => (
+              <span key={i} style={{ height: `${h * 100}%` }} />
+            ))}
+          </div>
+        ) : null}
+        {failed ? <div className="db-empty-state db-chart-empty"><p>The chart could not be drawn.</p></div> : null}
+        {hint || zoom.boxing ? (
+          <div className="db-chart-zoom-hint" role="status">
+            {zoom.boxing ? "Drag across the chart to zoom into that range · Esc cancels" : `Hold ${MOD_KEY} and scroll to zoom, or click the chart first`}
+          </div>
+        ) : null}
+        {pick ? <PickPopover pick={pick} rows={rows} data={data} onOpen={openRow} onClose={() => setPick(null)} /> : null}
+      </div>
+    </>
+  );
+}
+
+function ChartTools({
+  zoom,
+  pinned,
+  onZoomIn,
+  onZoomOut,
+  onReset,
+  onBox,
+  onExpand,
+}: {
+  zoom: ZoomState;
+  pinned: boolean;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onReset: () => void;
+  onBox: () => void;
+  onExpand?: () => void;
+}) {
+  if (!zoom.available && !onExpand) return null;
+  const active = pinned || zoom.zoomed || zoom.boxing;
+  return (
+    <div className={`db-chart-tools ${active ? "is-active" : ""}`} role="toolbar" aria-label="Chart tools">
+      {zoom.available ? (
+        <>
+          <button type="button" className="db-chart-tool" onClick={onZoomIn} aria-label="Zoom in" title={`Zoom in (${MOD_KEY}+scroll)`}>
+            <ZoomIn size={14} />
+          </button>
+          <button type="button" className="db-chart-tool" onClick={onZoomOut} aria-label="Zoom out" title="Zoom out" disabled={!zoom.zoomed}>
+            <ZoomOut size={14} />
+          </button>
+          <button type="button" className={`db-chart-tool ${zoom.boxing ? "is-on" : ""}`} onClick={onBox} aria-label="Zoom to a range" aria-pressed={zoom.boxing} title="Drag across a range to zoom into it">
+            <ScanSearch size={14} />
+          </button>
+          {zoom.zoomed ? (
+            <button type="button" className="db-chart-tool is-text" onClick={onReset} aria-label="Reset zoom" title="Show everything">
+              <RotateCcw size={13} />
+              <span>Reset</span>
+            </button>
+          ) : null}
+        </>
+      ) : null}
+      {onExpand ? (
+        <button type="button" className="db-chart-tool" onClick={onExpand} aria-label="Expand chart" title="Expand">
+          <Maximize2 size={14} />
+        </button>
+      ) : null}
     </div>
   );
 }

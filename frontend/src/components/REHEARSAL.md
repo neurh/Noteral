@@ -436,3 +436,46 @@ Real app (production server build, :8124, data /tmp/noteral-r6) with a "Q4 plann
 - No page errors and no horizontal overflow in any step.
 
 Not checked: stageshow `film.mjs --gate`. It only films `.ss-stage` / `.ss-fit` stages ("no visible stages in .page-pane"), so it can't film app screens. Also not checked: calendar and board with 100+ rows, and RTL.
+
+## Round 7 — databases: one Database block, multi-source tabs, formula editor + Ask AI, chart zoom, number display (2026-11-26)
+Real app (production server :8124, data /tmp/noteral-r6, mock provider :9911). Drivers in /tmp/ai-rh/r7: settings.mjs, multi.mjs, chart.mjs, zoom.mjs, fx.mjs, cells.mjs, rating.mjs. Run at 1366 and 390, light and dark where colour matters, and checked at 1:1.
+
+- **View settings**: the root shows the icon button + name, then Layout, Source, Properties, Filter, Sort, Group, the display switches (wrap, row numbers, page icons, load limit, filter bar), Open pages in, Duplicate and Delete. Layout is now only the layout grid, and charts get a "Chart options ›" page. Scrolling with the wheel outside the popover leaves the page in place (scrollTop 165 → 165 → 165). The icon button opens the existing icon picker, whose subtitle now says what a view icon is for.
+- **One Database slash item**: "Add a database" offers New database or an existing one. Each existing one is labelled "in <parent>", because two "Projects" looked identical. Picking an existing database creates a table view owned by the block.
+- **Multi-source (bug fixed)**: "+ → From another source" did nothing for a database the block didn't show yet, because `schemas` only held the block's current sources. DatabaseView now reads any database's schema from the store (`schemaOf`). After the fix the new tab is added and a following "+ Board" uses that source (board columns Not started 4 / In progress 5 / Done 3). Settings → Source moves a tab.
+- **Tabs**: dragging reorders them in the row ([Table, Board] → [Board, Table]) and in the "+N" menu at 390 ([Table, Budget…] → [Budget…, Table]). The menu ends with "Add a view". The right-click menu has Change icon.
+- **Block selection**: clicks in the margin of a database block no longer show the blue node overlay.
+- **Chart**: the toolbar shows Zoom in / Zoom out / Zoom to a range / Expand, plus Reset when zoomed. Ctrl+wheel zooms the bars and a plain wheel scrolls the page. Dragging pans without opening rows. Expand opens a large dialog that Esc closes. The Chart options page has Chart type, Data, Style, then collapsible Colors, Labels & numbers, Axes, Legend & tooltip, Goal line, Zoom and Empty state.
+- **Formula editor (2 bugs fixed)**:
+  - Fast typing garbled the source. Enter and Tab restored the caret in a rAF, so keys typed in between landed at the old caret. The caret is now restored in a layout effect.
+  - At 390 the body overflowed by 52 px and clipped the left edge, because the grid used `1fr` instead of `minmax(0,1fr)`. That is fixed too.
+  - Checked: line numbers, comments, the "Unknown function roundd. Did you mean round?" hint with line and column, styled and link output in the preview, and the reference panel with clickable examples.
+  - Ask AI against the mock: the card with the formula and note appears, Apply swaps it in and the preview shows "7 days" etc., and the error card shows when there is no provider.
+- **Table cells**:
+  - Double-clicking a resize handle fits the column (Status 190 → 108 px with pills intact).
+  - The checkbox is a filled accent tile with a tick in light and dark.
+  - Show as Bar / Ring / Rating / Heat all work.
+- **Bar and rating fixes**:
+  - Bars on currency all looked full against the default max of 100. Choosing Bar/Ring/Heat now starts "fills at" from the column's largest value rounded up (30000).
+  - The bar track can shrink to 16 px, so `$12,000.00` no longer truncates in a narrow column.
+  - Rating on a percent column filled 0.6 of one star. It now maps 100% to all the stars.
+- No page errors in any run. Not checked: box-zoom on scatter and heatmap charts, and stageshow `--gate` (it can't film app screens).
+
+## Round 8 — layout options, header selection, lock, formula modal
+
+Driven with Playwright against the server build (`/tmp/ai-rh/r8/flow.mjs <width> [dark]`, `head.mjs`, `fxshot.mjs`) at 1366 light and 390 dark.
+
+- **Layout page**: the layout grid comes first, then that layout's options: Wrap cell content, Row numbers, Show page icons, Load limit, Show filter bar and Open pages in. Back from Open pages in returns to Layout. The main settings page keeps the name and icon, the Layout/Source/Properties/Filter/Sort/Group pages, Lock database, and Duplicate/Delete.
+- **Header selection bug**: a click on a header cell selected 118 characters of the whole block, because the browser's text selection spread across the embed. The database block is now `user-select: none`, while inputs inside it stay selectable. Measured after the fix: click, double-click and drag on a header all select 0 characters.
+- **Lock**: the switch has a hint. When locked:
+  - The **New** button is replaced by a "Locked" lock button that unlocks.
+  - New row, drag handles, row checkboxes and card actions are hidden.
+  - A formula cell click opens nothing, but property menu → Edit formula still opens the editor.
+  - Writes are refused in `useDatabase`, shown as an info notice at most every 2.5 s, and refused in the SDK row handlers.
+  - Property conversion still rewrites values, via `force`.
+  - Cells no longer show a focus ring or hover tint.
+- **Formula cell**: a click shows a popover with the row title, the property, the row's result (or its error) and Edit formula. The editor then previews that row (driver: clicked "Accessibility audit", the preview showed "Accessibility audit", MATCH).
+- **Formula modal**:
+  - Order: code first, then status, then a Preview card, then Ask AI as a composer at the bottom.
+  - The Preview card has a row switcher (‹ › plus a picker with search that lists each row's result), the big result and the values of the properties the formula reads, and a footer with "Works for all N rows" or "K rows have errors" plus a Show link.
+  - At 390 the switcher hides its count. No page errors.

@@ -282,3 +282,12 @@ describe("advanced filters, grouping and formulas", () => {
     expect(ids.has("fc") || result.rowErrors.size > 0).toBe(true);
   });
 });
+
+describe("database lock", () => {
+  it("round-trips locked and drops anything that isn't true", () => {
+    const schema = parseSchema(serializeSchema({ ...parseSchema(undefined), locked: true }));
+    expect(schema.locked).toBe(true);
+    expect(parseSchema(JSON.stringify({ ...parseSchema(undefined), locked: "yes" })).locked).toBeUndefined();
+    expect(parseSchema(undefined).locked).toBeUndefined();
+  });
+});

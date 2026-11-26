@@ -99,12 +99,16 @@ export interface DatabasePropertyInfo {
   dateFormat?: string;
   /** Formula properties: why the formula fails, if it does. */
   error?: string;
+  /** Number properties (and number formulas): how the value is shown, when not as a plain number. */
+  display?: { style: "number" | "bar" | "ring" | "rating" | "heat"; color?: string; max?: number; showNumber?: boolean };
 }
 
 export interface DatabaseSchemaInfo {
   databaseId: string;
   title: string;
   titleName: string;
+  /** Present (true) when the database is locked: row writes are refused. */
+  locked?: boolean;
   properties: DatabasePropertyInfo[];
   views: { id: string; name: string; type: string }[];
 }
@@ -139,6 +143,30 @@ export interface DatabaseChartInfo {
   yMax?: number;
   format?: string;
   title?: string;
+  zoom?: boolean;
+  zoomSlider?: boolean;
+  xTitle?: string;
+  yTitle?: string;
+  xLabels?: boolean;
+  yLabels?: boolean;
+  labelAngle?: number;
+  logScale?: boolean;
+  labelContent?: "value" | "percent" | "name" | "nameValue" | "namePercent";
+  labelPosition?: "inside" | "outside";
+  colorBy?: "category" | "single";
+  color?: string;
+  curve?: "straight" | "smooth" | "step";
+  points?: boolean;
+  gradient?: boolean;
+  donutWidth?: number;
+  other?: boolean;
+  aggregate2?: "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+  /** Property name. */
+  y2?: string;
+  legendPosition?: "top" | "bottom" | "left" | "right";
+  tooltip?: "group" | "item" | "off";
+  goalLabel?: string;
+  emptyText?: string;
 }
 
 export interface DatabaseViewInfo {
@@ -169,6 +197,10 @@ export interface DatabaseViewInfo {
   /** Rows shown before "Load more". */
   limit?: number;
   showIcons?: boolean;
+  /** Tab icon (emoji or icon value). */
+  icon?: string;
+  /** Set when a database block created this view for itself: the block id. It shows only in that block. */
+  owner?: string;
   /** Where row pages open: modal (default) | side | tab | current. */
   openIn?: "modal" | "side" | "tab" | "current";
   rowNumbers?: boolean;

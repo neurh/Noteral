@@ -13,7 +13,7 @@ import {
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { Blocks, FileSymlink, ImagePlus, Link2, Move, Puzzle, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
+import { Blocks, FileSymlink, ImagePlus, Move, Puzzle, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
 import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
@@ -22,7 +22,9 @@ import { editorBridge, type BlockSummary, type InsertPosition } from "../lib/edi
 import { embedsToMarkdown, markdownToEmbedBlocks } from "../lib/markdownEmbeds";
 import { statsOfDoc, type DocNode } from "../lib/docStats";
 import { kindOf, useAppStore, type LoadedDocument } from "../store";
-import { defaultSchema, serializeSchema } from "../lib/database";
+import { defaultSchema, newView, serializeSchema } from "../lib/database";
+import { serializeRefs } from "../lib/databaseRefs";
+import { updateSchemaOf } from "./database/useDatabase";
 import { databaseBlockSpec } from "./database/DatabaseBlock";
 import { CustomNodeView, useNodeType } from "./CustomNodeView";
 import { customBlockSpec, parseBlockData, serializeBlockData } from "./CustomBlock";
@@ -198,6 +200,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   const parentIsDatabase = useAppStore((state) => kindOf(state.pages.find((item) => item.id === parentId)) === "database");
   const createItem = useAppStore((state) => state.createItem);
   const [databasePickerOpen, setDatabasePickerOpen] = useState(false);
+  const databaseCursor = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     // The pickers are split out of the initial bundle. Warm them once the page
@@ -639,32 +642,40 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       },
       {
         title: "Database",
-        subtext: "Table, board, calendar and more, inside this page",
+        subtext: "New database, or a view of an existing one",
         group: "Noteral",
-        aliases: ["database", "table", "board", "kanban", "gallery", "calendar", "list", "db"],
+        aliases: ["database", "table", "board", "kanban", "gallery", "calendar", "list", "db", "linked", "existing", "view", "embed"],
         icon: <Table2 size={16} />,
         onItemClick: () => {
-          const cursor = editor.getTextCursorPosition().block;
-          void createItem("database", page.id, { open: false, data: serializeSchema(defaultSchema()) }).then((meta) => {
-            if (meta) insertDatabaseBlock(meta.id, cursor.id);
-          });
+          databaseCursor.current = editor.getTextCursorPosition().block.id;
+          setDatabasePickerOpen(true);
         },
-      },
-      {
-        title: "Linked database",
-        subtext: "Show an existing database here",
-        group: "Noteral",
-        aliases: ["linked", "database", "view", "embed", "existing"],
-        icon: <Link2 size={16} />,
-        onItemClick: () => setDatabasePickerOpen(true),
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [editor, page.id],
   );
 
-  function insertDatabaseBlock(databaseId: string, nearBlockId?: string) {
-    const block = { type: "database", props: { databaseId } } as never;
+  function createDatabaseBlock(nearBlockId?: string) {
+    void createItem("database", page.id, { open: false, data: serializeSchema(defaultSchema()) }).then((meta) => {
+      if (meta) insertDatabaseBlock(meta.id, nearBlockId);
+    });
+  }
+
+  /** Shows an existing database through a new table view that belongs to this block. */
+  function linkDatabaseBlock(databaseId: string, nearBlockId?: string) {
+    const blockId = crypto.randomUUID();
+    let viewId = "";
+    updateSchemaOf(databaseId, (schema) => {
+      const view = { ...newView("table", schema), owner: blockId };
+      viewId = view.id;
+      schema.views.push(view);
+    });
+    insertDatabaseBlock(databaseId, nearBlockId, { id: blockId, views: serializeRefs([{ db: databaseId, view: viewId }]) });
+  }
+
+  function insertDatabaseBlock(databaseId: string, nearBlockId?: string, extra?: { id: string; views: string }) {
+    const block = { ...(extra ? { id: extra.id } : {}), type: "database", props: { databaseId, ...(extra ? { views: extra.views } : {}) } } as never;
     const target = (nearBlockId && editor.getBlock(nearBlockId)) || editor.getTextCursorPosition().block;
     const text = inlineText(target.content, titleOf);
     if (target.type === "paragraph" && !text.trim()) {
@@ -673,7 +684,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       editor.insertBlocks([block], target, "after");
     }
     // Keep a writable line after the database so typing can continue below it.
-    const inserted = editor.document.find((item) => item.type === ("database" as never) && (item.props as { databaseId?: string }).databaseId === databaseId);
+    const inserted = editor.document.find((item) => (extra ? item.id === extra.id : item.type === ("database" as never) && (item.props as { databaseId?: string }).databaseId === databaseId));
     if (inserted) {
       const index = editor.document.indexOf(inserted);
       const next = editor.document[index + 1];
@@ -875,11 +886,14 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       ) : null}
       {databasePickerOpen ? <PagePickerDialog
         open={databasePickerOpen}
-        title="Link a database"
-        emptyText="No databases yet. Use /Database to create one."
-        filter={(item) => kindOf(item) === "database"}
+        title="Add a database"
+        subtitle="Start a new database, or show an existing one in this page."
+        placeholder="Find a database…"
+        emptyText="No databases match."
+        filter={(item) => kindOf(item) === "database" && !item.deletedAt}
+        create={{ label: "New database", hint: "An empty table, stored in this page", icon: <Table2 size={14} />, onCreate: () => createDatabaseBlock(databaseCursor.current) }}
         onClose={() => setDatabasePickerOpen(false)}
-        onPick={(databaseId) => insertDatabaseBlock(databaseId)}
+        onPick={(databaseId) => linkDatabaseBlock(databaseId, databaseCursor.current)}
       /> : null}
       {pickerOpen ? <PagePickerDialog
         open={pickerOpen}

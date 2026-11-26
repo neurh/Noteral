@@ -29,7 +29,46 @@
 .db-chart-head strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .db-chart-head .db-chart-note { margin-left: auto; color: var(--text-faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.db-chart-plot { position: relative; width: 100%; min-width: 0; }
+/* Zoom + expand tools: end of the head row, shown on hover/focus or while zoomed. */
+.db-chart-tools {
+  display: inline-flex; align-items: center; gap: 1px; margin-left: auto; align-self: center;
+  padding: 1px; border-radius: var(--radius-sm); opacity: 0; transition: opacity 120ms ease-out;
+}
+.db-chart-note + .db-chart-tools { margin-left: 4px; }
+.db-chart:hover .db-chart-tools, .db-chart:focus-within .db-chart-tools, .db-chart-tools.is-active { opacity: 1; }
+@media (hover: none) { .db-chart-tools { opacity: 1; } }
+.db-chart-tool {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 22px; min-width: 22px; padding: 0 4px;
+  border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.db-chart-tool:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.db-chart-tool:focus-visible { outline: none; box-shadow: var(--focus); }
+.db-chart-tool:disabled { color: var(--text-faint); opacity: 0.55; cursor: default; }
+.db-chart-tool.is-on { background: var(--accent-softer); color: var(--accent); }
+.db-chart-tool.is-text { padding: 0 6px 0 5px; color: var(--accent); }
+.db-chart-tool.is-text:hover { color: var(--accent-deep); }
+
+.db-chart-plot { position: relative; width: 100%; min-width: 0; border-radius: var(--radius-sm); }
+.db-chart-plot:focus-visible { outline: none; box-shadow: var(--focus); }
+.db-chart-plot.is-boxing { cursor: crosshair; }
+.db-chart-zoom-hint {
+  position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 2; max-width: calc(100% - 24px);
+  padding: 4px 10px; border-radius: 999px; background: var(--bg-inverse); color: var(--bg);
+  font-size: 11.5px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: var(--shadow-sm); pointer-events: none; animation: db-chart-hint-in 120ms ease-out;
+}
+@keyframes db-chart-hint-in { from { opacity: 0; transform: translate(-50%, -3px); } }
+@media (prefers-reduced-motion: reduce) { .db-chart-zoom-hint, .db-chart-tools { animation: none; transition: none; } }
+
+/* Expanded chart (modal). */
+.modal.db-chart-modal { width: min(100%, 1120px); max-width: 1120px; max-height: min(92vh, 980px); }
+.db-chart-modal .modal-body.db-chart-modal-body { padding: 10px 19px 16px; overflow: hidden; }
+.db-chart.is-expanded { margin-top: 0; }
+.db-chart.is-expanded .db-chart-head { min-height: 26px; }
+@media (max-width: 640px) {
+  .modal-backdrop:has(.db-chart-modal) { padding: 8px; }
+  .db-chart-modal .modal-body.db-chart-modal-body { padding: 8px 10px 12px; }
+}
 .db-chart-plot > .db-chart-canvas { position: absolute; inset: 0; }
 .db-chart-loading {
   position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 6%; padding: 28px 8% 26px;
@@ -123,3 +162,46 @@
 .db-chart-palette.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); color: var(--text); }
 .db-chart-swatches { display: flex; width: 100%; height: 10px; border-radius: 3px; overflow: hidden; }
 .db-chart-swatches > i { display: block; flex: 1 1 0; min-width: 0; height: 100%; }
+
+/* Collapsible groups of advanced settings. */
+.db-chart-section { display: flex; flex-direction: column; border-top: 1px solid var(--border); margin: 3px 0 0; padding-top: 2px; }
+.db-chart-section-head {
+  display: flex; align-items: center; gap: 5px; width: 100%; min-height: 30px; padding: 0 8px 0 5px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text-soft); font: inherit; font-size: 12.5px; font-weight: 560; text-align: left; cursor: pointer;
+}
+.db-chart-section-head:hover { background: var(--bg-hover); color: var(--text); }
+.db-chart-section-head:focus-visible { outline: none; box-shadow: var(--focus); }
+.db-chart-section-head > em {
+  margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-style: normal; font-weight: 400; font-size: 11.5px; color: var(--text-faint);
+}
+.db-chart-section-chevron { flex: 0 0 auto; color: var(--text-faint); transition: transform 120ms ease-out; }
+.db-chart-section.is-open .db-chart-section-chevron { transform: rotate(90deg); }
+.db-chart-section-body { display: flex; flex-direction: column; gap: 1px; padding: 0 0 4px; }
+/* A section inside Data sits closer to its neighbours. */
+.db-chart-settings > .db-menu-label + .db-chart-section, .db-chart-settings > .db-menu-sep + .db-chart-section { border-top: 0; margin-top: 0; }
+
+.db-chart-settings .db-chart-segmented { flex: 0 1 auto; margin: 0; min-width: 0; }
+.db-chart-settings .db-chart-segmented button { flex: 0 1 auto; padding: 0 7px; height: 23px; font-size: 11.5px; white-space: nowrap; cursor: pointer; }
+.db-chart-settings .db-chart-segmented button:hover:not(.is-on) { color: var(--text); }
+.db-chart-settings .db-chart-segmented button:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.db-chart-text { width: 150px; height: 27px; min-width: 0; }
+
+.db-chart-slider { display: flex; align-items: center; gap: 6px; }
+.db-chart-slider input[type="range"] { width: 104px; accent-color: var(--accent); }
+.db-chart-slider output { width: 32px; text-align: right; font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.db-chart-colors-row { min-height: 34px; }
+.db-chart-colors { display: flex; gap: 3px; }
+.db-chart-color {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; cursor: pointer;
+}
+.db-chart-color > i { display: block; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 8%); }
+.db-chart-color.is-auto > i {
+  background: conic-gradient(var(--chart-tone-blue) 0 25%, var(--chart-tone-green) 0 50%, var(--chart-tone-yellow) 0 75%, var(--accent) 0);
+}
+.db-chart-color:hover > i { transform: scale(1.08); }
+.db-chart-color.is-active { box-shadow: 0 0 0 1.5px var(--bg-raised), 0 0 0 3px var(--text-soft); }
+.db-chart-color:focus-visible { outline: none; box-shadow: var(--focus); }

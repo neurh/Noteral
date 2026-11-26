@@ -176,9 +176,11 @@ interface IconPickerDialogProps {
   pageId: string;
   current: string;
   onPick: (value: string) => void;
+  /** What the icon is for, shown under the title. Defaults to a page. */
+  subtitle?: string;
 }
 
-export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, onPick }: IconPickerDialogProps) {
+export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, onPick, subtitle }: IconPickerDialogProps) {
   const [tab, setTab] = useState<"icons" | "emoji" | "upload">("icons");
   const [query, setQuery] = useState("");
   const [emojiGroup, setEmojiGroup] = useState<number | "all">("all");
@@ -315,7 +317,7 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
       <Modal
         open={open}
         title={title}
-        subtitle="A small mark for this page — icon, emoji, or your own image."
+        subtitle={subtitle ?? "A small mark for this page — icon, emoji, or your own image."}
         onClose={onClose}
         width="large"
         className="appearance-modal icon-modal"

@@ -134,8 +134,25 @@ export interface ChartData {
   /** Calendar heatmap: x is a date bucketed by day. */
   calendar: boolean;
   kpi?: ChartKpi;
+  /** Combo charts: a second measure per category, drawn as a line on its own axis. */
+  secondary?: ChartSecondary;
   /** Rows behind one category (and optionally one series), in row order. */
   rowsByCell(categoryKey: string, seriesKey?: string): string[];
+}
+
+export interface ChartSecondary {
+  /** "Sum of Hours". */
+  label: string;
+  aggregate: ChartAggregate;
+  property?: Property;
+  format: NumberFormat;
+  /** One value per category. */
+  values: (number | null)[];
+}
+
+/** Kinds that can carry a second measure as a line (combo charts). */
+export function supportsSecondary(kind: ChartKind | undefined): boolean {
+  return kind === "column" || kind === "line" || kind === "area" || kind === undefined;
 }
 
 const DATE_TYPES: PropertyType[] = ["date", "createdTime", "lastEdited"];
@@ -773,6 +790,9 @@ export function buildChartData(rows: DatabaseRow[], schema: DatabaseSchema, inpu
       const chronological = catKeys.filter((key) => key !== EMPTY_KEY);
       const keep = chronological.slice(-cap);
       catKeys = catKeys.includes(EMPTY_KEY) && pieLike ? [...keep, EMPTY_KEY] : keep;
+    } else if (config.other === false) {
+      // No "Other": the rest is simply left out.
+      catKeys = catKeys.slice(0, Math.max(1, cap));
     } else {
       const keep = catKeys.slice(0, Math.max(1, cap - 1));
       const rest = catKeys.slice(keep.length);
@@ -839,11 +859,14 @@ export function buildChartData(rows: DatabaseRow[], schema: DatabaseSchema, inpu
     }
   }
 
+  const secondary = supportsSecondary(kind) ? buildSecondary(rows, schema, config, catKeys, cellRows) : undefined;
+
   const rowOrder = new Map(rows.map((row, index) => [row.id, index]));
   return {
     ...base,
     kind,
     config,
+    secondary,
     xKind: xDim.kind,
     bucket: xDim.bucket,
     categories,
@@ -860,6 +883,47 @@ export function buildChartData(rows: DatabaseRow[], schema: DatabaseSchema, inpu
       return [...ids].sort((a, b) => (rowOrder.get(a) ?? 0) - (rowOrder.get(b) ?? 0));
     },
   };
+}
+
+/** The combo line: a second measure over the same categories (running total when the chart has one). */
+function buildSecondary(
+  rows: DatabaseRow[],
+  schema: DatabaseSchema,
+  config: ChartConfig,
+  catKeys: string[],
+  cellRows: (cat: string) => Set<string>,
+): ChartSecondary | undefined {
+  const agg = config.aggregate2;
+  if (!agg) return undefined;
+  const property = chartProperty(schema, config.y2);
+  const numeric = isNumericAggregate(agg);
+  if (numeric && !isNumberProperty(property)) return undefined;
+  if ((agg === "countValues" || agg === "countUnique") && !property) return undefined;
+  const value = property ? asValueProperty(property) : undefined;
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  let values = catKeys.map((cat) => {
+    const nums: number[] = [];
+    const tokens: string[][] = [];
+    let n = 0;
+    for (const id of cellRows(cat)) {
+      const row = byId.get(id);
+      if (!row) continue;
+      n++;
+      if (value && numeric) {
+        const v = numberOf(row, value);
+        if (v !== undefined) nums.push(v);
+      }
+      tokens.push(value && !numeric ? tokensOf(row, value) : []);
+    }
+    if (!n) return agg === "average" || agg === "median" || agg === "min" || agg === "max" ? null : 0;
+    return aggregate(nums, tokens, agg, n);
+  });
+  if (config.cumulative) {
+    let run = 0;
+    values = values.map((v) => (run += v ?? 0));
+  }
+  const format: NumberFormat = numeric ? (property?.format ?? "number") : "number";
+  return { label: measureLabelOf(agg, property), aggregate: agg, property, format, values };
 }
 
 function buildScatter(

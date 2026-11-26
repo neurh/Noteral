@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Copy,
   EyeOff,
+  Gauge,
   ListFilter,
   Plus,
   Sigma,
@@ -29,6 +30,7 @@ import {
   type SelectOption,
 } from "../../lib/database";
 import { FormulaEditor } from "./FormulaEditor";
+import { NumberDisplayMenu, displayName } from "./NumberDisplayMenu";
 import { OptionEditor } from "./OptionPicker";
 import { OptionChip, PropertyIcon } from "./parts";
 import { Popover } from "./Popover";
@@ -160,7 +162,7 @@ interface PropertyMenuProps {
 /** Column header / property menu: rename, type, sort, filter, hide, delete. */
 export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, onFilter }: PropertyMenuProps) {
   const [name, setName] = useState(property.name);
-  const [sub, setSub] = useState<{ kind: "type" | "format"; anchor: HTMLElement } | null>(null);
+  const [sub, setSub] = useState<{ kind: "type" | "format" | "display"; anchor: HTMLElement } | null>(null);
   // A new, empty formula opens straight into the editor.
   const [editFormula, setEditFormula] = useState(() => property.type === "formula" && !property.formula?.trim());
   const isTitle = property.id === TITLE_ID;
@@ -228,6 +230,13 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
           <button type="button" className="db-menu-item" onClick={(event) => setSub({ kind: "format", anchor: event.currentTarget })}>
             <span className="db-menu-glyph">#</span> Number format
             <span className="db-menu-value">{NUMBER_FORMATS.find((f) => f.id === (property.format ?? "number"))?.name}</span>
+            <ChevronRight size={14} className="db-menu-trail" />
+          </button>
+        ) : null}
+        {property.type === "number" || (property.type === "formula" && (property.resultType === "number" || !!property.display)) ? (
+          <button type="button" className="db-menu-item" onClick={(event) => setSub({ kind: "display", anchor: event.currentTarget })}>
+            <Gauge size={14} /> Show as
+            <span className="db-menu-value">{displayName(property)}</span>
             <ChevronRight size={14} className="db-menu-trail" />
           </button>
         ) : null}
@@ -326,6 +335,15 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
             }}
           />
         </Popover>
+      ) : null}
+      {sub?.kind === "display" ? (
+        <NumberDisplayMenu
+          property={db.schema.properties.find((item) => item.id === property.id) ?? property}
+          anchor={sub.anchor}
+          onClose={() => setSub(null)}
+          updateSchema={db.updateSchema}
+          values={db.rows.map((row) => row.values[property.id])}
+        />
       ) : null}
       {sub?.kind === "format" ? (
         <Popover anchor={sub.anchor} onClose={() => setSub(null)} placement="right-start" width={210} label="Number format">

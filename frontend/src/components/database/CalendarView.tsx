@@ -90,7 +90,7 @@ export function CalendarView({ db, view, rows, onAddRow, onOpenSettings }: Calen
     );
   }
 
-  const editable = property.type === "date";
+  const editable = property.type === "date" && !db.locked;
   const label = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   function moveTo(rowId: string, day: string) {

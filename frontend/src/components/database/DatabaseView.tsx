@@ -1,5 +1,6 @@
-import { ArrowUpRight, ChevronDown, ChevronRight, Copy, Database, Pencil, Plus, Search, SlidersHorizontal, Table2, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Database, GripVertical, Lock, Pencil, Plus, Search, SlidersHorizontal, Smile, Table2, Trash2, X } from "lucide-react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../store";
 import {
   NO_GROUP,
@@ -9,8 +10,10 @@ import {
   defaultFilter,
   groupRows,
   newView,
+  parseSchema,
   propertyById,
   seedValuesForView,
+  uid,
   valueType,
   type BoardGroup,
   type DatabaseRow,
@@ -19,6 +22,7 @@ import {
   type RowValues,
   type ViewType,
 } from "../../lib/database";
+import { adaptViewTo, moveItem, refsOf, reorderViews, resolveEntries, type ViewRef } from "../../lib/databaseRefs";
 import { openRowIn } from "../../lib/rowPeek";
 import { PageIcon } from "../PageIcon";
 import { AdvancedFilter } from "./AdvancedFilter";
@@ -28,12 +32,16 @@ import { GalleryView, ListView } from "./Cards";
 import { ChartView } from "./ChartView";
 import { CustomView } from "./CustomView";
 import { FilterBar, FilterIcon, PropertyPicker, SortEditor, SortIcon, starterGroup } from "./FilterSort";
-import { OptionChip, ViewIcon } from "./parts";
+import { consumeDragClick, startReorder } from "./dragReorder";
+import { OptionChip, ViewGlyph, ViewIcon } from "./parts";
 import { Popover } from "./Popover";
 import { TableView } from "./TableView";
-import { ViewSettings, deleteView, duplicateView, groupablePropertiesFor } from "./ViewSettings";
+import { SourcePicker } from "./SourcePicker";
+import { ViewSettings, groupablePropertiesFor, type SettingsPage } from "./ViewSettings";
 import { updateView } from "./ops";
-import { useDatabase, type DatabaseApi } from "./useDatabase";
+import { updateSchemaOf, useDatabase, type DatabaseApi } from "./useDatabase";
+
+const IconPickerDialog = lazy(() => import("../IconPickerDialog").then((module) => ({ default: module.IconPickerDialog })));
 
 function storedView(key: string): string | null {
   try {
@@ -57,6 +65,12 @@ interface DatabaseViewProps {
   inline?: boolean;
   /** Distinguishes several embeds of one database when remembering the view. */
   stateKey?: string;
+  /** A block's own list of views, possibly from several databases (empty: the database's views). */
+  refs?: ViewRef[];
+  /** Saves the block's view list; without it the views can't mix sources. */
+  onRefsChange?: (refs: ViewRef[]) => void;
+  /** Block id that owns views the block creates. */
+  ownerId?: string;
 }
 
 function InlineTitle({ databaseId, title, icon }: { databaseId: string; title: string; icon: string }) {
@@ -105,7 +119,8 @@ const ADD_WIDTH = 30;
 
 /**
  * View tabs that share the header row with the actions. Tabs that don't fit
- * collapse into a "N more" menu; the active tab always stays visible.
+ * collapse into a "N more" menu; the active tab always stays visible. Tabs
+ * (and rows of the "more" menu) drag to reorder.
  */
 function ViewTabs({
   views,
@@ -113,15 +128,19 @@ function ViewTabs({
   onSelect,
   onMenu,
   onAdd,
+  onReorder,
 }: {
   views: View[];
   activeId: string;
   onSelect: (id: string) => void;
   onMenu: (view: View, anchor: HTMLElement) => void;
   onAdd: (anchor: HTMLElement) => void;
+  onReorder: (id: string, targetId: string, after: boolean) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const measure = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
+  const moreList = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState(views.length);
   const [more, setMore] = useState<HTMLElement | null>(null);
 
@@ -164,6 +183,7 @@ function ViewTabs({
   if (activeIndex >= fit) shown = [...views.slice(0, Math.max(0, fit - 1)), views[activeIndex]];
   const shownIds = new Set(shown.map((view) => view.id));
   const hidden = views.filter((view) => !shownIds.has(view.id));
+  const canReorder = views.length > 1;
 
   const tab = (item: View, measuring = false) => (
     <button
@@ -173,10 +193,17 @@ function ViewTabs({
       tabIndex={measuring ? -1 : undefined}
       aria-selected={measuring ? undefined : item.id === activeId}
       className={`db-tab ${item.id === activeId ? "is-active" : ""}`}
+      data-reorder-id={measuring ? undefined : item.id}
+      onPointerDown={
+        measuring || !canReorder
+          ? undefined
+          : (event) => row.current && startReorder(event, { axis: "x", container: row.current, id: item.id, onDrop: onReorder })
+      }
       onClick={
         measuring
           ? undefined
           : (event) => {
+              if (consumeDragClick()) return;
               if (item.id === activeId) onMenu(item, event.currentTarget);
               else onSelect(item.id);
             }
@@ -191,7 +218,7 @@ function ViewTabs({
       }
       title={item.name}
     >
-      <ViewIcon type={item.type} />
+      <ViewGlyph view={item} />
       <span className="db-tab-name">{item.name}</span>
       {item.id === activeId ? <ChevronDown size={12} className="db-tab-caret" /> : null}
     </button>
@@ -202,7 +229,7 @@ function ViewTabs({
       <div className="db-tabs-measure" ref={measure} aria-hidden>
         {views.map((item) => tab(item, true))}
       </div>
-      <div className="db-tabs-row" role="tablist" aria-label="Views">
+      <div className="db-tabs-row" role="tablist" aria-label="Views" ref={row}>
         {shown.map((item) => tab(item))}
         {hidden.length ? (
           <button type="button" className="db-tab db-tab-more" aria-haspopup="menu" aria-label={`${hidden.length} more views`} onClick={(event) => setMore(event.currentTarget)}>
@@ -216,25 +243,42 @@ function ViewTabs({
         </button>
       </div>
       {more ? (
-        <Popover anchor={more} onClose={() => setMore(null)} width={220} label="More views">
+        <Popover anchor={more} onClose={() => setMore(null)} width={230} label="More views">
           <div className="db-menu">
             <div className="db-menu-label">Views</div>
-            <div className="db-menu-scroll">
+            <div className="db-menu-scroll db-reorder-list" ref={moreList}>
               {views.map((item) => (
                 <button
                   key={item.id}
                   type="button"
-                  className={`db-menu-item ${item.id === activeId ? "is-active" : ""}`}
+                  className={`db-menu-item db-view-row ${item.id === activeId ? "is-active" : ""}`}
+                  data-reorder-id={item.id}
+                  onPointerDown={canReorder ? (event) => moreList.current && startReorder(event, { axis: "y", container: moreList.current, id: item.id, onDrop: onReorder }) : undefined}
                   onClick={() => {
+                    if (consumeDragClick()) return;
                     setMore(null);
                     onSelect(item.id);
                   }}
                 >
-                  <ViewIcon type={item.type} />
+                  {canReorder ? <GripVertical size={13} className="db-view-row-grip" /> : null}
+                  <ViewGlyph view={item} />
                   <span className="db-menu-item-text">{item.name}</span>
+                  {item.id === activeId ? <Check size={14} className="db-menu-check" /> : null}
                 </button>
               ))}
             </div>
+            <div className="db-menu-sep" />
+            <button
+              type="button"
+              className="db-menu-item"
+              onClick={() => {
+                const anchor = more;
+                setMore(null);
+                onAdd(anchor);
+              }}
+            >
+              <Plus size={14} /> Add a view
+            </button>
           </div>
         </Popover>
       ) : null}
@@ -329,12 +373,23 @@ function GroupedRows({
 
 /* ----------------------------------------------------------------- view */
 
-export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseViewProps) {
-  const base = useDatabase(databaseId);
-  const { schema } = base;
+const NO_REFS: ViewRef[] = [];
+
+export function DatabaseView({ databaseId, inline = false, stateKey, refs = NO_REFS, onRefsChange, ownerId }: DatabaseViewProps) {
+  // Every database this block shows views from.
+  const sourceIds = useMemo(() => [...new Set([databaseId, ...refs.map((ref) => ref.db)])], [databaseId, refs]);
+  const sourceData = useAppStore(useShallow((state) => sourceIds.map((id) => state.pages.find((page) => page.id === id && !page.deletedAt)?.data ?? null)));
+  const schemas = useMemo(() => new Map(sourceIds.map((id, index) => [id, sourceData[index] === null ? undefined : parseSchema(sourceData[index])])), [sourceIds, sourceData]);
+  const { entries, linked } = useMemo(() => resolveEntries(databaseId, refs, schemas), [databaseId, refs, schemas]);
+
   const key = stateKey ?? databaseId;
   const [viewId, setViewIdState] = useState<string | null>(() => storedView(key));
-  const view: View | undefined = schema.views.find((item) => item.id === viewId) ?? schema.views[0];
+  const entry = entries.find((item) => item.view.id === viewId) ?? entries[0];
+  const source = entry?.source ?? databaseId;
+  const base = useDatabase(source);
+  const { schema } = base;
+  const view: View | undefined = entry ? schema.views.find((item) => item.id === entry.view.id) ?? entry.view : undefined;
+  const sourceMeta = base.meta;
   const setViewId = (id: string) => {
     setViewIdState(id);
     storeView(key, id);
@@ -345,14 +400,16 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
   const searchRef = useRef<HTMLInputElement>(null);
   const [editTitleFor, setEditTitleFor] = useState<string | null>(null);
   const [editRuleId, setEditRuleId] = useState<string | null>(null);
-  const [addView, setAddView] = useState<HTMLElement | null>(null);
+  const [addView, setAddView] = useState<{ anchor: HTMLElement; page: "layouts" | "sources" } | null>(null);
   const [viewMenu, setViewMenu] = useState<{ view: View; anchor: HTMLElement } | null>(null);
-  const [settings, setSettings] = useState<{ anchor: HTMLElement; page?: "group" } | null>(null);
+  const [settings, setSettings] = useState<{ anchor: HTMLElement; page?: SettingsPage } | null>(null);
+  const [iconFor, setIconFor] = useState<{ viewId: string; source: string; anchor: HTMLElement | null } | null>(null);
   const [filterPick, setFilterPick] = useState<HTMLElement | null>(null);
   const [sortAnchor, setSortAnchor] = useState<HTMLElement | null>(null);
   const [advanced, setAdvanced] = useState<HTMLElement | null>(null);
   const settingsButton = useRef<HTMLButtonElement>(null);
   const filterButton = useRef<HTMLButtonElement>(null);
+  const workspaceId = useAppStore((state) => state.workspace?.id ?? "");
 
   const rows = useMemo(() => (view ? applyView(base.rows, schema, view, search) : []), [base.rows, schema, view, search]);
   const openIn = view?.openIn ?? "modal";
@@ -373,6 +430,10 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
   }
   if (!view) return null;
   const current = view;
+  const tabViews = entries.map((item) => (item.view.id === current.id ? current : item.view));
+  const sourceOf = (id: string) => entries.find((item) => item.view.id === id)?.source ?? source;
+  // Blocks can mix sources; the database's own page cannot.
+  const canLink = !!onRefsChange;
 
   async function addRow(extra?: RowValues) {
     const values = { ...seedValuesForView(schema, current), ...(extra ?? {}) };
@@ -382,15 +443,97 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
     else setEditTitleFor(meta.id);
   }
 
-  function createView(type: ViewType) {
-    const fresh = newView(type, schema);
-    db.updateSchema((target) => {
-      target.views.push(fresh);
+  /** Adds a view of `type` reading `from`, at the end of the tabs. */
+  /** Any database's schema, including ones this block doesn't show yet. */
+  function schemaOf(id: string) {
+    if (schemas.has(id)) return schemas.get(id);
+    const meta = useAppStore.getState().pages.find((page) => page.id === id && !page.deletedAt);
+    return meta?.kind === "database" ? parseSchema(meta.data) : undefined;
+  }
+
+  function createView(type: ViewType, from: string) {
+    const target = schemaOf(from);
+    if (!target) return;
+    if (!linked && from === databaseId) {
+      // The database's own views: shared with its page and other blocks.
+      const fresh = newView(type, target);
+      updateSchemaOf(from, (draft) => {
+        draft.views.push(fresh);
+      });
+      setViewId(fresh.id);
+      return;
+    }
+    if (!onRefsChange) return;
+    const fresh: View = { ...newView(type, target), owner: ownerId ?? "block" };
+    updateSchemaOf(from, (draft) => {
+      draft.views.push(fresh);
     });
+    onRefsChange([...refsOf(entries), { db: from, view: fresh.id }]);
     setViewId(fresh.id);
   }
 
-  const openSettings = (anchor?: HTMLElement, page?: "group") => {
+  function duplicate(id: string) {
+    const from = sourceOf(id);
+    const copyId = uid("view");
+    updateSchemaOf(from, (draft) => {
+      const index = draft.views.findIndex((item) => item.id === id);
+      if (index < 0) return;
+      const original = draft.views[index];
+      const copy: View = { ...structuredClone(original), id: copyId, name: `${original.name} copy` };
+      if (linked) copy.owner = ownerId ?? "block";
+      draft.views.splice(index + 1, 0, copy);
+    });
+    if (linked && onRefsChange) {
+      const next = refsOf(entries);
+      const at = next.findIndex((ref) => ref.view === id);
+      next.splice(at + 1, 0, { db: from, view: copyId });
+      onRefsChange(next);
+    }
+    setViewId(copyId);
+  }
+
+  function remove(id: string) {
+    if (entries.length <= 1) return;
+    const from = sourceOf(id);
+    const next = entries.find((item) => item.view.id !== id);
+    if (linked && onRefsChange) {
+      const owned = entries.find((item) => item.view.id === id)?.view.owner;
+      onRefsChange(refsOf(entries).filter((ref) => ref.view !== id));
+      // A view the block made for itself goes with it; shared views stay on the database.
+      if (owned) updateSchemaOf(from, (draft) => { draft.views = draft.views.filter((item) => item.id !== id); });
+    } else {
+      updateSchemaOf(from, (draft) => {
+        if (draft.views.length <= 1) return;
+        draft.views = draft.views.filter((item) => item.id !== id);
+      });
+    }
+    if (next && id === current.id) setViewId(next.view.id);
+  }
+
+  function reorder(id: string, targetId: string, after: boolean) {
+    if (linked && onRefsChange) {
+      onRefsChange(moveItem(refsOf(entries), (ref) => ref.view, id, targetId, after));
+      return;
+    }
+    updateSchemaOf(databaseId, (draft) => reorderViews(draft, id, targetId, after));
+  }
+
+  /** Points a view at another database: the block gets its own view there. */
+  function changeSource(id: string, to: string) {
+    const target = schemaOf(to);
+    if (!target) return;
+    const old = entries.find((item) => item.view.id === id);
+    if (!onRefsChange || !old || old.source === to) return;
+    const fresh: View = { ...adaptViewTo(old.view, newView(old.view.type, target)), owner: ownerId ?? "block" };
+    updateSchemaOf(to, (draft) => {
+      draft.views.push(fresh);
+    });
+    onRefsChange(refsOf(entries).map((ref) => (ref.view === id ? { db: to, view: fresh.id } : ref)));
+    if (old.view.owner) updateSchemaOf(old.source, (draft) => { draft.views = draft.views.filter((item) => item.id !== id); });
+    setViewId(fresh.id);
+  }
+
+  const openSettings = (anchor?: HTMLElement, page?: SettingsPage) => {
     const target = anchor ?? settingsButton.current;
     if (target) setSettings({ anchor: target, page });
   };
@@ -405,6 +548,7 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
   const groupProperty = current.groupBy && current.type !== "board" ? propertyById(schema, current.groupBy) : undefined;
   const grouped = groupProperty && groupablePropertiesFor(current, schema.properties).some((item) => item.id === groupProperty.id) ? groupProperty : undefined;
   const clearEditTitle = () => setEditTitleFor(null);
+  const lastSource = entries[entries.length - 1]?.source ?? source;
 
   const renderRows = (slice: DatabaseRow[], seed: RowValues = {}): ReactNode => {
     const onAdd = () => void addRow(seed);
@@ -417,20 +561,21 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
 
   return (
     <div
-      className={`db ${inline ? "is-inline" : "is-page"}`}
+      className={`db ${inline ? "is-inline" : "is-page"}${db.locked ? " is-locked" : ""}`}
       data-view-type={current.type}
       data-icons={current.showIcons === false ? "off" : undefined}
       data-card-size={current.type === "gallery" ? current.cardSize ?? "medium" : undefined}
       data-row-numbers={current.type === "table" && current.rowNumbers ? "on" : undefined}
     >
-      {inline ? <InlineTitle databaseId={databaseId} title={db.meta?.title ?? ""} icon={db.meta?.icon ?? ""} /> : null}
+      {inline ? <InlineTitle databaseId={source} title={sourceMeta?.title ?? ""} icon={sourceMeta?.icon ?? ""} /> : null}
       <div className="db-toolbar">
         <ViewTabs
-          views={schema.views}
+          views={tabViews}
           activeId={current.id}
           onSelect={setViewId}
           onMenu={(item, anchor) => setViewMenu({ view: item, anchor })}
-          onAdd={(anchor) => setAddView(anchor)}
+          onAdd={(anchor) => setAddView({ anchor, page: "layouts" })}
+          onReorder={reorder}
         />
         <div className="db-actions">
           <button
@@ -497,9 +642,21 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
           <button ref={settingsButton} type="button" className="db-action" aria-label="View settings" title="View settings" onClick={(event) => openSettings(event.currentTarget)}>
             <SlidersHorizontal size={14} />
           </button>
-          <button type="button" className="db-new" onClick={() => void addRow()}>
-            <Plus size={14} /> <span className="db-new-label">New</span>
-          </button>
+          {db.locked ? (
+            <button
+              type="button"
+              className="db-action db-locked-badge"
+              title="Locked: rows can't be edited. Click to unlock."
+              aria-label="Unlock database"
+              onClick={() => db.updateSchema((draft) => { delete draft.locked; })}
+            >
+              <Lock size={13} /> <span className="db-action-label">Locked</span>
+            </button>
+          ) : (
+            <button type="button" className="db-new" onClick={() => void addRow()}>
+              <Plus size={14} /> <span className="db-new-label">New</span>
+            </button>
+          )}
         </div>
       </div>
       <FilterBar db={db} view={current} editRuleId={editRuleId} setEditRuleId={setEditRuleId} onOpenAdvanced={openAdvanced} />
@@ -525,7 +682,7 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
           />
         ) : null}
         {current.type === "calendar" ? <CalendarView db={db} view={current} rows={rows} onAddRow={(values) => void addRow(values)} onOpenSettings={openSettings} /> : null}
-        {current.type === "chart" ? <ChartView db={db} view={current} rows={rows} inline={inline} onOpenSettings={openSettings} /> : null}
+        {current.type === "chart" ? <ChartView db={db} view={current} rows={rows} inline={inline} onOpenSettings={(anchor) => openSettings(anchor, "chart")} /> : null}
         {current.type === "custom" ? <CustomView db={db} view={current} rows={rows} inline={inline} /> : null}
         {filtered && current.type !== "calendar" && current.type !== "custom" ? (
           <div className="db-count" aria-live="polite">
@@ -536,23 +693,43 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
       </div>
 
       {addView ? (
-        <Popover anchor={addView} onClose={() => setAddView(null)} width={210} label="Add a view">
-          <div className="db-menu">
-            <div className="db-menu-label">Add a view</div>
-            {VIEW_TYPES.map((item) => (
-              <button
-                key={item.type}
-                type="button"
-                className="db-menu-item"
-                onClick={() => {
-                  setAddView(null);
-                  createView(item.type);
-                }}
-              >
-                <ViewIcon type={item.type} /> {item.name}
-              </button>
-            ))}
-          </div>
+        <Popover anchor={addView.anchor} onClose={() => setAddView(null)} width={addView.page === "sources" ? 270 : 220} label="Add a view">
+          {addView.page === "sources" ? (
+            <SourcePicker
+              label="New table from"
+              onPick={(from) => {
+                setAddView(null);
+                createView("table", from);
+              }}
+            />
+          ) : (
+            <div className="db-menu">
+              <div className="db-menu-label">Add a view</div>
+              {VIEW_TYPES.map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  className="db-menu-item"
+                  onClick={() => {
+                    setAddView(null);
+                    createView(item.type, lastSource);
+                  }}
+                >
+                  <ViewIcon type={item.type} /> {item.name}
+                </button>
+              ))}
+              {canLink ? (
+                <>
+                  <div className="db-menu-sep" />
+                  <button type="button" className="db-menu-item" onClick={() => setAddView({ anchor: addView.anchor, page: "sources" })}>
+                    <Database size={14} />
+                    <span className="db-menu-item-text">From another source</span>
+                    <ChevronRight size={14} className="db-menu-trail" />
+                  </button>
+                </>
+              ) : null}
+            </div>
+          )}
         </Popover>
       ) : null}
       {viewMenu ? (
@@ -574,26 +751,35 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
               type="button"
               className="db-menu-item"
               onClick={() => {
-                const id = duplicateView(db, viewMenu.view.id);
+                const target = viewMenu.view;
                 setViewMenu(null);
-                setViewId(id);
+                setIconFor({ viewId: target.id, source: sourceOf(target.id), anchor: null });
+              }}
+            >
+              <Smile size={14} /> Change icon
+            </button>
+            <button
+              type="button"
+              className="db-menu-item"
+              onClick={() => {
+                const id = viewMenu.view.id;
+                setViewMenu(null);
+                duplicate(id);
               }}
             >
               <Copy size={14} /> Duplicate view
             </button>
-            {schema.views.length > 1 ? (
+            {entries.length > 1 ? (
               <button
                 type="button"
                 className="db-menu-item danger"
                 onClick={() => {
-                  const target = viewMenu.view.id;
-                  const next = schema.views.find((item) => item.id !== target);
+                  const id = viewMenu.view.id;
                   setViewMenu(null);
-                  deleteView(db, target);
-                  if (next && target === current.id) setViewId(next.id);
+                  remove(id);
                 }}
               >
-                <Trash2 size={14} /> Delete view
+                <Trash2 size={14} /> {linked && !viewMenu.view.owner ? "Remove from block" : "Delete view"}
               </button>
             ) : null}
           </div>
@@ -606,13 +792,51 @@ export function DatabaseView({ databaseId, inline = false, stateKey }: DatabaseV
           anchor={settings.anchor}
           initialPage={settings.page}
           onClose={() => setSettings(null)}
-          onSelectView={setViewId}
+          onDuplicate={() => duplicate(current.id)}
+          onDelete={entries.length > 1 ? () => remove(current.id) : undefined}
+          onPickIcon={() => {
+            const anchor = settings.anchor;
+            setSettings(null);
+            setIconFor({ viewId: current.id, source, anchor });
+          }}
+          source={
+            inline
+              ? {
+                  id: source,
+                  title: sourceMeta?.title ?? "",
+                  icon: sourceMeta?.icon ?? "",
+                  onChange: canLink ? (to) => changeSource(current.id, to) : undefined,
+                }
+              : undefined
+          }
           onOpenAdvanced={() => {
             const anchor = settings.anchor;
             setSettings(null);
             openAdvanced(filterButton.current ?? anchor);
           }}
         />
+      ) : null}
+      {iconFor ? (
+        <Suspense fallback={null}>
+          <IconPickerDialog
+            open
+            workspaceId={workspaceId}
+            pageId={iconFor.source}
+            current={entries.find((item) => item.view.id === iconFor.viewId)?.view.icon ?? ""}
+            subtitle="Shown on this view's tab in place of its layout icon."
+            onClose={() => setIconFor(null)}
+            onPick={(value) => {
+              const { viewId: id, source: from, anchor } = iconFor;
+              setIconFor(null);
+              updateSchemaOf(from, (draft) => {
+                const target = draft.views.find((item) => item.id === id);
+                if (target) target.icon = value || undefined;
+              });
+              // Back to the settings the picker was opened from.
+              if (anchor?.isConnected) setSettings({ anchor });
+            }}
+          />
+        </Suspense>
       ) : null}
       {filterPick ? (
         <Popover anchor={filterPick} onClose={() => setFilterPick(null)} width={240} placement="bottom-end" label="Add filter">

@@ -513,12 +513,23 @@ export interface NoteralApp {
         type: "text" | "number" | "select" | "multiSelect" | "status" | "date" | "checkbox" | "url" | "email" | "phone" | "createdTime" | "lastEdited" | "formula";
         /** Options for select / multiSelect / status. */
         options?: string[];
-        /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */
+        /** Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. */
         formula?: string;
         /** Number format (number and formula properties). */
         format?: "number" | "commas" | "percent" | "dollar" | "euro" | "pound" | "yen";
         /** How date results of a formula show. */
         dateFormat?: "relative" | "short" | "long" | "iso";
+        /** How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. */
+        display?: {
+          /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */
+          style?: "number" | "bar" | "ring" | "rating" | "heat";
+          /** Fill colour; default = the app accent. */
+          color?: "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
+          /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */
+          max?: number;
+          /** Bar / ring: also show the number (default true). */
+          showNumber?: boolean;
+        };
       }[];
       /** First view type. */
       view?: "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
@@ -550,12 +561,23 @@ export interface NoteralApp {
         type: "text" | "number" | "select" | "multiSelect" | "status" | "date" | "checkbox" | "url" | "email" | "phone" | "createdTime" | "lastEdited" | "formula";
         /** Options for select / multiSelect / status. */
         options?: string[];
-        /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */
+        /** Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. */
         formula?: string;
         /** Number format (number and formula properties). */
         format?: "number" | "commas" | "percent" | "dollar" | "euro" | "pound" | "yen";
         /** How date results of a formula show. */
         dateFormat?: "relative" | "short" | "long" | "iso";
+        /** How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. */
+        display?: {
+          /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */
+          style?: "number" | "bar" | "ring" | "rating" | "heat";
+          /** Fill colour; default = the app accent. */
+          color?: "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
+          /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */
+          max?: number;
+          /** Bar / ring: also show the number (default true). */
+          showNumber?: boolean;
+        };
       }[];
       /** First view type of a new database. */
       view?: "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
@@ -580,12 +602,23 @@ export interface NoteralApp {
       type: "text" | "number" | "select" | "multiSelect" | "status" | "date" | "checkbox" | "url" | "email" | "phone" | "createdTime" | "lastEdited" | "formula";
       /** Options for select / multiSelect / status. */
       options?: string[];
-      /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */
+      /** Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. */
       formula?: string;
       /** Number format (number and formula properties). */
       format?: "number" | "commas" | "percent" | "dollar" | "euro" | "pound" | "yen";
       /** How date results of a formula show. */
       dateFormat?: "relative" | "short" | "long" | "iso";
+      /** How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. */
+      display?: {
+        /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */
+        style?: "number" | "bar" | "ring" | "rating" | "heat";
+        /** Fill colour; default = the app accent. */
+        color?: "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
+        /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */
+        max?: number;
+        /** Bar / ring: also show the number (default true). */
+        showNumber?: boolean;
+      };
     }): Promise<{ propertyId: string }>;
     /**
      * Add a row; values are keyed by property name.
@@ -719,6 +752,8 @@ export interface NoteralApp {
       databaseId: string;
       /** View name. */
       name?: string;
+      /** Tab icon: an emoji, or "" to use the layout icon. */
+      icon?: string;
       /** Layout. */
       type?: "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
       /** Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek|pastMonth|pastYear|nextWeek|nextMonth|nextYear|thisWeek|thisMonth|thisYear. Formulas filter as their result type. */
@@ -832,6 +867,52 @@ export interface NoteralApp {
         format?: "number" | "commas" | "percent" | "dollar" | "euro" | "pound" | "yen";
         /** Chart title. */
         title?: string;
+        /** Zoom and pan (Ctrl/⌘+wheel, pinch, drag) on bar/column/line/area/scatter/grid heatmaps. Default true. */
+        zoom?: boolean;
+        /** Range slider under the plot. Default false. */
+        zoomSlider?: boolean;
+        /** Category axis title. "" clears. */
+        xTitle?: string;
+        /** Value axis title. "" clears. */
+        yTitle?: string;
+        /** Category axis labels. Default true. */
+        xLabels?: boolean;
+        /** Value axis labels. Default true. */
+        yLabels?: boolean;
+        /** Category label angle in degrees: 0, 30, 45, 60 or 90; unset rotates when crowded. */
+        labelAngle?: number;
+        /** Logarithmic value axis (zero/negative values are left out). */
+        logScale?: boolean;
+        /** What data labels show. Default value (bars/lines), namePercent (pies), nameValue (funnels). */
+        labelContent?: "value" | "percent" | "name" | "nameValue" | "namePercent";
+        /** Where data labels sit; unset picks per chart. */
+        labelPosition?: "inside" | "outside";
+        /** Single-series bars: a colour per category, or one colour. Unset follows option colours. */
+        colorBy?: "category" | "single";
+        /** Colour of single-colour charts: accent or an option colour (gray, brown, orange, yellow, green, blue, purple, pink, red). */
+        color?: string;
+        /** Line shape (line/area/radar); overrides smooth. Default straight. */
+        curve?: "straight" | "smooth" | "step";
+        /** Point markers on lines; unset shows them when there are few points. */
+        points?: boolean;
+        /** Area fill fades out. Default true. */
+        gradient?: boolean;
+        /** Donut ring thickness, % of the radius. Default 34. */
+        donutWidth?: number;
+        /** With limit: merge the rest into Other (default true) or drop it. */
+        other?: boolean;
+        /** Combo chart (column/line/area): a second measure drawn as a line on a right axis. "" clears. */
+        aggregate2?: "" | "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+        /** Property (name) measured by aggregate2. "" clears. */
+        y2?: string;
+        /** Legend position. Default top. */
+        legendPosition?: "top" | "bottom" | "left" | "right";
+        /** Tooltip: group (all series at a category, default), item (one mark) or off. */
+        tooltip?: "group" | "item" | "off";
+        /** Goal line label. Default "Goal". */
+        goalLabel?: string;
+        /** Message shown when the view has no rows. */
+        emptyText?: string;
       };
       /** Custom view settings (custom views). */
       custom?: {
@@ -855,6 +936,8 @@ export interface NoteralApp {
       viewId: string;
       /** View name. */
       name?: string;
+      /** Tab icon: an emoji, or "" to use the layout icon. */
+      icon?: string;
       /** Layout. */
       type?: "table" | "board" | "gallery" | "list" | "calendar" | "chart" | "custom";
       /** Filter rules (replaces the view's filters). Select/status values are option names (a list = any of); dates are ISO or @today/@yesterday/@tomorrow/@weekAgo/@weekAhead/@monthAgo/@monthAhead/@yearAgo; op within takes pastWeek|pastMonth|pastYear|nextWeek|nextMonth|nextYear|thisWeek|thisMonth|thisYear. Formulas filter as their result type. */
@@ -968,6 +1051,52 @@ export interface NoteralApp {
         format?: "number" | "commas" | "percent" | "dollar" | "euro" | "pound" | "yen";
         /** Chart title. */
         title?: string;
+        /** Zoom and pan (Ctrl/⌘+wheel, pinch, drag) on bar/column/line/area/scatter/grid heatmaps. Default true. */
+        zoom?: boolean;
+        /** Range slider under the plot. Default false. */
+        zoomSlider?: boolean;
+        /** Category axis title. "" clears. */
+        xTitle?: string;
+        /** Value axis title. "" clears. */
+        yTitle?: string;
+        /** Category axis labels. Default true. */
+        xLabels?: boolean;
+        /** Value axis labels. Default true. */
+        yLabels?: boolean;
+        /** Category label angle in degrees: 0, 30, 45, 60 or 90; unset rotates when crowded. */
+        labelAngle?: number;
+        /** Logarithmic value axis (zero/negative values are left out). */
+        logScale?: boolean;
+        /** What data labels show. Default value (bars/lines), namePercent (pies), nameValue (funnels). */
+        labelContent?: "value" | "percent" | "name" | "nameValue" | "namePercent";
+        /** Where data labels sit; unset picks per chart. */
+        labelPosition?: "inside" | "outside";
+        /** Single-series bars: a colour per category, or one colour. Unset follows option colours. */
+        colorBy?: "category" | "single";
+        /** Colour of single-colour charts: accent or an option colour (gray, brown, orange, yellow, green, blue, purple, pink, red). */
+        color?: string;
+        /** Line shape (line/area/radar); overrides smooth. Default straight. */
+        curve?: "straight" | "smooth" | "step";
+        /** Point markers on lines; unset shows them when there are few points. */
+        points?: boolean;
+        /** Area fill fades out. Default true. */
+        gradient?: boolean;
+        /** Donut ring thickness, % of the radius. Default 34. */
+        donutWidth?: number;
+        /** With limit: merge the rest into Other (default true) or drop it. */
+        other?: boolean;
+        /** Combo chart (column/line/area): a second measure drawn as a line on a right axis. "" clears. */
+        aggregate2?: "" | "count" | "countValues" | "countUnique" | "sum" | "average" | "median" | "min" | "max";
+        /** Property (name) measured by aggregate2. "" clears. */
+        y2?: string;
+        /** Legend position. Default top. */
+        legendPosition?: "top" | "bottom" | "left" | "right";
+        /** Tooltip: group (all series at a category, default), item (one mark) or off. */
+        tooltip?: "group" | "item" | "off";
+        /** Goal line label. Default "Goal". */
+        goalLabel?: string;
+        /** Message shown when the view has no rows. */
+        emptyText?: string;
       };
       /** Custom view settings (custom views). */
       custom?: {
@@ -1030,12 +1159,23 @@ export interface NoteralApp {
       name?: string;
       /** New type. */
       type?: "text" | "number" | "select" | "multiSelect" | "status" | "date" | "checkbox" | "url" | "email" | "phone" | "createdTime" | "lastEdited" | "formula";
-      /** Formula source (type formula), e.g. {Price} * {Qty} or if({Done}, "✓", ""). Validated; see databases.formulaFunctions. */
+      /** Formula source (type formula), e.g. {Price} * {Qty}, if({Done}, style("Done", "green"), fromNow({Due})) or formatNumber({Ratio}, "percent"). May span lines with // comments. Validated; see databases.formulaFunctions. */
       formula?: string;
       /** Number format (number and formula properties). */
       format?: "number" | "commas" | "percent" | "dollar" | "euro" | "pound" | "yen";
       /** How date results of a formula show. */
       dateFormat?: "relative" | "short" | "long" | "iso";
+      /** How a number (or number-formula) property shows its value. Merged over the current display on updateProperty. */
+      display?: {
+        /** number = plain text (clears the display); bar / ring = progress toward max; rating = stars; heat = tinted by size. */
+        style?: "number" | "bar" | "ring" | "rating" | "heat";
+        /** Fill colour; default = the app accent. */
+        color?: "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
+        /** The value that counts as full (bar/ring/heat; default 100, or 1 for percent format). For rating: the number of stars, 1–10 (default 5). */
+        max?: number;
+        /** Bar / ring: also show the number (default true). */
+        showNumber?: boolean;
+      };
       /** Options (select / multi-select / status). */
       options?: {
         /** Option name. */
@@ -1047,13 +1187,13 @@ export interface NoteralApp {
       }[];
     }): Promise<DatabaseSchemaInfo>;
     /**
-     * The formula language: syntax and every function, one line each.
+     * The formula language: syntax and every function (math, text, style/link formatting, dates, lists, lambdas), one line each.
      *
      * Permission: `databases.read`
      */
     formulaFunctions(params?: Record<string, never>): Promise<string>;
     /**
-     * Check a formula against a database without saving: errors, result type and sample results.
+     * Check a formula against a database without saving: errors (with line/column and did-you-mean hints), result type and sample results.
      *
      * Permission: `databases.read`
      */
@@ -1085,6 +1225,17 @@ export interface NoteralApp {
       /** Row ids. */
       rowIds: string[];
     }): Promise<{ deleted: number }>;
+    /**
+     * Lock or unlock a database. A locked database refuses row edits, new rows and deletes (from the user, plugins and the assistant); properties and views can still change.
+     *
+     * Permission: `databases.write` · asks the user first
+     */
+    setLocked(params: {
+      /** Database id. */
+      databaseId: string;
+      /** true to lock, false to unlock. */
+      locked: boolean;
+    }): Promise<{ locked: boolean }>;
     /**
      * Rename a database or its title column.
      *

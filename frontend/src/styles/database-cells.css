@@ -1,0 +1,232 @@
+/* ==========================================================================
+   Database cell marks: the checkbox and number "Show as" displays
+   (bar, ring, rating, heat). Built on the app tokens and the option tones
+   in database.css; loaded after it.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Checkbox: a rounded square that fills with the accent and draws a check.
+   The check is a mask on ::after so every .db-checkbox (also formula
+   results) gets it; the reveal transitions on toggle, never on mount.
+   -------------------------------------------------------------------------- */
+.db-checkbox {
+  --check-ink: #fff;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 4.5px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-raised);
+  vertical-align: middle;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease;
+}
+[data-theme="dark"] .db-checkbox { --check-ink: var(--bg-sunken); }
+.db-checkbox::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 12px;
+  height: 12px;
+  background: var(--check-ink);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 8.4l3 3L12.7 4.9'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 8.4l3 3L12.7 4.9'/%3E%3C/svg%3E") center / contain no-repeat;
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 180ms cubic-bezier(0.4, 0, 0.2, 1) 40ms;
+}
+.db-checkbox.is-checked { background: var(--accent); border-color: var(--accent); }
+.db-checkbox.is-checked::after { clip-path: inset(0 0 0 0); }
+.db-checkbox:not(.is-checked)::after { transition-duration: 90ms; transition-delay: 0ms; }
+.db-checkbox.is-animating.is-checked { animation: db-check-pop 260ms ease-out; }
+.db-checkbox.is-animating:not(.is-checked) { animation: db-check-out 180ms ease-out; }
+@keyframes db-check-pop { 0% { transform: scale(0.8); } 55% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes db-check-out { 0% { transform: scale(0.86); } 100% { transform: scale(1); } }
+
+/* Read-only (formula results): a quieter fill. */
+.db-checkbox.is-readonly.is-checked {
+  background: color-mix(in srgb, var(--accent) 62%, var(--bg-raised));
+  border-color: transparent;
+}
+
+/* Hover, press and focus come from the control around the box. */
+.db-td.type-checkbox:not(.is-readonly),
+.db-rowprop-value.type-checkbox { cursor: pointer; }
+.db-td.type-checkbox:not(.is-readonly):hover .db-checkbox:not(.is-checked),
+.db-rowprop-value.type-checkbox:hover .db-checkbox:not(.is-checked),
+.db-check-toggle:hover .db-checkbox:not(.is-checked) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: var(--accent-softer);
+}
+.db-td.type-checkbox:not(.is-readonly):hover .db-checkbox.is-checked,
+.db-rowprop-value.type-checkbox:hover .db-checkbox.is-checked,
+.db-check-toggle:hover .db-checkbox.is-checked { background: var(--accent-deep); border-color: var(--accent-deep); }
+.db-td.type-checkbox:active .db-checkbox,
+.db-rowprop-value.type-checkbox:active .db-checkbox,
+.db-check-toggle:active .db-checkbox { transform: scale(0.9); }
+.db-td.type-checkbox:focus-visible,
+.db-rowprop-value.type-checkbox:focus-visible,
+.db-check-toggle:focus-visible { outline: none; }
+.db-td.type-checkbox:focus-visible .db-checkbox,
+.db-rowprop-value.type-checkbox:focus-visible .db-checkbox,
+.db-check-toggle:focus-visible .db-checkbox { box-shadow: var(--focus); }
+
+/* Cards and list rows toggle in place. */
+.db-check-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 22px;
+  margin: -2px -5px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.db-check-toggle:hover { background: var(--bg-hover); color: var(--text-soft); }
+.db-check-toggle.is-checked { color: var(--text-soft); }
+.db-check-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-list-prop .db-check-toggle { margin: -2px -3px; padding: 2px 3px; }
+
+/* --------------------------------------------------------------------------
+   Number "Show as": --fill and --track come from the accent, or the
+   option tone when a colour is picked.
+   -------------------------------------------------------------------------- */
+.db-viz,
+.db-viz-glyph-box,
+.db-viz-swatch {
+  --fill: var(--accent);
+  --track: color-mix(in srgb, var(--accent) 16%, var(--bg-sunken));
+}
+.db-viz.has-tone,
+.db-viz-glyph-box.has-tone,
+.db-viz-swatch.has-tone {
+  --fill: color-mix(in srgb, var(--tone-fg) 82%, var(--tone-bg));
+  --track: var(--tone-bg);
+}
+.db-viz-number {
+  flex: 0 0 auto;
+  min-width: 3.5ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-soft);
+}
+
+/* Bar */
+.db-bar { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.db-bar-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 16px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--track);
+  overflow: hidden;
+}
+.db-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--fill);
+  transition: width 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.db-list-prop .db-bar { width: 128px; }
+.db-rowprop-value .db-bar { max-width: 300px; }
+.db-card-prop .db-viz-number { min-width: 0; }
+
+/* Ring */
+.db-ring { display: inline-flex; align-items: center; gap: 6px; }
+.db-ring-svg { display: block; flex: 0 0 auto; width: 18px; height: 18px; }
+.db-ring-track { fill: none; stroke: var(--track); stroke-width: 2.6; }
+.db-ring-fill {
+  fill: none;
+  stroke: var(--fill);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  transition: stroke-dasharray 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Rating */
+.db-rating { display: flex; align-items: center; gap: 1px; width: 100%; }
+.db-list-prop .db-rating, .db-card-prop .db-rating { width: auto; }
+.db-star { position: relative; display: block; flex: 0 0 auto; width: 14px; height: 14px; }
+.db-star svg { display: block; width: 14px; height: 14px; }
+.db-star-base { fill: color-mix(in srgb, var(--text-faint) 38%, transparent); }
+.db-star-fill { position: absolute; inset: 0 auto 0 0; overflow: hidden; }
+.db-star-fill svg { fill: var(--fill); }
+
+/* Heat: the number on a tint that deepens with the value. */
+.db-heat {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 5px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 520;
+  color: var(--text);
+  background: color-mix(in srgb, var(--fill) var(--heat, 8%), transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-checkbox, .db-checkbox::after, .db-bar-fill, .db-ring-fill { transition: none; }
+  .db-checkbox.is-animating.is-checked, .db-checkbox.is-animating:not(.is-checked) { animation: none; }
+}
+
+/* --------------------------------------------------------------------------
+   "Show as" menu
+   -------------------------------------------------------------------------- */
+.db-viz-glyph-box {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}
+.db-viz-glyph-box .db-menu-glyph { width: auto; font-size: 12px; }
+.db-viz-glyph.is-bar { display: block; width: 13px; height: 4px; border-radius: 99px; background: var(--track); overflow: hidden; }
+.db-viz-glyph.is-bar > span { display: block; width: 62%; height: 100%; border-radius: inherit; background: var(--fill); }
+.db-viz-glyph.is-ring { display: block; width: 14px; height: 14px; }
+.db-viz-glyph.is-ring .track { fill: none; stroke: var(--track); stroke-width: 2.4; }
+.db-viz-glyph.is-ring .fill { fill: none; stroke: var(--fill); stroke-width: 2.4; stroke-linecap: round; }
+.db-viz-glyph.is-star { display: block; width: 13px; height: 13px; fill: var(--fill); }
+.db-viz-glyph.is-heat { display: flex; align-items: flex-end; gap: 1.5px; }
+.db-viz-glyph.is-heat > span { display: block; width: 3.5px; height: 10px; border-radius: 1.5px; background: var(--fill); }
+.db-viz-glyph.is-heat > span:nth-child(1) { opacity: 0.28; }
+.db-viz-glyph.is-heat > span:nth-child(2) { opacity: 0.6; }
+
+.db-viz-swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 2px 8px 6px; }
+.db-viz-swatch {
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: var(--fill);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 6%);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.db-viz-swatch:hover { transform: scale(1.06); }
+.db-viz-swatch.is-on { box-shadow: 0 0 0 2px var(--bg-raised), 0 0 0 3.5px var(--fill); }
+.db-viz-swatch:focus-visible { outline: none; box-shadow: var(--focus); }
+
+.db-viz-field { justify-content: space-between; cursor: default; }
+.db-viz-field:hover { background: transparent; }
+.db-viz-max { width: 86px; height: 25px; text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  .db-viz-swatch { transition: none; }
+  .db-viz-swatch:hover { transform: none; }
+}

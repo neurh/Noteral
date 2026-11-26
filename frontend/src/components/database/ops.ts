@@ -95,7 +95,7 @@ export function duplicateProperty(db: DatabaseApi, propertyId: string, viewId?: 
     }
   });
   for (const row of db.rows) {
-    if (row.values[propertyId] !== undefined) db.setValue(row.id, copy.id, structuredClone(row.values[propertyId]));
+    if (row.values[propertyId] !== undefined) db.setValues(row.id, (values) => ({ ...values, [copy.id]: structuredClone(row.values[propertyId]) }), { force: true });
   }
 }
 
@@ -131,6 +131,7 @@ export function changePropertyType(db: DatabaseApi, propertyId: string, type: Pr
     ...(type === "formula" ? { formula: from.formula ?? "" } : {}),
   };
   if (!hasOptions(type)) delete to.options;
+  if (type !== "number" && type !== "formula") delete to.display;
   db.updateSchema((schema) => {
     const index = schema.properties.findIndex((p) => p.id === propertyId);
     if (index >= 0) schema.properties[index] = to;
@@ -146,7 +147,7 @@ export function changePropertyType(db: DatabaseApi, propertyId: string, type: Pr
     const value = row.values[propertyId];
     if (value === undefined) continue;
     const next = convertValue(value, from, to);
-    db.setValues(row.id, (values) => ({ ...values, [propertyId]: next }));
+    db.setValues(row.id, (values) => ({ ...values, [propertyId]: next }), { force: true });
   }
 }
 

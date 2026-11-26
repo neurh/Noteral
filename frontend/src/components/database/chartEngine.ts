@@ -5,12 +5,16 @@
 import { BarChart, FunnelChart, HeatmapChart, LineChart, PieChart, RadarChart, ScatterChart } from "echarts/charts";
 import {
   AriaComponent,
+  BrushComponent,
   CalendarComponent,
+  DataZoomInsideComponent,
+  DataZoomSliderComponent,
   GraphicComponent,
   GridComponent,
   LegendComponent,
   MarkLineComponent,
   RadarComponent,
+  ToolboxComponent,
   TooltipComponent,
   VisualMapComponent,
 } from "echarts/components";
@@ -18,6 +22,7 @@ import * as echarts from "echarts/core";
 import { LabelLayout, UniversalTransition } from "echarts/features";
 import { SVGRenderer } from "echarts/renderers";
 import { formatChartValue, isCartesian, shareOf, type ChartCategory, type ChartData } from "../../lib/chartData";
+import type { ChartLabelContent } from "../../lib/database";
 import { paletteById, paletteColors, mixColors, textOn, withAlpha, type ChartTheme } from "./chartTheme";
 
 echarts.use([
@@ -37,6 +42,10 @@ echarts.use([
   GraphicComponent,
   RadarComponent,
   AriaComponent,
+  DataZoomInsideComponent,
+  DataZoomSliderComponent,
+  BrushComponent,
+  ToolboxComponent,
   LabelLayout,
   UniversalTransition,
   SVGRenderer,
@@ -80,8 +89,26 @@ export interface ChartHandle {
   resize(size: ChartSize): void;
   /** Pause hover tooltips (while the picked-rows popover is open). */
   quiet(on: boolean): void;
+  /** Zoom around the middle of the visible range; above 1 zooms in. */
+  zoom(factor: number): void;
+  resetZoom(): void;
+  /** Arm (or cancel) a one-shot box zoom: drag across the plot to zoom into that range. */
+  boxZoom(on: boolean): void;
+  /** Let the plain wheel zoom (after the chart was clicked into, or in the expanded view). */
+  setFreeWheel(on: boolean): void;
   dispose(): void;
 }
+
+export interface ZoomState {
+  /** The chart can zoom at all. */
+  available: boolean;
+  /** Some axis shows less than its full range. */
+  zoomed: boolean;
+  /** A box zoom is armed. */
+  boxing: boolean;
+}
+
+const SECONDARY_ID = "__secondary";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -176,11 +203,84 @@ function legendOption(theme: ChartTheme, place: "top" | "bottom"): Record<string
   };
 }
 
+type LegendPlace = NonNullable<ChartData["config"]["legendPosition"]>;
+interface Pad {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/** A legend at the configured edge, and the room the plot leaves for it. */
+function legendAt(theme: ChartTheme, place: LegendPlace, show: boolean, width: number): { legend: Record<string, unknown>; pad: Pad } {
+  const pad = { top: 0, right: 0, bottom: 0, left: 0 };
+  if (!show) return { legend: { show: false }, pad };
+  if (place === "top" || place === "bottom") {
+    pad[place] = place === "top" ? 24 : 26;
+    return { legend: legendOption(theme, place), pad };
+  }
+  // Side legends: a column of entries, at most a quarter of the chart wide.
+  const room = Math.max(80, Math.min(150, Math.round(width * 0.24)));
+  pad[place] = room + 10;
+  const { left: _l, right: _r, ...rest } = legendOption(theme, "top");
+  return {
+    legend: { ...rest, top: "middle", [place]: 0, orient: "vertical", width: room, textStyle: { ...(rest.textStyle as object), width: room - 18, overflow: "truncate" } },
+    pad,
+  };
+}
+
+/** The mark colour of single-colour charts. */
+function singleColor(data: ChartData, theme: ChartTheme): string | undefined {
+  const color = data.config.color;
+  if (!color) return undefined;
+  if (color === "accent") return theme.accent;
+  if (color in theme.tones) return theme.tones[color as keyof ChartTheme["tones"]];
+  if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(color)) return color;
+  return undefined;
+}
+
+/** What a data label reads: value, share, name, or a mix. */
+function labelText(content: ChartLabelContent, name: string, value: number | null, share: number | null, format: ChartData["valueFormat"]): string {
+  if (value === null) return "";
+  const formatted = formatChartValue(value, format, true);
+  const percent = share === null ? "" : pct(share);
+  switch (content) {
+    case "value":
+      return formatted;
+    case "percent":
+      return percent;
+    case "name":
+      return name;
+    case "nameValue":
+      return `${name}  ${formatted}`;
+    case "namePercent":
+      return `${name}  ${percent}`;
+  }
+}
+
+function axisTitle(title: string | undefined, theme: ChartTheme): Record<string, unknown> {
+  if (!title?.trim()) return {};
+  return {
+    name: title.trim(),
+    nameLocation: "middle",
+    nameGap: 10,
+    nameMoveOverlap: true,
+    nameTextStyle: { color: theme.textMuted, fontSize: 11, fontWeight: 500, fontFamily: theme.fontUi },
+  };
+}
+
+/** A log axis cannot draw zero or negatives; those values are left out. */
+export function usesLog(data: ChartData): boolean {
+  return !!data.config.logScale && !data.normalized;
+}
+
 function valueAxis(data: ChartData, theme: ChartTheme, showGrid: boolean, span = 400): Record<string, unknown> {
   const { config } = data;
+  const log = usesLog(data);
   return {
-    type: "value",
-    min: data.normalized ? 0 : config.yMin,
+    type: log ? "log" : "value",
+    logBase: 10,
+    min: data.normalized ? 0 : log ? (config.yMin && config.yMin > 0 ? config.yMin : undefined) : config.yMin,
     max: data.normalized ? 1 : config.yMax,
     // Fewer ticks when the value axis runs across a narrow chart.
     splitNumber: span < 300 ? 3 : 4,
@@ -188,35 +288,56 @@ function valueAxis(data: ChartData, theme: ChartTheme, showGrid: boolean, span =
     axisTick: { show: false },
     splitLine: { show: showGrid, lineStyle: { color: theme.border, width: 1 } },
     axisLabel: {
+      show: config.yLabels ?? true,
       color: theme.textMuted,
       fontSize: 11,
       hideOverlap: true,
       formatter: (value: number) => formatChartValue(value, data.valueFormat, true),
     },
+    ...axisTitle(config.yTitle, theme),
   };
 }
+
+/** Series values on a log axis: non-positive values become gaps. */
+const logSafe = (values: (number | null)[], log: boolean) => (log ? values.map((v) => (v !== null && v > 0 ? v : null)) : values);
 
 function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option {
   const { config, categories, kind } = data;
   const horizontal = kind === "bar";
   const multi = data.series.length > 1;
   const stacked = multi && (!!config.stacked || data.normalized);
-  const showLegend = config.legend ?? multi;
+  const second = horizontal ? undefined : data.secondary;
+  const showLegend = config.legend ?? (multi || !!second);
   const showGrid = config.grid ?? true;
   const labels = !!config.labels;
   const area = kind === "area";
   const isBar = kind === "bar" || kind === "column";
+  const log = usesLog(data);
   const n = categories.length;
-  // Colour each bar by its category when a lone series is split by options.
-  const perCategory = isBar && !multi && paletteById(config.palette).id === "auto" ? optionColorsWork(categories) : isBar && !multi && (data.xKind === "option" || data.xKind === "checkbox");
+  const single = singleColor(data, theme);
+  // Colour each bar by its category when a lone series is split by options, or when asked to.
+  const autoPerCategory = paletteById(config.palette).id === "auto" ? optionColorsWork(categories) : data.xKind === "option" || data.xKind === "checkbox";
+  const perCategory = isBar && !multi && (config.colorBy === "category" || (config.colorBy !== "single" && !single && autoPerCategory));
   const categoryColors = perCategory ? colorsFor(categories, data, theme) : [];
-  const seriesColors = colorsFor(data.series, data, theme);
+  const seriesColors = !multi && single ? [single] : colorsFor(data.series, data, theme);
+  const { legend, pad } = legendAt(theme, config.legendPosition ?? "top", showLegend, size.width);
 
-  // Category labels: rotate when they will not fit side by side; truncate always.
-  const plotWidth = Math.max(120, size.width - 64);
+  // Data labels: what they say and where they sit.
+  const content: ChartLabelContent = config.labelContent ?? "value";
+  const inside = config.labelPosition ? config.labelPosition === "inside" : stacked;
+  const seriesTotals = data.series.map((s) => s.values.reduce<number>((a, v) => a + Math.abs(v ?? 0), 0));
+  const labelFor = (si: number, i: number, value: unknown) => {
+    if (typeof value !== "number" || (isBar && value === 0)) return "";
+    const share = data.normalized ? value : seriesTotals[si] ? value / seriesTotals[si] : null;
+    return labelText(content, categories[i]?.label ?? "", value, share, data.valueFormat);
+  };
+
+  // Category labels: rotate when they will not fit side by side (or as set); truncate always.
+  const plotWidth = Math.max(120, size.width - 64 - pad.left - pad.right);
   const slot = plotWidth / Math.max(1, n);
   const longest = Math.max(0, ...categories.map((c) => approxTextWidth(c.label)));
-  const rotate = !horizontal && longest > slot - 6 && n > 1 && n <= 48 && data.xKind !== "date" ? 35 : 0;
+  const autoRotate = longest > slot - 6 && n > 1 && n <= 48 && data.xKind !== "date" ? 35 : 0;
+  const rotate = horizontal ? 0 : config.labelAngle ?? autoRotate;
   const categoryAxis = {
     type: "category",
     data: categories.map((c) => c.label),
@@ -225,6 +346,7 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
     axisLine: { show: true, lineStyle: { color: theme.borderStrong } },
     axisTick: { show: false },
     axisLabel: {
+      show: config.xLabels ?? true,
       color: theme.textMuted,
       fontSize: 11,
       hideOverlap: true,
@@ -235,6 +357,7 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
       ellipsis: "…",
       margin: 10,
     },
+    ...axisTitle(config.xTitle, theme),
   };
   const vAxis = valueAxis(data, theme, showGrid, horizontal ? size.width - 140 : size.height);
 
@@ -244,11 +367,13 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
   });
   const radius = Math.min(4, theme.radius);
   const roundEnd = horizontal ? [0, radius, radius, 0] : [radius, radius, 0, 0];
-  const showSymbols = n <= 32;
+  const showSymbols = config.points ?? n <= 32;
+  const curve = config.curve ?? (config.smooth ? "smooth" : "straight");
+  const lineShape = { smooth: curve === "smooth" ? 0.32 : false, step: curve === "step" ? "middle" : false };
 
-  const series = data.series.map((s, si) => {
+  const series: Record<string, unknown>[] = data.series.map((s, si) => {
     const color = seriesColors[si];
-    const values = s.values;
+    const values = logSafe(s.values, log);
     if (isBar) {
       return {
         id: s.key,
@@ -264,10 +389,10 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
         blur: { itemStyle: { opacity: 0.35 } },
         label: {
           show: labels,
-          position: stacked ? "inside" : horizontal ? "right" : "top",
-          color: stacked ? textOn(color, theme) : theme.textSoft,
+          position: inside ? "inside" : horizontal ? "right" : "top",
+          color: inside ? textOn(color, theme) : theme.textSoft,
           fontSize: 11,
-          formatter: (p: Params) => (typeof p.value === "number" && p.value !== 0 ? formatChartValue(p.value, data.valueFormat, true) : ""),
+          formatter: (p: Params) => labelFor(si, p.dataIndex ?? 0, p.value),
         },
         labelLayout: { hideOverlap: true },
         data: values.map((value, i) => {
@@ -276,20 +401,24 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
           if (perCategory) style.color = categoryColors[i];
           if (stacked && topIndex[i] === si) style.borderRadius = roundEnd;
           if (Object.keys(style).length) item.itemStyle = style;
+          if (perCategory && inside) item.label = { color: textOn(categoryColors[i], theme) };
           return item;
         }),
       };
     }
-    const gradient = new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-      { offset: 0, color: withAlpha(color, theme.dark ? 0.32 : 0.26) },
-      { offset: 1, color: withAlpha(color, 0.02) },
-    ]);
+    const gradient =
+      config.gradient === false
+        ? withAlpha(color, theme.dark ? 0.24 : 0.18)
+        : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: withAlpha(color, theme.dark ? 0.32 : 0.26) },
+            { offset: 1, color: withAlpha(color, 0.02) },
+          ]);
     return {
       id: s.key,
       name: s.label,
       type: "line",
       stack: stacked ? "total" : undefined,
-      smooth: config.smooth ? 0.32 : false,
+      ...lineShape,
       connectNulls: true,
       symbol: "circle",
       symbolSize: 7,
@@ -301,10 +430,10 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
       blur: { lineStyle: { opacity: 0.3 }, areaStyle: { opacity: 0.2 } },
       label: {
         show: labels,
-        position: "top",
+        position: inside ? "bottom" : "top",
         color: theme.textSoft,
         fontSize: 11,
-        formatter: (p: Params) => (typeof p.value === "number" ? formatChartValue(p.value, data.valueFormat, true) : ""),
+        formatter: (p: Params) => labelFor(si, p.dataIndex ?? 0, p.value),
       },
       labelLayout: { hideOverlap: true },
       data: values,
@@ -314,31 +443,75 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
   if (config.goal !== undefined && Number.isFinite(config.goal) && series.length) {
     const goal = data.normalized ? undefined : config.goal;
     if (goal !== undefined) {
-      (series[series.length - 1] as Record<string, unknown>).markLine = {
+      const name = config.goalLabel?.trim() || "Goal";
+      series[series.length - 1].markLine = {
         silent: true,
         symbol: "none",
         animation: false,
         lineStyle: { color: theme.textMuted, type: [4, 4], width: 1 },
-        label: { formatter: `Goal ${formatChartValue(goal, data.valueFormat, true)}`, position: "insideEndTop", color: theme.textMuted, fontSize: 11 },
+        label: { formatter: `${name} ${formatChartValue(goal, data.valueFormat, true)}`, position: "insideEndTop", color: theme.textMuted, fontSize: 11 },
         data: [horizontal ? { xAxis: goal } : { yAxis: goal }],
       };
     }
   }
 
+  // Combo: the second measure as a line over its own right-hand axis.
+  const palette = paletteColors(paletteById(config.palette), theme);
+  const secondColor = perCategory ? theme.textSoft : palette.find((c) => !seriesColors.includes(c)) ?? theme.textSoft;
+  let secondAxis: Record<string, unknown> | undefined;
+  if (second) {
+    series.push({
+      id: SECONDARY_ID,
+      name: second.label,
+      type: "line",
+      yAxisIndex: 1,
+      z: 5,
+      ...lineShape,
+      connectNulls: true,
+      symbol: "circle",
+      symbolSize: 6,
+      showSymbol: showSymbols,
+      lineStyle: { width: 2, color: secondColor },
+      itemStyle: { color: secondColor, borderColor: theme.bg, borderWidth: 1.5 },
+      emphasis: { focus: "series", scale: 1.4 },
+      label: {
+        show: labels,
+        position: "top",
+        color: theme.textSoft,
+        fontSize: 11,
+        formatter: (p: Params) => (typeof p.value === "number" ? formatChartValue(p.value, second.format, true) : ""),
+      },
+      labelLayout: { hideOverlap: true },
+      data: second.values,
+    });
+    secondAxis = {
+      type: "value",
+      position: "right",
+      alignTicks: !log,
+      splitNumber: size.height < 300 ? 3 : 4,
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: false },
+      axisLabel: { show: config.yLabels ?? true, color: theme.textMuted, fontSize: 11, hideOverlap: true, formatter: (value: number) => formatChartValue(value, second.format, true) },
+    };
+  }
+
+  const tipMode = config.tooltip ?? "group";
   return {
-    legend: showLegend ? legendOption(theme, "top") : { show: false },
+    legend,
     grid: {
-      left: 2,
-      right: horizontal ? 24 : 10,
-      top: (showLegend ? 34 : 10) + (labels && !horizontal && !stacked ? 12 : 0),
-      bottom: 2,
+      left: 2 + pad.left,
+      right: (horizontal ? 24 : 10) + pad.right,
+      top: 10 + pad.top + (labels && !horizontal && !inside ? 12 : 0),
+      bottom: 2 + pad.bottom,
       outerBoundsMode: "same",
-      outerBoundsContain: "axisLabel",
+      outerBoundsContain: config.xTitle?.trim() || config.yTitle?.trim() ? "all" : "axisLabel",
     },
     xAxis: horizontal ? vAxis : categoryAxis,
-    yAxis: horizontal ? categoryAxis : vAxis,
+    yAxis: horizontal ? categoryAxis : secondAxis ? [vAxis, secondAxis] : vAxis,
     tooltip: {
-      trigger: "axis",
+      show: tipMode !== "off",
+      trigger: tipMode === "item" ? "item" : "axis",
       axisPointer: isBar
         ? { type: "shadow", shadowStyle: { color: withAlpha(theme.text, theme.dark ? 0.06 : 0.045) } }
         : { type: "line", lineStyle: { color: theme.borderStrong, width: 1 } },
@@ -347,18 +520,21 @@ function cartesian(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
         if (!params.length) return "";
         const index = params[0].dataIndex ?? 0;
         const category = categories[index];
+        const primary = params.filter((p) => p.seriesId !== SECONDARY_ID);
         let rows = "";
         let sum = 0;
-        for (const p of stacked ? [...params].reverse() : params) {
+        for (const p of stacked ? [...primary].reverse() : primary) {
           const s = data.series[p.seriesIndex ?? 0];
-          const value = s?.values[index] ?? null;
+          if (!s) continue;
+          const value = s.values[index] ?? null;
           sum += value ?? 0;
           const color = perCategory ? categoryColors[index] : seriesColors[p.seriesIndex ?? 0];
           rows += tipRow(color, multi ? s.label : data.measureLabel, formatChartValue(value, data.valueFormat));
         }
-        if (multi && !data.normalized && params.length > 1 && data.aggregate !== "average" && data.aggregate !== "median" && data.aggregate !== "min" && data.aggregate !== "max") {
+        if (multi && !data.normalized && primary.length > 1 && data.aggregate !== "average" && data.aggregate !== "median" && data.aggregate !== "min" && data.aggregate !== "max") {
           rows += `<div class="db-chart-tip-total">${tipRow("transparent", "Total", formatChartValue(sum, data.valueFormat))}</div>`;
         }
+        if (second && params.some((p) => p.seriesId === SECONDARY_ID)) rows += tipRow(secondColor, second.label, formatChartValue(second.values[index] ?? null, second.format));
         return tip(category?.fullLabel ?? "", rows, config.cumulative ? "Running total" : undefined);
       },
     },
@@ -373,13 +549,22 @@ function pieOption(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
   const colors = colorsFor(categories, data, theme);
   const showLegend = config.legend ?? false;
   const labels = config.labels ?? true;
-  const small = Math.min(size.width, size.height) < 260;
-  const narrow = size.width < 420;
-  const outer = labels && !small ? (narrow ? "52%" : "66%") : "78%";
-  const centerY = showLegend ? 0.53 : 0.5;
+  const { legend, pad } = legendAt(theme, config.legendPosition ?? "top", showLegend, size.width);
+  const plotW = Math.max(120, size.width - pad.left - pad.right);
+  const plotH = Math.max(120, size.height - pad.top - pad.bottom);
+  const small = Math.min(plotW, plotH) < 260;
+  const narrow = plotW < 420;
+  const insideLabels = config.labelPosition === "inside";
+  const outside = labels && !small && !insideLabels;
+  const outer = outside ? (narrow ? "52%" : "66%") : "78%";
+  const centerX = (pad.left + plotW / 2) / Math.max(1, size.width);
+  const centerY = (pad.top + plotH / 2) / Math.max(1, size.height) + (pad.top ? 0.03 : 0);
+  const content: ChartLabelContent = config.labelContent ?? "namePercent";
+  const thickness = Math.min(90, Math.max(10, config.donutWidth ?? 34)) / 100;
   const option: Option = {
-    legend: showLegend ? { ...legendOption(theme, "top") } : { show: false },
+    legend,
     tooltip: {
+      show: config.tooltip !== "off",
       trigger: "item",
       formatter: (p: Params) => {
         const i = p.dataIndex ?? 0;
@@ -391,41 +576,52 @@ function pieOption(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
       {
         id: "slices",
         type: "pie",
-        radius: donut ? [`${parseFloat(outer) * 0.66}%`, outer] : [0, outer],
-        center: ["50%", `${centerY * 100}%`],
+        radius: donut ? [`${parseFloat(outer) * (1 - thickness)}%`, outer] : [0, outer],
+        center: [`${centerX * 100}%`, `${centerY * 100}%`],
         avoidLabelOverlap: true,
         padAngle: donut ? 1.2 : 0,
         minAngle: 1,
         startAngle: 90,
         itemStyle: { borderColor: theme.bg, borderWidth: donut ? 0 : 1.5, borderRadius: donut ? 3 : 2 },
         label: {
-          show: labels && !small,
-          color: theme.textSoft,
+          show: labels && (!small || insideLabels),
+          position: insideLabels ? "inside" : "outside",
+          color: insideLabels ? undefined : theme.textSoft,
           fontSize: 11.5,
           fontFamily: theme.fontUi,
           overflow: "truncate",
           width: narrow ? Math.max(64, size.width * 0.24) : Math.max(60, Math.min(140, size.width * 0.18)),
           lineHeight: 14,
           // Narrow charts stack the share under the name so names keep their room.
-          formatter: (p: Params) => `${p.name}${narrow ? "\n" : "  "}{pct|${pct(shareOf(values[p.dataIndex ?? 0] ?? null, values))}}`,
-          rich: { pct: { color: theme.textMuted, fontSize: 11 } },
+          formatter: (p: Params) => {
+            const value = values[p.dataIndex ?? 0] ?? null;
+            const share = pct(shareOf(value, values));
+            const amount = formatChartValue(value, data.valueFormat, true);
+            const gap = narrow || insideLabels ? "\n" : "  ";
+            if (content === "value") return amount;
+            if (content === "percent") return share;
+            if (content === "name") return p.name ?? "";
+            return `${p.name}${gap}{pct|${content === "nameValue" ? amount : share}}`;
+          },
+          rich: { pct: { color: insideLabels ? undefined : theme.textMuted, fontSize: 11 } },
         },
         labelLine: { length: 8, length2: 10, smooth: 0.2, lineStyle: { color: theme.borderStrong } },
         labelLayout: { hideOverlap: true },
-        emphasis: { scale: true, scaleSize: 5, label: { show: labels && !small } },
-        data: categories.map((c, i) => ({ id: c.key, name: c.label, value: values[i] ?? 0, itemStyle: { color: colors[i] } })),
+        emphasis: { scale: true, scaleSize: 5, label: { show: labels && (!small || insideLabels) } },
+        data: categories.map((c, i) => ({ id: c.key, name: c.label, value: values[i] ?? 0, itemStyle: { color: colors[i] }, ...(insideLabels ? { label: { color: textOn(colors[i], theme) } } : {}) })),
       },
     ],
   };
-  if (donut) {
+  // The centre total needs a hole big enough to sit in.
+  if (donut && thickness <= 0.55) {
     const total = data.aggregate === "count" || data.aggregate === "sum" || data.aggregate === "countValues" ? values.reduce<number>((a, v) => a + (v ?? 0), 0) : data.total;
     const big = Math.max(16, Math.min(30, Math.min(size.width, size.height) * 0.09));
     option.graphic = [
       {
         id: "centre",
         type: "text",
-        left: "center",
-        top: size.height * centerY - big * 0.85,
+        x: size.width * centerX,
+        y: size.height * centerY - big * 0.85,
         silent: true,
         style: {
           text: `{v|${formatChartValue(total, data.valueFormat, (total ?? 0) >= 1e5)}}\n{l|${data.measureLabel}}`,
@@ -441,14 +637,18 @@ function pieOption(data: ChartData, theme: ChartTheme, size: ChartSize): Option 
   return option;
 }
 
-function funnelOption(data: ChartData, theme: ChartTheme): Option {
+function funnelOption(data: ChartData, theme: ChartTheme, size: ChartSize): Option {
   const { config, categories } = data;
   const values = data.series[0]?.values ?? [];
   const colors = colorsFor(categories, data, theme);
   const first = values[0] ?? 0;
+  const { legend, pad } = legendAt(theme, config.legendPosition ?? "top", !!config.legend, size.width);
+  const content: ChartLabelContent = config.labelContent ?? "nameValue";
+  const outside = config.labelPosition === "outside";
   return {
-    legend: config.legend ? legendOption(theme, "top") : { show: false },
+    legend,
     tooltip: {
+      show: config.tooltip !== "off",
       trigger: "item",
       formatter: (p: Params) => {
         const i = p.dataIndex ?? 0;
@@ -462,19 +662,22 @@ function funnelOption(data: ChartData, theme: ChartTheme): Option {
         id: "funnel",
         type: "funnel",
         sort: "none",
-        left: "8%",
-        right: "8%",
-        top: config.legend ? 36 : 8,
-        bottom: 8,
+        left: pad.left + size.width * 0.08,
+        right: pad.right + size.width * (outside ? 0.3 : 0.08),
+        top: 8 + pad.top,
+        bottom: 8 + pad.bottom,
         minSize: "6%",
         gap: 2,
         itemStyle: { borderWidth: 0, borderRadius: 3 },
         label: {
           show: config.labels ?? true,
-          position: "inside",
+          position: outside ? "right" : "inside",
           fontSize: 11.5,
           fontFamily: theme.fontUi,
-          formatter: (p: Params) => `${p.name}  ${formatChartValue(values[p.dataIndex ?? 0] ?? null, data.valueFormat, true)}`,
+          formatter: (p: Params) => {
+            const value = values[p.dataIndex ?? 0] ?? null;
+            return labelText(content, p.name ?? "", value, first && value !== null ? value / first : null, data.valueFormat);
+          },
         },
         emphasis: { label: { fontWeight: 600 } },
         data: categories.map((c, i) => ({
@@ -482,7 +685,7 @@ function funnelOption(data: ChartData, theme: ChartTheme): Option {
           name: c.label,
           value: values[i] ?? 0,
           itemStyle: { color: colors[i] },
-          label: { color: textOn(colors[i], theme) },
+          label: { color: outside ? theme.textSoft : textOn(colors[i], theme) },
         })),
       },
     ],
@@ -496,9 +699,13 @@ function radarOption(data: ChartData, theme: ChartTheme, size: ChartSize): Optio
   const showLegend = config.legend ?? multi;
   const peak = Math.max(0, ...data.series.flatMap((s) => s.values.map((v) => v ?? 0)));
   const max = config.yMax ?? (data.normalized ? 1 : peak > 0 ? niceCeil(peak) : 1);
+  const { legend, pad } = legendAt(theme, config.legendPosition ?? "top", showLegend, size.width);
+  const plotW = Math.max(120, size.width - pad.left - pad.right);
+  const plotH = Math.max(120, size.height - pad.top - pad.bottom);
   return {
-    legend: showLegend ? legendOption(theme, "top") : { show: false },
+    legend,
     tooltip: {
+      show: config.tooltip !== "off",
       trigger: "item",
       formatter: (p: Params) => {
         const s = data.series[p.dataIndex ?? 0];
@@ -509,8 +716,8 @@ function radarOption(data: ChartData, theme: ChartTheme, size: ChartSize): Optio
     },
     radar: {
       shape: "polygon",
-      radius: size.width < 420 ? "58%" : "66%",
-      center: ["50%", showLegend ? "55%" : "50%"],
+      radius: Math.round(Math.min(plotW, plotH) * (plotW < 420 ? 0.34 : 0.38)),
+      center: [pad.left + plotW / 2, pad.top + plotH / 2 + (pad.top ? 4 : 0)],
       splitNumber: 4,
       indicator: categories.map((c) => ({ name: c.label, max, min: config.yMin ?? 0 })),
       axisName: { color: theme.textMuted, fontSize: 11, fontFamily: theme.fontUi, overflow: "truncate", width: 90 },
@@ -523,7 +730,7 @@ function radarOption(data: ChartData, theme: ChartTheme, size: ChartSize): Optio
       {
         id: "radar",
         type: "radar",
-        symbol: "circle",
+        symbol: config.points === false ? "none" : "circle",
         symbolSize: 6,
         emphasis: { focus: "self", lineStyle: { width: 2.5 } },
         data: data.series.map((s, i) => ({
@@ -639,9 +846,11 @@ function matrixOption(data: ChartData, theme: ChartTheme, size: ChartSize): Opti
   const ramp = rampColors(theme, 2);
   const slot = (size.width - 120) / Math.max(1, categories.length);
   const showLabels = config.labels ?? (slot >= 34 && cells.length <= 240);
-  const rotate = categories.some((c) => approxTextWidth(c.label) > slot - 4) && categories.length <= 48 ? 35 : 0;
+  const rotate = config.labelAngle ?? (categories.some((c) => approxTextWidth(c.label) > slot - 4) && categories.length <= 48 ? 35 : 0);
+  const titled = !!(config.xTitle?.trim() || config.yTitle?.trim());
   return {
     tooltip: {
+      show: config.tooltip !== "off",
       trigger: "item",
       formatter: (p: Params) => {
         const [i, j, v] = p.value as [number, number, number | null];
@@ -649,14 +858,15 @@ function matrixOption(data: ChartData, theme: ChartTheme, size: ChartSize): Opti
         return tip(title, tipRow(String(p.color ?? theme.accent), data.measureLabel, formatChartValue(v, data.valueFormat)));
       },
     },
-    grid: { left: 2, right: 8, top: 8, bottom: 2, outerBoundsMode: "same", outerBoundsContain: "axisLabel" },
+    grid: { left: 2, right: 8, top: 8, bottom: 2, outerBoundsMode: "same", outerBoundsContain: titled ? "all" : "axisLabel" },
     xAxis: {
       type: "category",
       data: categories.map((c) => c.label),
       splitArea: { show: false },
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: theme.textMuted, fontSize: 11, hideOverlap: true, rotate, overflow: "truncate", width: rotate ? 96 : Math.max(30, slot - 4) },
+      axisLabel: { show: config.xLabels ?? true, color: theme.textMuted, fontSize: 11, hideOverlap: true, rotate, overflow: "truncate", width: rotate ? 96 : Math.max(30, slot - 4) },
+      ...axisTitle(config.xTitle, theme),
     },
     yAxis: {
       type: "category",
@@ -664,7 +874,8 @@ function matrixOption(data: ChartData, theme: ChartTheme, size: ChartSize): Opti
       inverse: true,
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: theme.textMuted, fontSize: 11, overflow: "truncate", width: 110 },
+      axisLabel: { show: config.yLabels ?? true, color: theme.textMuted, fontSize: 11, overflow: "truncate", width: 110 },
+      ...axisTitle(config.yTitle, theme),
     },
     visualMap: { type: "continuous", show: false, min: 0, max: max || 1, inRange: { color: ramp }, dimension: 2 },
     series: [
@@ -694,11 +905,15 @@ function matrixOption(data: ChartData, theme: ChartTheme, size: ChartSize): Opti
   };
 }
 
-function scatterOption(data: ChartData, theme: ChartTheme): Option {
+function scatterOption(data: ChartData, theme: ChartTheme, size: ChartSize): Option {
   const { config } = data;
-  const colors = colorsFor(data.series, data, theme);
   const multi = data.series.length > 1;
+  const single = singleColor(data, theme);
+  const colors = !multi && single ? [single] : colorsFor(data.series, data, theme);
   const showLegend = config.legend ?? multi;
+  const { legend, pad } = legendAt(theme, config.legendPosition ?? "top", showLegend, size.width);
+  const log = usesLog(data);
+  const xLabels = config.xLabels ?? true;
   const showGrid = config.grid ?? true;
   const xFormat = data.xProperty?.format ?? "number";
   const dense = data.points.length > 400;
@@ -708,21 +923,30 @@ function scatterOption(data: ChartData, theme: ChartTheme): Option {
     splitLine: { show: showGrid, lineStyle: { color: theme.border } },
   };
   return {
-    legend: showLegend ? legendOption(theme, "top") : { show: false },
-    grid: { left: 2, right: 14, top: showLegend ? 34 : 12, bottom: 2, outerBoundsMode: "same", outerBoundsContain: "axisLabel" },
+    legend,
+    grid: {
+      left: 2 + pad.left,
+      right: 14 + pad.right,
+      top: 12 + pad.top,
+      bottom: 2 + pad.bottom,
+      outerBoundsMode: "same",
+      outerBoundsContain: config.xTitle?.trim() || config.yTitle?.trim() ? "all" : "axisLabel",
+    },
     xAxis: data.pointsAreDates
-      ? { type: "time", ...axisCommon, splitLine: { show: false }, axisLabel: { color: theme.textMuted, fontSize: 11, hideOverlap: true } }
-      : { type: "value", scale: true, ...axisCommon, axisLabel: { color: theme.textMuted, fontSize: 11, hideOverlap: true, formatter: (v: number) => formatChartValue(v, xFormat, true) } },
+      ? { type: "time", ...axisCommon, splitLine: { show: false }, axisLabel: { show: xLabels, color: theme.textMuted, fontSize: 11, hideOverlap: true }, ...axisTitle(config.xTitle, theme) }
+      : { type: "value", scale: true, ...axisCommon, axisLabel: { show: xLabels, color: theme.textMuted, fontSize: 11, hideOverlap: true, formatter: (v: number) => formatChartValue(v, xFormat, true) }, ...axisTitle(config.xTitle, theme) },
     yAxis: {
-      type: "value",
+      type: log ? "log" : "value",
       scale: config.yMin === undefined,
-      min: config.yMin,
+      min: log && !(config.yMin && config.yMin > 0) ? undefined : config.yMin,
       max: config.yMax,
       ...axisCommon,
       axisLine: { show: false },
-      axisLabel: { color: theme.textMuted, fontSize: 11, formatter: (v: number) => formatChartValue(v, data.valueFormat, true) },
+      axisLabel: { show: config.yLabels ?? true, color: theme.textMuted, fontSize: 11, formatter: (v: number) => formatChartValue(v, data.valueFormat, true) },
+      ...axisTitle(config.yTitle, theme),
     },
     tooltip: {
+      show: config.tooltip !== "off",
       trigger: "item",
       formatter: (p: Params) => {
         const point = p.data as { name: string; value: [number, number]; series: number };
@@ -746,14 +970,14 @@ function scatterOption(data: ChartData, theme: ChartTheme): Option {
       itemStyle: { color: withAlpha(colors[i], dense ? 0.6 : 0.82), borderColor: theme.bg, borderWidth: dense ? 0 : 1 },
       emphasis: { focus: multi ? "series" : "none", scale: 1.5 },
       blur: { itemStyle: { opacity: 0.25 } },
-      data: data.points.filter((p) => p.series === s.key).map((p) => ({ name: p.label, value: [p.x, p.y], rowId: p.rowId, series: i })),
+      data: data.points.filter((p) => p.series === s.key && (!log || p.y > 0)).map((p) => ({ name: p.label, value: [p.x, p.y], rowId: p.rowId, series: i })),
       markLine:
         config.goal !== undefined && i === data.series.length - 1
           ? {
               silent: true,
               symbol: "none",
               lineStyle: { color: theme.textMuted, type: [4, 4], width: 1 },
-              label: { formatter: `Goal ${formatChartValue(config.goal, data.valueFormat, true)}`, position: "insideEndTop", color: theme.textMuted, fontSize: 11 },
+              label: { formatter: `${config.goalLabel?.trim() || "Goal"} ${formatChartValue(config.goal, data.valueFormat, true)}`, position: "insideEndTop", color: theme.textMuted, fontSize: 11 },
               data: [{ yAxis: config.goal }],
             }
           : undefined,
@@ -766,18 +990,126 @@ export function buildOption(data: ChartData, theme: ChartTheme, size: ChartSize,
   let body: Option;
   if (isCartesian(data.kind)) body = cartesian(data, theme, size);
   else if (data.kind === "pie" || data.kind === "donut") body = pieOption(data, theme, size);
-  else if (data.kind === "funnel") body = funnelOption(data, theme);
+  else if (data.kind === "funnel") body = funnelOption(data, theme, size);
   else if (data.kind === "radar") body = radarOption(data, theme, size);
   else if (data.kind === "heatmap") body = data.calendar ? calendarOption(data, theme, size) : matrixOption(data, theme, size);
-  else if (data.kind === "scatter") body = scatterOption(data, theme);
+  else if (data.kind === "scatter") body = scatterOption(data, theme, size);
   else body = {};
+  const axes = zoomAxes(data);
+  if (axes) Object.assign(body, zoomOption(data, theme, axes, body.grid as Record<string, number> | undefined, false));
   return { ...base, ...body, tooltip: { ...(base.tooltip as object), ...((body.tooltip as object) ?? {}) } };
+}
+
+// ── Zoom ─────────────────────────────────────────────────────────────────
+
+interface ZoomAxes {
+  x: boolean;
+  y: boolean;
+  /** Box-zoom brush: a range along one axis, or a rectangle. */
+  brush: "lineX" | "lineY" | "rect";
+}
+
+/** Which axes zoom: the category axis of bars and lines, both axes of scatter plots and grid heatmaps. */
+export function zoomAxes(data: ChartData): ZoomAxes | null {
+  if (data.issue || data.config.zoom === false) return null;
+  if (data.kind === "bar") return { x: false, y: true, brush: "lineY" };
+  if (isCartesian(data.kind)) return { x: true, y: false, brush: "lineX" };
+  if (data.kind === "scatter" || (data.kind === "heatmap" && !data.calendar)) return { x: true, y: true, brush: "rect" };
+  return null;
+}
+
+const ZOOM_IDS = { x: "zoomX", y: "zoomY" } as const;
+
+/** Inside zoom (wheel with Ctrl/⌘, pinch, drag to pan), an optional slider, and the box-zoom brush. */
+function zoomOption(data: ChartData, theme: ChartTheme, axes: ZoomAxes, grid: Record<string, number> | undefined, freeWheel: boolean): Option {
+  const categoryLike = data.kind !== "scatter";
+  const inside = (axis: "x" | "y") => ({
+    type: "inside",
+    id: ZOOM_IDS[axis],
+    [axis === "x" ? "xAxisIndex" : "yAxisIndex"]: 0,
+    filterMode: categoryLike && data.kind !== "heatmap" ? "filter" : "none",
+    // Plain wheel scrolls the page; Ctrl (and pinch, which arrives as Ctrl+wheel) zooms.
+    zoomOnMouseWheel: freeWheel ? true : "ctrl",
+    moveOnMouseWheel: false,
+    moveOnMouseMove: true,
+    preventDefaultMouseMove: true,
+    ...(categoryLike ? { minValueSpan: 1 } : {}),
+  });
+  const zooms: Record<string, unknown>[] = [];
+  if (axes.x) zooms.push(inside("x"));
+  if (axes.y) zooms.push(inside("y"));
+  const option: Option = { dataZoom: zooms };
+  if (data.config.zoomSlider) {
+    const vertical = !axes.x;
+    zooms.push({
+      type: "slider",
+      id: "zoomSlider",
+      [vertical ? "yAxisIndex" : "xAxisIndex"]: 0,
+      ...(vertical ? { right: 2, top: grid?.top ?? 10, bottom: grid?.bottom ?? 2, width: 14, orient: "vertical" } : { left: grid?.left ?? 2, right: grid?.right ?? 10, bottom: 4, height: 16 }),
+      filterMode: categoryLike && data.kind !== "heatmap" ? "filter" : "none",
+      showDetail: false,
+      brushSelect: false,
+      borderColor: theme.border,
+      borderRadius: 4,
+      backgroundColor: theme.bgSunken,
+      fillerColor: withAlpha(theme.accent, theme.dark ? 0.18 : 0.12),
+      dataBackground: { lineStyle: { color: theme.borderStrong, width: 1 }, areaStyle: { color: withAlpha(theme.textFaint, 0.18) } },
+      selectedDataBackground: { lineStyle: { color: theme.accent, width: 1 }, areaStyle: { color: withAlpha(theme.accent, 0.14) } },
+      handleIcon: "path://M2,0 L6,0 Q8,0 8,2 L8,14 Q8,16 6,16 L2,16 Q0,16 0,14 L0,2 Q0,0 2,0 Z",
+      handleSize: "100%",
+      handleStyle: { color: theme.bgRaised, borderColor: theme.borderStrong, borderWidth: 1 },
+      moveHandleSize: 0,
+      emphasis: { handleStyle: { borderColor: theme.accent } },
+      textStyle: { color: theme.textMuted, fontSize: 10.5 },
+    });
+    if (grid) {
+      if (vertical) grid.right = (grid.right ?? 10) + 24;
+      else grid.bottom = (grid.bottom ?? 2) + 28;
+    }
+  }
+  // The brush registers its buttons on a toolbox; ours live in the chart head instead.
+  option.toolbox = { show: false };
+  option.brush = {
+    id: "boxZoom",
+    ...(axes.x ? { xAxisIndex: 0 } : {}),
+    ...(axes.y ? { yAxisIndex: 0 } : {}),
+    brushType: axes.brush,
+    brushMode: "single",
+    transformable: false,
+    removeOnClick: true,
+    throttleType: "debounce",
+    throttleDelay: 0,
+    brushStyle: { borderWidth: 1, color: withAlpha(theme.accent, 0.1), borderColor: withAlpha(theme.accent, 0.65) },
+    outOfBrush: { colorAlpha: 1 },
+  };
+  return option;
 }
 
 /** Option components that differ between chart shapes; a change rebuilds the chart. */
 function shapeOf(data: ChartData, size: ChartSize): string {
-  const legend = data.config.legend ?? data.series.length > 1;
-  return [data.kind, data.calendar, data.config.stacked, data.normalized, legend, data.config.goal !== undefined, Math.round(size.height / 40)].join("|");
+  const { config } = data;
+  const legend = config.legend ?? (data.series.length > 1 || !!data.secondary);
+  // Zoom ranges reset whenever this changes: a new axis, bucket, kind, or set of categories.
+  return [
+    data.kind,
+    data.calendar,
+    config.stacked,
+    data.normalized,
+    legend,
+    config.legendPosition,
+    config.goal !== undefined,
+    !!data.secondary,
+    config.zoom,
+    config.zoomSlider,
+    config.x,
+    config.y,
+    config.series,
+    data.bucket,
+    config.logScale,
+    data.categories.length,
+    data.kind === "scatter" ? data.points.length : 0,
+    Math.round(size.height / 40),
+  ].join("|");
 }
 
 // ── Picking ──────────────────────────────────────────────────────────────
@@ -824,10 +1156,68 @@ function pickFrom(data: ChartData, theme: ChartTheme, params: Params, x: number,
 }
 
 /** Mounts a chart in an element. Clicks report what was picked. */
-export function mountChart(el: HTMLElement, onPick: (pick: ChartPick) => void): ChartHandle {
+export function mountChart(el: HTMLElement, onPick: (pick: ChartPick) => void, onZoom?: (state: ZoomState) => void): ChartHandle {
   const chart = echarts.init(el, null, { renderer: "svg", width: el.clientWidth || undefined, height: el.clientHeight || undefined });
   let current: { data: ChartData; theme: ChartTheme; size: ChartSize; shape: string } | null = null;
   let markClicked = false;
+  let freeWheel = false;
+  let boxing = false;
+  let lastState = "";
+
+  type ZoomModel = { id?: string; start?: number; end?: number };
+  const zooms = (): ZoomModel[] => {
+    const list = (chart.getOption()?.dataZoom as ZoomModel[] | undefined) ?? [];
+    return list.filter((z) => z.id === ZOOM_IDS.x || z.id === ZOOM_IDS.y);
+  };
+  const report = () => {
+    const list = current && zoomAxes(current.data) ? zooms() : [];
+    const state: ZoomState = { available: list.length > 0, zoomed: list.some((z) => (z.start ?? 0) > 0.01 || (z.end ?? 100) < 99.99), boxing };
+    const key = `${state.available}|${state.zoomed}|${state.boxing}`;
+    if (key !== lastState) {
+      lastState = key;
+      onZoom?.(state);
+    }
+  };
+  const applyWheel = () => {
+    const list = zooms();
+    if (list.length) chart.setOption({ dataZoom: list.map((z) => ({ id: z.id, zoomOnMouseWheel: freeWheel ? true : "ctrl" })) });
+  };
+  chart.on("datazoom", report);
+
+  // ⌘+wheel on macOS zooms like Ctrl+wheel (pinch already arrives as Ctrl+wheel).
+  const onWheel = (event: WheelEvent) => {
+    if (event.metaKey && !event.ctrlKey) Object.defineProperty(event, "ctrlKey", { value: true });
+  };
+  el.addEventListener("wheel", onWheel, { capture: true, passive: true });
+
+  // Box zoom: the brushed range becomes the zoom window, then the brush goes away.
+  chart.on("brushEnd", (raw) => {
+    const area = ((raw as { areas?: { coordRange?: unknown }[] }).areas ?? [])[0];
+    const axes = current ? zoomAxes(current.data) : null;
+    const range = area?.coordRange;
+    if (axes && Array.isArray(range)) {
+      const span = (a: unknown, b: unknown) => {
+        const lo = Math.min(Number(a), Number(b));
+        const hi = Math.max(Number(a), Number(b));
+        return current?.data.kind === "scatter" ? { startValue: lo, endValue: hi } : { startValue: Math.round(lo), endValue: Math.round(hi) };
+      };
+      const batch: Record<string, unknown>[] = [];
+      if (axes.brush === "rect" && Array.isArray(range[0]) && Array.isArray(range[1])) {
+        batch.push({ dataZoomId: ZOOM_IDS.x, ...span(range[0][0], range[0][1]) }, { dataZoomId: ZOOM_IDS.y, ...span(range[1][0], range[1][1]) });
+      } else if (range.length === 2 && range.every((v) => Number.isFinite(Number(v)))) {
+        batch.push({ dataZoomId: axes.x ? ZOOM_IDS.x : ZOOM_IDS.y, ...span(range[0], range[1]) });
+      }
+      if (batch.length) chart.dispatchAction({ type: "dataZoom", batch });
+    }
+    chart.dispatchAction({ type: "brush", areas: [] });
+    setBoxing(false);
+  });
+  const setBoxing = (on: boolean) => {
+    const axes = current ? zoomAxes(current.data) : null;
+    boxing = on && !!axes;
+    chart.dispatchAction({ type: "takeGlobalCursor", key: "brush", brushOption: boxing && axes ? { brushType: axes.brush, brushMode: "single" } : { brushType: false } });
+    report();
+  };
 
   const client = (params: Params): { x: number; y: number } => {
     const e = params.event?.event;
@@ -843,7 +1233,7 @@ export function mountChart(el: HTMLElement, onPick: (pick: ChartPick) => void): 
   };
 
   chart.on("click", (raw) => {
-    if (!current) return;
+    if (!current || boxing) return;
     const params = raw as unknown as Params;
     const { x, y } = client(params);
     const pick = pickFrom(current.data, current.theme, params, x, y);
@@ -858,7 +1248,7 @@ export function mountChart(el: HTMLElement, onPick: (pick: ChartPick) => void): 
   chart.getZr().on("click", (event) => {
     const clicked = markClicked;
     markClicked = false;
-    if (clicked || !current || !isCartesian(current.data.kind)) return;
+    if (clicked || boxing || !current || !isCartesian(current.data.kind)) return;
     const { data } = current;
     const point = [event.offsetX, event.offsetY];
     if (!chart.containPixel({ gridIndex: 0 }, point)) return;
@@ -883,9 +1273,13 @@ export function mountChart(el: HTMLElement, onPick: (pick: ChartPick) => void): 
       const shape = shapeOf(data, size);
       const rebuild = !current || current.shape !== shape || current.theme !== theme;
       const option = buildOption(data, theme, size, true);
-      if (rebuild) chart.setOption(option, { notMerge: true, lazyUpdate: false });
-      else chart.setOption(option, { replaceMerge: ["series", "graphic", "xAxis", "yAxis", "visualMap"] });
+      if (rebuild) {
+        boxing = false;
+        chart.setOption(option, { notMerge: true, lazyUpdate: false });
+      } else chart.setOption(option, { replaceMerge: ["series", "graphic", "xAxis", "yAxis", "visualMap"] });
       current = { data, theme, size, shape };
+      if (freeWheel) applyWheel();
+      report();
     },
     resize(size) {
       chart.resize({ width: size.width, height: size.height, animation: { duration: 0 } });
@@ -898,9 +1292,33 @@ export function mountChart(el: HTMLElement, onPick: (pick: ChartPick) => void): 
     },
     quiet(on) {
       chart.dispatchAction({ type: "hideTip" });
-      chart.setOption({ tooltip: { show: !on } });
+      chart.setOption({ tooltip: { show: !on && current?.data.config.tooltip !== "off" } });
+    },
+    zoom(factor) {
+      const batch = zooms().map((z) => {
+        const from = z.start ?? 0;
+        const to = z.end ?? 100;
+        const span = Math.min(100, Math.max(1, (to - from) / factor));
+        const mid = Math.min(100 - span / 2, Math.max(span / 2, (from + to) / 2));
+        return { dataZoomId: z.id, start: mid - span / 2, end: mid + span / 2 };
+      });
+      if (batch.length) chart.dispatchAction({ type: "dataZoom", batch });
+    },
+    resetZoom() {
+      const batch = zooms().map((z) => ({ dataZoomId: z.id, start: 0, end: 100 }));
+      if (batch.length) chart.dispatchAction({ type: "dataZoom", batch });
+      if (boxing) setBoxing(false);
+    },
+    boxZoom(on) {
+      setBoxing(on);
+    },
+    setFreeWheel(on) {
+      if (freeWheel === on) return;
+      freeWheel = on;
+      applyWheel();
     },
     dispose() {
+      el.removeEventListener("wheel", onWheel, { capture: true });
       chart.dispose();
     },
   };

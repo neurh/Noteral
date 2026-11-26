@@ -20,6 +20,43 @@ interface PopoverProps {
 // not close the older one that opened it.
 const stack: HTMLElement[] = [];
 
+/** Can `from` (or an ancestor up to `root`) scroll further in the wheel's direction? */
+function canScroll(from: Element | null, root: HTMLElement, deltaY: number): boolean {
+  for (let el = from; el; el = el.parentElement) {
+    if (el instanceof HTMLElement) {
+      const style = getComputedStyle(el);
+      const scrollable = /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1;
+      if (scrollable) {
+        if (deltaY < 0 && el.scrollTop > 0) return true;
+        if (deltaY > 0 && el.scrollTop + el.clientHeight < el.scrollHeight - 1) return true;
+      }
+    }
+    if (el === root) break;
+  }
+  return false;
+}
+
+/**
+ * While a popover is open the page under it does not scroll (the menu would
+ * slide away from its anchor). Wheel input inside a popover scrolls its own
+ * lists and never chains to the page.
+ */
+function onLockedWheel(event: WheelEvent) {
+  if (!stack.length || event.ctrlKey) return;
+  const target = event.target instanceof Element ? event.target : null;
+  const owner = target ? stack.find((item) => item.contains(target)) : undefined;
+  if (owner && canScroll(target, owner, event.deltaY)) return;
+  event.preventDefault();
+}
+
+function lockScroll() {
+  if (stack.length === 1) window.addEventListener("wheel", onLockedWheel, { capture: true, passive: false });
+}
+
+function unlockScroll() {
+  if (!stack.length) window.removeEventListener("wheel", onLockedWheel, { capture: true });
+}
+
 function rectOf(anchor: Anchor): DOMRect | null {
   if (!anchor) return null;
   if (anchor instanceof HTMLElement) return anchor.getBoundingClientRect();
@@ -42,9 +79,11 @@ export function Popover({ anchor, onClose, children, placement = "bottom-start",
     const node = ref.current;
     if (!node) return;
     stack.push(node);
+    lockScroll();
     return () => {
       const index = stack.indexOf(node);
       if (index >= 0) stack.splice(index, 1);
+      unlockScroll();
     };
   }, []);
 

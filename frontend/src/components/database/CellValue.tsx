@@ -14,7 +14,11 @@ import {
   type DateValue,
   type Property,
 } from "../../lib/database";
+import { displayStyle } from "../../lib/numberDisplay";
+import { formulaRich } from "../../lib/databaseFormulas";
 import type { DatabaseApi } from "./useDatabase";
+import { CheckboxMark, NumberValue } from "./CellMarks";
+import { FormulaRichText } from "./FormulaRichText";
 import { DatePicker } from "./DatePicker";
 import { OptionPicker } from "./OptionPicker";
 import { OptionChip } from "./parts";
@@ -70,6 +74,10 @@ function linkHref(property: Property, text: string): string {
 /** Read-only rendering of a property value. */
 export function CellDisplay({ property, row, compact }: { property: Property; row: DatabaseRow; compact?: boolean }) {
   const value = cellValue(row, property);
+  // Number formulas can "show as" a bar / ring / rating / heat like number properties.
+  if (property.type === "formula" && property.resultType === "number" && displayStyle(property.display) !== "number" && typeof value === "number") {
+    return <NumberValue property={property} value={value} formula />;
+  }
   switch (property.type) {
     case "select":
     case "status": {
@@ -87,11 +95,9 @@ export function CellDisplay({ property, row, compact }: { property: Property; ro
       );
     }
     case "checkbox":
-      return <span className={`db-checkbox ${value ? "is-checked" : ""}`} aria-hidden />;
-    case "number": {
-      const text = formatNumber(value, property.format);
-      return text ? <span className="db-number">{text}</span> : null;
-    }
+      return <CheckboxMark checked={!!value} label={`${property.name}: ${value ? "checked" : "not checked"}`} />;
+    case "number":
+      return <NumberValue property={property} value={value} />;
     case "date": {
       const start = dateStart(value);
       if (!start) return null;
@@ -103,6 +109,8 @@ export function CellDisplay({ property, row, compact }: { property: Property; ro
       return typeof value === "string" ? <span className="db-text is-muted">{formatDateTime(value)}</span> : null;
     case "formula": {
       if (value === undefined || value === null || value === "") return null;
+      const rich = formulaRich(row, property.id);
+      if (rich) return <FormulaRichText spans={rich} className="db-text is-formula" />;
       switch (property.resultType) {
         case "number": {
           const text = formatNumber(value, property.format);
@@ -112,7 +120,9 @@ export function CellDisplay({ property, row, compact }: { property: Property; ro
           return <span className={`db-checkbox is-readonly ${value ? "is-checked" : ""}`} aria-label={value ? "true" : "false"} />;
         case "date": {
           const start = typeof value === "object" ? String((value as DateValue).start ?? "") : String(value);
-          return <span className="db-text is-formula">{formulaDateText(property, start)}</span>;
+          const end = typeof value === "object" ? String((value as DateValue).end ?? "") : "";
+          const text = formulaDateText(property, start);
+          return <span className="db-text is-formula">{end ? `${text} → ${formulaDateText(property, end)}` : text}</span>;
         }
         default:
           return <span className="db-text is-formula">{String(value)}</span>;

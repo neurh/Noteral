@@ -44,6 +44,7 @@ import { databaseMarkerIds } from "../lib/markdownEmbeds";
 import { withFormulas } from "../lib/databaseFormulas";
 import type { FormulaResult } from "../lib/databaseFormulas";
 import { compileFormula } from "../lib/formula";
+import { normalizeNumberDisplay } from "../lib/numberDisplay";
 import { paneList } from "../lib/panes";
 import { applyEdits } from "./textEdits";
 import type { TextEdit } from "./textEdits";
@@ -387,6 +388,11 @@ export function requireDatabase(databaseId: string): { meta: PageMeta; schema: D
   return { meta, schema: parseSchema(meta.data) };
 }
 
+/** Row writes are refused on a locked database (see `DatabaseSchema.locked`). */
+export function assertUnlocked(meta: PageMeta, schema: DatabaseSchema): void {
+  if (schema.locked) throw new Error(`"${displayTitle(meta.id)}" is locked, so its rows can't change. Ask the user to unlock it (view settings → Lock database), or call databases.setLocked.`);
+}
+
 export function propertyByName(schema: DatabaseSchema, name: string): Property | undefined {
   const key = name.trim().toLowerCase();
   return schema.properties.find((property) => property.name.toLowerCase() === key) ?? schema.properties.find((property) => property.id === name);
@@ -409,6 +415,7 @@ export function schemaInfo(meta: PageMeta, schema: DatabaseSchema): DatabaseSche
     databaseId: meta.id,
     title: displayTitle(meta.id),
     titleName: schema.titleName,
+    ...(schema.locked ? { locked: true } : {}),
     properties: schema.properties.map((property) => {
       const resultType = typed?.schema.properties.find((item) => item.id === property.id)?.resultType;
       const error = typed?.issues.find((issue) => issue.propertyId === property.id)?.message;
@@ -420,6 +427,7 @@ export function schemaInfo(meta: PageMeta, schema: DatabaseSchema): DatabaseSche
         ...(property.format ? { format: property.format } : {}),
         ...(property.type === "formula" ? { formula: property.formula ?? "", ...(resultType ? { resultType } : {}), ...(error ? { error } : {}) } : {}),
         ...(property.dateFormat ? { dateFormat: property.dateFormat } : {}),
+        ...(property.display && (property.type === "number" || property.type === "formula") ? { display: { ...property.display } } : {}),
       };
     }),
     views: schema.views.map((view) => ({ id: view.id, name: view.name, type: view.type })),
@@ -499,6 +507,8 @@ export interface PropertyExtras {
   formula?: string;
   format?: string;
   dateFormat?: string;
+  /** Number "Show as": { style, color?, max?, showNumber? }, a style name, or null to clear. */
+  display?: unknown;
 }
 
 /**
@@ -566,6 +576,12 @@ export function applyPropertyExtras(schema: DatabaseSchema, property: Property, 
     if (extras.dateFormat && !DATE_FORMAT_IDS.includes(extras.dateFormat)) throw new Error(`Unknown dateFormat "${extras.dateFormat}". Use one of: ${DATE_FORMAT_IDS.join(", ")}.`);
     if (extras.dateFormat) property.dateFormat = extras.dateFormat as Property["dateFormat"];
     else delete property.dateFormat;
+  }
+  if (extras.display !== undefined) {
+    if (property.type !== "number" && property.type !== "formula") throw new Error(`display applies to number and formula properties, not "${property.name}" (${property.type}).`);
+    const display = normalizeNumberDisplay(extras.display, property.name, property.display);
+    if (display) property.display = display;
+    else delete property.display;
   }
   if (property.type === "formula") {
     if (extras.formula !== undefined) property.formula = checkFormula(schema, extras.formula, property);
@@ -1015,6 +1031,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "databases.addRow": async (p) => {
     const { meta, schema } = requireDatabase(p.databaseId);
+    assertUnlocked(meta, schema);
     const values: RowValues = {};
     const applied = applyValues(schema, values, p.values);
     if (applied.schemaChanged) await store().setPageData(meta.id, serializeSchema(schema));
@@ -1025,6 +1042,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "databases.addRows": async (p) => {
     const { meta, schema } = requireDatabase(p.databaseId);
+    assertUnlocked(meta, schema);
     const input = (p.rows ?? []) as { title?: string; values?: Record<string, unknown> }[];
     if (!input.length) throw new Error("rows is empty.");
     let schemaChanged = false;
@@ -1054,6 +1072,7 @@ export const HANDLERS: Record<string, Handler> = {
       if (!database || database.kind !== "database") throw new Error(`Row ${index + 1}: "${displayTitle(row.id)}" is not a database row.`);
       let entry = schemas.get(database.id);
       if (!entry) schemas.set(database.id, (entry = { schema: parseSchema(database.data), changed: false }));
+      assertUnlocked(database, entry.schema);
       const values = parseRowValues(row.data);
       let title = update.title;
       if (update.values) {
@@ -1081,6 +1100,7 @@ export const HANDLERS: Record<string, Handler> = {
     const database = row.parentId ? findMeta(row.parentId) : undefined;
     if (!database || database.kind !== "database") throw new Error(`"${displayTitle(row.id)}" is not a database row.`);
     const schema = parseSchema(database.data);
+    assertUnlocked(database, schema);
     const values = parseRowValues(row.data);
     const applied = applyValues(schema, values, p.values);
     if (applied.schemaChanged) await store().setPageData(database.id, serializeSchema(schema));
