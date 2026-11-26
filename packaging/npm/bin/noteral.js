@@ -49,6 +49,15 @@ function run(cmd, args) {
   if (r.status !== 0) throw new Error(`${cmd} exited with ${r.status}`);
 }
 
+// Windows 10+ ships bsdtar as System32\tar.exe, which reads .zip. Call it by
+// full path: a GNU tar earlier in PATH (Git Bash, MSYS) reads "C:" as a host.
+function extractZipWindows(archive, out) {
+  const tar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+  if (fs.existsSync(tar)) return run(tar, ["-xf", archive, "-C", out]);
+  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+    `Expand-Archive -LiteralPath '${archive.replace(/'/g, "''")}' -DestinationPath '${out.replace(/'/g, "''")}' -Force`]);
+}
+
 async function ensureInstalled() {
   const t = target();
   const dir = path.join(cacheRoot(), VERSION);
@@ -79,7 +88,8 @@ async function ensureInstalled() {
     const out = path.join(tmp, "out");
     fs.mkdirSync(out);
     if (process.platform === "darwin") run("ditto", ["-x", "-k", archive, out]);
-    else run("tar", ["-xf", archive, "-C", out]); // bsdtar on Windows 10+ reads .zip too
+    else if (process.platform === "win32") extractZipWindows(archive, out);
+    else run("tar", ["-xf", archive, "-C", out]);
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(path.dirname(dir), { recursive: true });
     fs.renameSync(out, dir);
