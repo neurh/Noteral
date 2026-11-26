@@ -74,7 +74,7 @@ import type {
   WorkspaceInfo,
 } from "./types";
 
-export const SDK_VERSION = "2.0.0";
+export const SDK_VERSION = "2.1.0";
 
 /** Things only a running plugin frame can do (status items, panels, styles). */
 export interface PluginSurface {
@@ -847,6 +847,11 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "editor.getBlocks": (p) => need(editorFor(p.pageId).handle.getBlocks, "editor.getBlocks")(),
   "editor.getSelection": (p) => need(editorFor(p.pageId).handle.getSelection, "editor.getSelection")(),
+  "editor.getBlock": (p) => {
+    const block = need(editorFor(p.pageId).handle.getBlock, "editor.getBlock")(p.blockId);
+    if (!block) throw new Error(`Block ${p.blockId} does not exist`);
+    return block;
+  },
   "editor.snapshot": (): EditorSnapshot | null => {
     const id = activePageId();
     const handle = id ? editorBridge.get(id) : undefined;
@@ -873,6 +878,29 @@ export const HANDLERS: Record<string, Handler> = {
   "editor.removeBlocks": async (p) => {
     await need(editorFor(p.pageId).handle.removeBlocks, "editor.removeBlocks")(p.blockIds);
   },
+  "editor.moveBlocks": async (p) => {
+    if (!p.direction && !p.targetBlockId) throw new Error("Pass direction (\"up\"/\"down\") or targetBlockId.");
+    await need(editorFor(p.pageId).handle.moveBlocks, "editor.moveBlocks")(p.blockIds, {
+      direction: p.direction as "up" | "down" | undefined,
+      targetBlockId: p.targetBlockId,
+      placement: p.placement as "before" | "after" | undefined,
+    });
+  },
+  "editor.insertText": async (p) => {
+    await need(editorFor(p.pageId).handle.insertText, "editor.insertText")(p.text);
+  },
+  "editor.formatText": async (p) => {
+    const styles = (p.styles ?? {}) as Record<string, unknown>;
+    if (!Object.values(styles).some((value) => value !== undefined && value !== false) && !p.link) {
+      throw new Error("Pass at least one style or a link.");
+    }
+    await need(editorFor(p.pageId).handle.formatText, "editor.formatText")({
+      styles: styles as never,
+      mode: p.mode as "toggle" | "add" | "remove" | undefined,
+      link: p.link,
+      blockIds: p.blockIds,
+    });
+  },
   "editor.setMarkdown": async (p) => {
     checkEmbeds(p.markdown);
     await need(editorFor(p.pageId).handle.setMarkdown, "editor.setMarkdown")(p.markdown);
@@ -884,6 +912,17 @@ export const HANDLERS: Record<string, Handler> = {
   "editor.redo": (p) => need(editorFor(p.pageId).handle.redo, "editor.redo")(),
   "editor.scrollToBlock": (p) => {
     editorFor(p.pageId).handle.scrollToBlock(p.blockId);
+  },
+  "editor.select": (p) => {
+    need(editorFor(p.pageId).handle.select, "editor.select")(p.blockId, {
+      endBlockId: p.endBlockId,
+      placement: p.placement as "start" | "end" | undefined,
+    });
+  },
+  "editor.focus": (p) => {
+    const { handle } = editorFor(p.pageId);
+    if (p.target === "title") handle.focusTitle();
+    else handle.focus();
   },
   "editor.openFind": (p) => {
     need(editorFor().handle.openFind, "editor.openFind")(Boolean(p.replace));

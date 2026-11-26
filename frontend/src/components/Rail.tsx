@@ -1,13 +1,11 @@
-import { Layers, LibraryBig, ListTree, Puzzle, Search, Settings } from "lucide-react";
+import { FileText, Layers, Puzzle, Settings } from "lucide-react";
 import { useAppStore, type LeftTab } from "../store";
 
-const items = [
-  { id: "library", label: "Library", icon: LibraryBig },
-  { id: "palette", label: "Search", icon: Search },
-  { id: "plugins", label: "Plugins", icon: Puzzle },
-] as const;
-
+// Search lives in the top bar (and Ctrl+K), the library in Settings and the
+// command palette, so the rail keeps only the page tree up top and the
+// app-level destinations at the foot.
 const bottomItems = [
+  { id: "plugins", label: "Plugins", icon: Puzzle },
   { id: "settings", label: "Settings", icon: Settings },
   { id: "workspaces", label: "Workspaces", icon: Layers },
 ] as const;
@@ -52,25 +50,8 @@ export function Rail() {
           title={treeVisible ? "Hide page tree" : "Show page tree"}
           onClick={toggleTree}
         >
-          <ListTree size={19} strokeWidth={1.8} />
+          <FileText size={19} strokeWidth={1.8} />
         </button>
-        {items.map((item) => {
-          const Icon = item.icon;
-          const selected = overlay === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={`rail-button ${selected ? "selected" : ""}`}
-              aria-label={item.label}
-              aria-pressed={selected}
-              title={item.label}
-              onClick={() => setOverlay(item.id)}
-            >
-              <Icon size={19} strokeWidth={1.8} />
-            </button>
-          );
-        })}
       </div>
       <div className="rail-bottom">
         {bottomItems.map((item) => {

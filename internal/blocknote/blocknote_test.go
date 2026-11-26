@@ -75,3 +75,14 @@ func TestParseAcceptsWrappedDocument(t *testing.T) {
 		t.Fatalf("Parse wrapped: %v %d", err, len(blocks))
 	}
 }
+
+func TestRenderMarkdownCallout(t *testing.T) {
+	doc := `[{"type":"callout","props":{"icon":"💡","tone":"yellow"},"content":[{"type":"text","text":"Remember this"}],"children":[]}]`
+	md, err := RenderMarkdown(doc, RenderOptions{})
+	if err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
+	if !strings.Contains(md, "> 💡 Remember this") {
+		t.Fatalf("callout not rendered as a quote: %q", md)
+	}
+}

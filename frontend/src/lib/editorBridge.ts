@@ -28,12 +28,43 @@ export interface EditorSelection {
   cursorBlockId: string;
 }
 
+/** Inline styles plugins can apply with editor.formatText. */
+export interface TextStyles {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  code?: boolean;
+  textColor?: string;
+  backgroundColor?: string;
+}
+
+export interface TextFormat {
+  styles?: TextStyles;
+  /** "toggle" (default) flips on/off styles; "add" and "remove" set them. */
+  mode?: "toggle" | "add" | "remove";
+  /** Turn the selection into a link to this URL ("" removes nothing; use the link toolbar). */
+  link?: string;
+  /** Format these whole blocks instead of the current selection. */
+  blockIds?: string[];
+}
+
 export interface EditorHandle {
   getJSON: () => string;
   /** Whole document (or the given blocks) as Markdown. Lossy for custom blocks. */
   getMarkdown?: (blockIds?: string[]) => string;
   getBlocks?: () => BlockSummary[];
   getSelection?: () => EditorSelection;
+  /** One block, with its children, parent and neighbours. */
+  getBlock?: (blockId: string) => (BlockSummary & { parentId: string; prevId: string; nextId: string }) | undefined;
+  /** Move blocks one step up/down, or before/after another block. Ids are kept. */
+  moveBlocks?: (blockIds: string[], move: { direction?: "up" | "down"; targetBlockId?: string; placement?: "before" | "after" }) => Promise<void>;
+  /** Type plain text at the cursor, replacing the selection. */
+  insertText?: (text: string) => Promise<void>;
+  /** Bold/italic/colour/link the selection (or whole blocks). */
+  formatText?: (format: TextFormat) => Promise<void>;
+  /** Put the cursor at the start/end of a block, or select a run of blocks. */
+  select?: (blockId: string, options: { endBlockId?: string; placement?: "start" | "end" }) => void;
   /** Insert Markdown relative to the cursor, the document edges, or a block. Returns new block ids. */
   insertMarkdown?: (markdown: string, position: InsertPosition, blockId?: string) => Promise<string[]>;
   /** Replace blocks with blocks parsed from Markdown. Returns new block ids. */
@@ -60,6 +91,7 @@ export interface EditorHandle {
 }
 
 const handles = new Map<string, EditorHandle>();
+const selectionListeners = new Set<(pageId: string) => void>();
 
 export const editorBridge = {
   register(pageId: string, handle: EditorHandle): () => void {
@@ -73,5 +105,13 @@ export const editorBridge = {
   },
   has(pageId: string): boolean {
     return handles.has(pageId);
+  },
+  /** Called by the editor when its cursor or selection moved. */
+  selectionChanged(pageId: string) {
+    for (const listener of selectionListeners) listener(pageId);
+  },
+  onSelectionChange(listener: (pageId: string) => void): () => void {
+    selectionListeners.add(listener);
+    return () => selectionListeners.delete(listener);
   },
 };

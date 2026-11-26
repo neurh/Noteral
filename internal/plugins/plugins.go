@@ -43,7 +43,7 @@ const (
 	sdkMajorMin = 1
 	sdkMajorMax = 2
 	// SDKVersion is the newest plugin SDK this host implements.
-	SDKVersion = "2.0.0"
+	SDKVersion = "2.1.0"
 )
 
 // ManifestFile and LegacyManifestFile are the two accepted manifest names. New
@@ -131,6 +131,8 @@ type CommandContribution struct {
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
 	Keywords    string `json:"keywords,omitempty"`
+	// Shortcut is an optional key binding such as "Mod+Shift+K" (Mod = Ctrl or ⌘).
+	Shortcut string `json:"shortcut,omitempty"`
 }
 
 // StatusContribution is a status-bar item.
@@ -340,6 +342,10 @@ func validateManifest(m Manifest) (Manifest, error) {
 		}
 		if c.Title == "" {
 			return m, fmt.Errorf("command %q needs a title", c.ID)
+		}
+		c.Shortcut = strings.TrimSpace(c.Shortcut)
+		if len(c.Shortcut) > 40 {
+			return m, fmt.Errorf("command %q has a shortcut longer than 40 characters", c.ID)
 		}
 		if cmdSeen[c.ID] {
 			return m, fmt.Errorf("duplicate command id %q", c.ID)

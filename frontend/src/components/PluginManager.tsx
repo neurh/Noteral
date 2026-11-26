@@ -4,19 +4,30 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowUpCircle,
-  SlidersHorizontal,
+  BookOpen,
   Bot,
   Box,
+  ChevronRight,
+  Compass,
   ExternalLink,
   FileArchive,
   Globe2,
+  LayoutPanelLeft,
+  ListTree,
   LoaderCircle,
   PackagePlus,
+  PanelBottom,
+  Puzzle,
   RefreshCw,
   RotateCcw,
   Search,
+  Settings2,
   ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  SquareTerminal,
   Trash2,
+  X,
 } from "lucide-react";
 import { api, errorMessage, list } from "../lib/api";
 import type { CatalogEntry, CommunityPlugin, Info, Manifest, PluginEnvironment, PluginUpdate, Release } from "../lib/api";
@@ -33,7 +44,8 @@ import { PluginOptions, usePluginOptionFields } from "./PluginOptions";
 import { pluginConfigure, usePluginConfigure } from "../lib/pluginConfigure";
 import { Modal } from "./Modal";
 
-type Tab = "installed" | "community" | "created" | "bundled";
+type Section = "installed" | "updates" | "discover" | "bundled" | "created";
+type InstalledFilter = "all" | "enabled" | "disabled" | "issues";
 
 /** What the review screen is about to install. */
 interface Review {
@@ -49,8 +61,17 @@ interface Review {
 }
 
 const REGISTRY_KEY = "noteral.pluginRegistryUrl";
+const DOCS_URL = "https://github.com/neurh/noteral-plugins#readme";
 const RISK_ORDER = { high: 0, medium: 1, low: 2 } as const;
 const permissionInfo = new Map(PERMISSIONS.map((item) => [item.id as string, item]));
+
+const SECTIONS: Record<Section, { title: string; blurb: string }> = {
+  installed: { title: "Installed", blurb: "Turn plugins on or off, change their settings and see what each one can reach." },
+  updates: { title: "Updates", blurb: "New releases of plugins you installed from the community registry." },
+  discover: { title: "Discover", blurb: "Published by the community on GitHub and not reviewed by Noteral. Check the permissions before you approve." },
+  bundled: { title: "Bundled", blurb: "Examples that ship with Noteral. They work offline and make a good starting point for your own." },
+  created: { title: "Created", blurb: "Layers and plugins made by you and the assistant." },
+};
 
 function readRegistryUrl() {
   try {
@@ -68,6 +89,13 @@ function permissionsOf(manifest: Manifest) {
   });
 }
 
+/** The highest risk among a plugin's permissions, for the one-word summary on rows. */
+function riskOf(manifest: Manifest): "high" | "medium" | "low" | "none" {
+  const first = permissionsOf(manifest)[0];
+  if (!first) return "none";
+  return permissionInfo.get(first)?.risk ?? "low";
+}
+
 function sourceLabel(source: string): { label: string; icon: ReactNode } {
   if (source.startsWith("github:")) return { label: "Community", icon: <Globe2 size={11} /> };
   if (source === "catalog") return { label: "Bundled", icon: <Box size={11} /> };
@@ -75,9 +103,17 @@ function sourceLabel(source: string): { label: string; icon: ReactNode } {
   return { label: "From file", icon: <FileArchive size={11} /> };
 }
 
+function repoOf(plugin: Info) {
+  return plugin.manifest.repo || (plugin.source.startsWith("github:") ? plugin.source.slice(7) : "");
+}
+
 function matches(query: string, ...fields: (string | undefined | null)[]) {
   const needle = query.trim().toLowerCase();
   return !needle || fields.some((field) => field?.toLowerCase().includes(needle));
+}
+
+function plural(n: number, one: string, many = `${one}s`) {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 export function PluginManager() {
@@ -88,7 +124,9 @@ export function PluginManager() {
   const notify = useAppStore((state) => state.notify);
   const runtimeStates = usePluginRuntimeStates();
 
-  const [tab, setTab] = useState<Tab>("installed");
+  const [section, setSection] = useState<Section>("installed");
+  const [filter, setFilter] = useState<InstalledFilter>("all");
+  const [detailId, setDetailId] = useState<string | null>(null);
   const { layers } = useCustomizations();
   const [query, setQuery] = useState("");
   const [env, setEnv] = useState<PluginEnvironment | null>(null);
@@ -107,16 +145,22 @@ export function PluginManager() {
   useEffect(() => {
     if (!open) return;
     setReview(null);
+    setDetailId(null);
     setQuery("");
     void loadPlugins();
     void api.getPluginEnvironment().then(setEnv).catch(() => undefined);
     void api.listPluginCatalog().then((entries) => setCatalog(list(entries))).catch(() => undefined);
   }, [open, loadPlugins]);
 
-  // The registry lives on GitHub; it's only fetched once you open the tab.
+  // The registry lives on GitHub; it's only fetched once you open Discover.
   useEffect(() => {
-    if (open && tab === "community" && !registry && !registryError && busy !== "registry") void fetchRegistry();
-  }, [open, tab]);
+    if (open && section === "discover" && !registry && !registryError && busy !== "registry") void fetchRegistry();
+  }, [open, section]);
+
+  // Updates are checked the first time you open the Updates section.
+  useEffect(() => {
+    if (open && section === "updates" && updates === null && busy !== "updates") void checkUpdates(true);
+  }, [open, section]);
 
   async function run(key: string, task: () => Promise<void>) {
     setBusy(key);
@@ -148,12 +192,13 @@ export function PluginManager() {
     if (registry) await fetchRegistry();
   }
 
-  const checkUpdates = () =>
+  const checkUpdates = (quiet = false) =>
     run("updates", async () => {
       const found = list(await api.checkPluginUpdates());
       setUpdates(found);
+      if (quiet) return;
       const ready = found.filter((item) => !item.problem).length;
-      notify(ready ? `${ready} update${ready === 1 ? "" : "s"} available` : "All community plugins are up to date", "info");
+      notify(ready ? `${plural(ready, "update")} available` : "All community plugins are up to date", "info");
     });
 
   const toggle = (plugin: Info) =>
@@ -173,6 +218,7 @@ export function PluginManager() {
       if (!ok) return;
       await api.uninstallPlugin(plugin.manifest.id);
       setUpdates((current) => current?.filter((item) => item.id !== plugin.manifest.id) ?? null);
+      setDetailId(null);
       await refreshAll();
       notify(`Uninstalled ${plugin.manifest.name}`, "info");
     });
@@ -229,9 +275,10 @@ export function PluginManager() {
       setReview(null);
       setUpdates((items) => items?.filter((item) => item.id !== info.manifest.id) ?? null);
       await refreshAll();
-      setTab("installed");
+      setSection("installed");
+      setDetailId(info.manifest.id);
       const verb = current.installedVersion ? "Updated" : "Installed";
-      notify(`${verb} ${info.manifest.name} ${info.manifest.version}${info.enabled ? "" : " — enable it in Installed"}`, "success");
+      notify(`${verb} ${info.manifest.name} ${info.manifest.version}${info.enabled ? "" : " — turn it on to start it"}`, "success");
     });
 
   const saveRegistry = () => {
@@ -247,262 +294,411 @@ export function PluginManager() {
     void fetchRegistry(next);
   };
 
+  const go = (next: Section) => {
+    setSection(next);
+    setDetailId(null);
+    setReview(null);
+    setQuery("");
+  };
+
   const installedIds = new Set(plugins.map((item) => item.manifest.id));
-  const visibleInstalled = plugins.filter((item) => matches(query, item.manifest.name, item.manifest.description, item.manifest.author, item.manifest.id));
-  const madeByAssistant = visibleInstalled.filter((item) => item.source === "assistant");
-  const layerCount = layers.length;
+  const hasIssue = (plugin: Info) => Boolean(plugin.problem || (plugin.enabled && failed.has(plugin.manifest.id)));
+  const issueCount = plugins.filter(hasIssue).length;
+  const enabledCount = plugins.filter((item) => item.enabled).length;
+  const visibleInstalled = plugins
+    .filter((item) => matches(query, item.manifest.name, item.manifest.description, item.manifest.author, item.manifest.id))
+    .filter((item) => (filter === "enabled" ? item.enabled : filter === "disabled" ? !item.enabled : filter === "issues" ? hasIssue(item) : true))
+    .sort((a, b) => Number(hasIssue(b)) - Number(hasIssue(a)) || a.manifest.name.localeCompare(b.manifest.name));
+  const madeByAssistant = plugins.filter((item) => item.source === "assistant" && matches(query, item.manifest.name, item.manifest.description, item.manifest.id));
   const visibleCommunity = (registry?.plugins ?? []).filter((item) => matches(query, item.name, item.description, item.author, item.repo, ...(item.tags ?? [])));
   const visibleBundled = catalog.filter((item) => !item.remote && matches(query, item.manifest.name, item.manifest.description));
   const updateCount = updateFor.size;
+  const detail = detailId ? plugins.find((item) => item.manifest.id === detailId) : undefined;
+  const meta = SECTIONS[section];
 
-  return (
-    <Modal
-      open={open}
-      title={review ? (review.installedVersion ? `Update ${review.manifest.name}` : `Install ${review.manifest.name}`) : "Plugins"}
-      subtitle={review ? "Review what this plugin can do before it runs." : "Sandboxed extensions that run with only the permissions you approve."}
-      onClose={() => setOverlay(null)}
-      width="large"
-      className="plugin-store"
-      bodyClassName="plugin-store-body"
-    >
-      {review ? (
-        <ReviewScreen review={review} busy={busy === "install"} onBack={() => setReview(null)} onApprove={() => void approve(review)} />
+  const row = (plugin: Info) => (
+    <PluginRow
+      key={plugin.manifest.id}
+      plugin={plugin}
+      busy={busy === plugin.manifest.id}
+      runtimeError={plugin.enabled ? failed.get(plugin.manifest.id) : undefined}
+      update={updateFor.get(plugin.manifest.id)}
+      onOpen={() => setDetailId(plugin.manifest.id)}
+      onToggle={() => void toggle(plugin)}
+    />
+  );
+
+  let body: ReactNode;
+  if (review) {
+    body = <ReviewScreen review={review} busy={busy === "install"} onBack={() => setReview(null)} onApprove={() => void approve(review)} />;
+  } else if (detail) {
+    body = (
+      <PluginDetail
+        plugin={detail}
+        busy={busy === detail.manifest.id}
+        reviewing={busy === `review:${detail.manifest.id}`}
+        runtimeError={detail.enabled ? failed.get(detail.manifest.id) : undefined}
+        update={updateFor.get(detail.manifest.id)}
+        onToggle={() => void toggle(detail)}
+        onUninstall={() => void uninstall(detail)}
+        onRestart={() => void pluginRuntime.restart(detail.manifest.id)}
+        onUpdate={(update) => void reviewCommunity(update.repo, update.id)}
+      />
+    );
+  } else if (section === "installed") {
+    body = (
+      <>
+        {plugins.length ? (
+          <div className="ps-filters" role="radiogroup" aria-label="Show">
+            <FilterChip id="all" filter={filter} setFilter={setFilter} label="All" count={plugins.length} />
+            <FilterChip id="enabled" filter={filter} setFilter={setFilter} label="On" count={enabledCount} />
+            <FilterChip id="disabled" filter={filter} setFilter={setFilter} label="Off" count={plugins.length - enabledCount} />
+            {issueCount ? <FilterChip id="issues" filter={filter} setFilter={setFilter} label="Needs attention" count={issueCount} tone="danger" /> : null}
+          </div>
+        ) : null}
+        {plugins.length === 0 ? (
+          <EmptyState icon={<Puzzle size={20} />} title="No plugins yet" body="Plugins add commands, panels, status items and menu actions. Each one runs in a sandbox with only the permissions you approve.">
+            <button type="button" className="primary-button" onClick={() => go("discover")}><Compass size={14} /> Discover plugins</button>
+            <button type="button" className="secondary-button" onClick={() => void reviewFile()} disabled={busy === "file"}>
+              {busy === "file" ? <LoaderCircle size={14} className="spin" /> : <PackagePlus size={14} />} Install from file
+            </button>
+          </EmptyState>
+        ) : visibleInstalled.length === 0 ? (
+          <EmptyState title="No matches" body={query.trim() ? `No installed plugin matches “${query}”.` : "No plugin fits this filter."} />
+        ) : (
+          <div className="ps-list">{visibleInstalled.map(row)}</div>
+        )}
+      </>
+    );
+  } else if (section === "updates") {
+    const problems = (updates ?? []).filter((item) => item.problem);
+    const ready = (updates ?? []).filter((item) => !item.problem);
+    body =
+      busy === "updates" && updates === null ? (
+        <div className="plugin-loading"><LoaderCircle size={15} className="spin" /> Checking the plugins’ GitHub releases…</div>
       ) : (
         <>
-          <div className="plugin-store-bar">
-            <div className="plugin-tabs" role="tablist" aria-label="Plugin sources">
-              <TabButton id="installed" tab={tab} setTab={setTab} label="Installed" count={plugins.length} badge={updateCount || undefined} />
-              <TabButton id="community" tab={tab} setTab={setTab} label="Community" count={registry?.plugins.length} />
-              <TabButton id="created" tab={tab} setTab={setTab} label="Created" count={(layerCount + madeByAssistant.length) || undefined} />
-              {catalog.length ? <TabButton id="bundled" tab={tab} setTab={setTab} label="Bundled" count={visibleBundled.length || undefined} /> : null}
+          {ready.length ? (
+            <div className="ps-list">
+              {ready.map((update) => {
+                const plugin = plugins.find((item) => item.manifest.id === update.id);
+                return (
+                  <div key={update.id} className="ps-row">
+                    <button type="button" className="ps-row-hit" onClick={() => (plugin ? setDetailId(update.id) : undefined)}>
+                      <PluginGlyph enabled={plugin?.enabled ?? true} />
+                      <span className="ps-row-text">
+                        <span className="ps-row-title"><strong>{update.name}</strong><span className="ps-version">v{update.current} → v{update.latest}</span></span>
+                        <span className="ps-row-sub">{update.repo}{update.newPermissions?.length ? ` · asks for ${plural(update.newPermissions.length, "new permission")}` : ""}</span>
+                      </span>
+                    </button>
+                    <div className="ps-row-side">
+                      <button type="button" className="primary-button ps-small" onClick={() => void reviewCommunity(update.repo, update.id)} disabled={busy === `review:${update.id}`}>
+                        {busy === `review:${update.id}` ? <LoaderCircle size={13} className="spin" /> : <ArrowUpCircle size={13} />} Review update
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <label className="picker-search plugin-search">
-              <Search size={14} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter plugins…" aria-label="Filter plugins" spellCheck={false} />
-            </label>
-          </div>
-
-          {tab === "installed" ? (
-            <section className="plugin-tab-panel" role="tabpanel" aria-label="Installed plugins">
-              <div className="plugin-list-actions">
-                <button type="button" className="secondary-button" onClick={() => void checkUpdates()} disabled={busy === "updates"}>
-                  {busy === "updates" ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />} Check for updates
-                </button>
-                <button type="button" className="secondary-button" onClick={() => void reviewFile()} disabled={busy === "file"}>
-                  {busy === "file" ? <LoaderCircle size={14} className="spin" /> : <PackagePlus size={14} />} Install from file
-                </button>
-              </div>
-              {plugins.length === 0 ? (
-                <EmptyState title="No plugins yet" body="Browse the community registry, install a plugin file, or ask the assistant to make one.">
-                  <button type="button" className="primary-button" onClick={() => setTab("community")}>Browse community plugins</button>
-                </EmptyState>
-              ) : visibleInstalled.length === 0 ? (
-                <EmptyState title="No matches" body={`No installed plugin matches “${query}”.`} />
-              ) : (
-                <div className="plugin-rows">
-                  {visibleInstalled.map((plugin) => (
-                    <InstalledRow
-                      key={plugin.manifest.id}
-                      plugin={plugin}
-                      busy={busy === plugin.manifest.id}
-                      reviewing={busy === `review:${plugin.manifest.id}`}
-                      runtimeError={plugin.enabled ? failed.get(plugin.manifest.id) : undefined}
-                      update={updateFor.get(plugin.manifest.id)}
-                      onToggle={() => void toggle(plugin)}
-                      onUninstall={() => void uninstall(plugin)}
-                      onRestart={() => void pluginRuntime.restart(plugin.manifest.id)}
-                      onUpdate={(update) => void reviewCommunity(update.repo, update.id)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
+          ) : (
+            <EmptyState icon={<ShieldCheck size={20} />} title="Everything is up to date" body={updates === null ? "Check GitHub for new releases of your community plugins." : "Every plugin from the community registry runs its latest release."}>
+              <button type="button" className="secondary-button" onClick={() => void checkUpdates()} disabled={busy === "updates"}>
+                {busy === "updates" ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />} Check again
+              </button>
+            </EmptyState>
+          )}
+          {problems.length ? (
+            <div className="ps-notes">
+              {problems.map((item) => (
+                <div key={item.id} className="plugin-problem"><AlertTriangle size={13} /> <strong>{item.name}</strong> {item.problem}</div>
+              ))}
+            </div>
           ) : null}
-
-          {tab === "community" ? (
-            <section className="plugin-tab-panel" role="tabpanel" aria-label="Community plugins">
-              <p className="plugin-tab-note">
-                Community plugins are listed in a registry on GitHub and installed from their author’s GitHub Releases. They’re not reviewed by Noteral — check the permissions before you approve.
-              </p>
-              {busy === "registry" && !registry ? (
-                <div className="plugin-loading"><LoaderCircle size={15} className="spin" /> Loading the registry…</div>
-              ) : registryError ? (
-                <EmptyState title="Couldn’t load the registry" body={registryError}>
-                  <button type="button" className="secondary-button" onClick={() => void fetchRegistry()}><RefreshCw size={14} /> Try again</button>
-                </EmptyState>
-              ) : registry && registry.plugins.length === 0 ? (
-                <EmptyState title="The registry is empty" body="No plugins have been published to this registry yet. See docs/plugins/publishing.md to add yours." />
-              ) : (
-                <div className="plugin-grid">
-                  {visibleCommunity.map((entry) => {
-                    const update = updateFor.get(entry.id);
-                    return (
-                      <article key={entry.id} className="plugin-card">
-                        <div className="plugin-card-head">
-                          <div className="plugin-card-title">
-                            <h4>{entry.name}</h4>
-                            <span className="plugin-meta">by {entry.author || "unknown"}</span>
-                          </div>
-                          {entry.installed && !update ? (
-                            <span className="plugin-installed-tag">{entry.installedVersion ? `v${entry.installedVersion} installed` : "Installed"}</span>
-                          ) : (
-                            <button
-                              type="button"
-                              className={update ? "primary-button" : "secondary-button"}
-                              disabled={busy === `review:${entry.id}`}
-                              onClick={() => void reviewCommunity(entry.repo, entry.id)}
-                            >
-                              {busy === `review:${entry.id}` ? <LoaderCircle size={13} className="spin" /> : update ? <ArrowUpCircle size={13} /> : null}
-                              {update ? `Update to ${update.latest}` : "Install"}
-                            </button>
-                          )}
-                        </div>
-                        <p className="plugin-description">{entry.description || "No description provided."}</p>
-                        <div className="plugin-card-foot">
-                          <button type="button" className="plugin-repo-link" onClick={() => openMarkdownLink(`https://github.com/${entry.repo}`)} title="Open the repository on GitHub">
-                            <Globe2 size={12} /> {entry.repo}
-                          </button>
-                          {entry.tags?.length ? <span className="plugin-tags">{entry.tags.slice(0, 3).join(" · ")}</span> : null}
-                        </div>
-                      </article>
-                    );
-                  })}
-                  {registry && visibleCommunity.length === 0 && registry.plugins.length > 0 ? <EmptyState title="No matches" body={`Nothing in the registry matches “${query}”.`} /> : null}
-                </div>
-              )}
-              <details className="plugin-registry">
-                <summary>Registry source{registry ? ` · updated ${relativeTime(registry.fetchedAt)}` : ""}{registry?.skipped ? ` · ${registry.skipped} invalid entries skipped` : ""}</summary>
-                <div className="plugin-registry-row">
-                  <input
-                    className="inline-input grow"
-                    value={registryDraft}
-                    onChange={(event) => setRegistryDraft(event.target.value)}
-                    placeholder={env?.defaultRegistryUrl ?? "Default registry"}
-                    aria-label="Registry URL"
-                    spellCheck={false}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") saveRegistry();
-                    }}
-                  />
-                  <button type="button" className="secondary-button" onClick={saveRegistry} disabled={busy === "registry"}>
-                    {busy === "registry" ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />} {registryDraft.trim() === registryUrl ? "Reload" : "Use"}
-                  </button>
-                </div>
-                <p>Leave empty for the default registry. Any HTTPS URL serving a community-plugins.json works, so teams can run their own list.</p>
-              </details>
-            </section>
-          ) : null}
-
-          {tab === "created" ? (
-            <section className="plugin-tab-panel created-panel" role="tabpanel" aria-label="Created by you and the assistant">
-              <CreatedLayers query={query} />
-              <div className="created-head">
-                <h3><Bot size={13} /> Plugins made by the assistant</h3>
-              </div>
-              {madeByAssistant.length ? (
-                <div className="plugin-rows">
-                  {madeByAssistant.map((plugin) => (
-                    <InstalledRow
-                      key={plugin.manifest.id}
-                      plugin={plugin}
-                      busy={busy === plugin.manifest.id}
-                      reviewing={busy === `review:${plugin.manifest.id}`}
-                      runtimeError={plugin.enabled ? failed.get(plugin.manifest.id) : undefined}
-                      update={updateFor.get(plugin.manifest.id)}
-                      onToggle={() => void toggle(plugin)}
-                      onUninstall={() => void uninstall(plugin)}
-                      onRestart={() => void pluginRuntime.restart(plugin.manifest.id)}
-                      onUpdate={(update) => void reviewCommunity(update.repo, update.id)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <p className="plugin-tab-note">
-                  {query.trim() ? `No assistant plugin matches “${query}”.` : "In Creator mode the assistant can write a plugin, test it in a sandbox and install it after you approve. Those plugins show up here."}
-                </p>
-              )}
-            </section>
-          ) : null}
-
-          {tab === "bundled" && catalog.length ? (
-            <section className="plugin-tab-panel" role="tabpanel" aria-label="Bundled plugins">
-              <p className="plugin-tab-note">Examples that ship with Noteral. They work offline and are a good starting point for your own plugin.</p>
-              <div className="plugin-grid">
-                {visibleBundled.map((entry) => {
-                  const installed = installedIds.has(entry.manifest.id);
-                  const current = plugins.find((item) => item.manifest.id === entry.manifest.id);
-                  const newer = current && current.manifest.version !== entry.manifest.version;
-                  return (
-                    <article key={entry.manifest.id} className="plugin-card">
-                      <div className="plugin-card-head">
-                        <div className="plugin-card-title">
-                          <h4>{entry.manifest.name}</h4>
-                          <span className="plugin-meta">v{entry.manifest.version} · {entry.manifest.author || "Noteral"}</span>
-                        </div>
-                        {installed && !newer ? (
-                          <span className="plugin-installed-tag">Installed</span>
-                        ) : (
-                          <button type="button" className="secondary-button" onClick={() => reviewBundled(entry)}>{newer ? `Update to ${entry.manifest.version}` : "Install"}</button>
-                        )}
-                      </div>
-                      <p className="plugin-description">{entry.manifest.description || "No description provided."}</p>
-                      <PermissionChips manifest={entry.manifest} />
-                    </article>
-                  );
-                })}
-              </div>
-              {visibleBundled.length === 0 ? <EmptyState title="No matches" body={`No bundled plugin matches “${query}”.`} /> : null}
-            </section>
-          ) : null}
-
-          <footer className="plugin-store-foot">
-            <span>App {env?.appVersion ?? "…"} · SDK {env?.sdkVersion ?? "…"}</span>
-            <span>Build your own: docs/plugins/README.md</span>
-          </footer>
         </>
-      )}
+      );
+  } else if (section === "discover") {
+    body = (
+      <>
+        {busy === "registry" && !registry ? (
+          <div className="plugin-loading"><LoaderCircle size={15} className="spin" /> Loading the registry…</div>
+        ) : registryError ? (
+          <EmptyState icon={<AlertTriangle size={20} />} title="Couldn’t load the registry" body={registryError}>
+            <button type="button" className="secondary-button" onClick={() => void fetchRegistry()}><RefreshCw size={14} /> Try again</button>
+          </EmptyState>
+        ) : registry && registry.plugins.length === 0 ? (
+          <EmptyState title="The registry is empty" body="No plugins have been published to this registry yet. See docs/plugins/publishing.md to add yours." />
+        ) : registry && visibleCommunity.length === 0 ? (
+          <EmptyState title="No matches" body={`Nothing in the registry matches “${query}”.`} />
+        ) : (
+          <div className="ps-grid">
+            {visibleCommunity.map((entry) => {
+              const update = updateFor.get(entry.id);
+              const reviewing = busy === `review:${entry.id}`;
+              return (
+                <article key={entry.id} className="ps-card">
+                  <div className="ps-card-head">
+                    <PluginGlyph enabled />
+                    <div className="ps-card-title">
+                      <h4>{entry.name}</h4>
+                      <span>by {entry.author || "unknown"}</span>
+                    </div>
+                  </div>
+                  <p className="ps-card-description">{entry.description || "No description provided."}</p>
+                  {entry.tags?.length ? (
+                    <div className="ps-tags">{entry.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>
+                  ) : null}
+                  <div className="ps-card-foot">
+                    <button type="button" className="plugin-repo-link" onClick={() => openMarkdownLink(`https://github.com/${entry.repo}`)} title="Open the repository on GitHub">
+                      <Globe2 size={12} /> {entry.repo}
+                    </button>
+                    {entry.installed && !update ? (
+                      <span className="plugin-installed-tag">{entry.installedVersion ? `v${entry.installedVersion} installed` : "Installed"}</span>
+                    ) : (
+                      <button type="button" className={`${update ? "primary-button" : "secondary-button"} ps-small`} disabled={reviewing} onClick={() => void reviewCommunity(entry.repo, entry.id)}>
+                        {reviewing ? <LoaderCircle size={13} className="spin" /> : update ? <ArrowUpCircle size={13} /> : null}
+                        {update ? `Update to ${update.latest}` : "Install"}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+        <details className="plugin-registry">
+          <summary>Registry source{registry ? ` · updated ${relativeTime(registry.fetchedAt)}` : ""}{registry?.skipped ? ` · ${registry.skipped} invalid entries skipped` : ""}</summary>
+          <div className="plugin-registry-row">
+            <input
+              className="inline-input grow"
+              value={registryDraft}
+              onChange={(event) => setRegistryDraft(event.target.value)}
+              placeholder={env?.defaultRegistryUrl ?? "Default registry"}
+              aria-label="Registry URL"
+              spellCheck={false}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") saveRegistry();
+              }}
+            />
+            <button type="button" className="secondary-button" onClick={saveRegistry} disabled={busy === "registry"}>
+              {busy === "registry" ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />} {registryDraft.trim() === registryUrl ? "Reload" : "Use"}
+            </button>
+          </div>
+          <p>Leave empty for the default registry. Any HTTPS URL serving a community-plugins.json works, so teams can run their own list.</p>
+        </details>
+      </>
+    );
+  } else if (section === "bundled") {
+    body =
+      visibleBundled.length === 0 ? (
+        <EmptyState title="No matches" body={`No bundled plugin matches “${query}”.`} />
+      ) : (
+        <div className="ps-grid">
+          {visibleBundled.map((entry) => {
+            const installed = installedIds.has(entry.manifest.id);
+            const current = plugins.find((item) => item.manifest.id === entry.manifest.id);
+            const newer = current && current.manifest.version !== entry.manifest.version;
+            return (
+              <article key={entry.manifest.id} className="ps-card">
+                <div className="ps-card-head">
+                  <PluginGlyph enabled />
+                  <div className="ps-card-title">
+                    <h4>{entry.manifest.name}</h4>
+                    <span>v{entry.manifest.version} · {entry.manifest.author || "Noteral"}</span>
+                  </div>
+                </div>
+                <p className="ps-card-description">{entry.manifest.description || "No description provided."}</p>
+                <div className="ps-card-foot">
+                  <RiskSummary manifest={entry.manifest} />
+                  {installed && !newer ? (
+                    <span className="plugin-installed-tag">Installed</span>
+                  ) : (
+                    <button type="button" className="secondary-button ps-small" onClick={() => reviewBundled(entry)}>{newer ? `Update to ${entry.manifest.version}` : "Install"}</button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      );
+  } else {
+    body = (
+      <div className="created-panel">
+        <CreatedLayers query={query} />
+        <div className="created-head">
+          <h3><Bot size={13} /> Plugins made by the assistant</h3>
+        </div>
+        {madeByAssistant.length ? (
+          <div className="ps-list">{madeByAssistant.map(row)}</div>
+        ) : (
+          <p className="plugin-tab-note">
+            {query.trim() ? `No assistant plugin matches “${query}”.` : "In Creator mode the assistant can write a plugin, test it in a sandbox and install it after you approve. Those plugins show up here."}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const inList = !review && !detail;
+  const createdCount = layers.length + plugins.filter((item) => item.source === "assistant").length;
+
+  return (
+    <Modal open={open} bare title="Plugins" onClose={() => setOverlay(null)} width="large" className="plugin-store" bodyClassName="plugin-store-body">
+      <div className="ps">
+        <nav className="ps-nav" aria-label="Plugin sections">
+          <div className="ps-brand">
+            <h2>Plugins</h2>
+            <p>Sandboxed extensions</p>
+          </div>
+          <div className="ps-nav-items">
+            <NavItem id="installed" section={section} go={go} icon={<Puzzle size={15} />} label="Installed" count={plugins.length || undefined} />
+            <NavItem id="updates" section={section} go={go} icon={<ArrowUpCircle size={15} />} label="Updates" badge={updateCount || undefined} />
+            <NavItem id="discover" section={section} go={go} icon={<Compass size={15} />} label="Discover" count={registry?.plugins.length} />
+            {catalog.some((item) => !item.remote) ? <NavItem id="bundled" section={section} go={go} icon={<Box size={15} />} label="Bundled" count={catalog.filter((item) => !item.remote).length} /> : null}
+            <NavItem id="created" section={section} go={go} icon={<Sparkles size={15} />} label="Created" count={createdCount || undefined} />
+          </div>
+          <div className="ps-nav-foot">
+            <button type="button" className="ps-nav-action" onClick={() => void reviewFile()} disabled={busy === "file"}>
+              {busy === "file" ? <LoaderCircle size={14} className="spin" /> : <PackagePlus size={14} />} Install from file
+            </button>
+            <button type="button" className="ps-nav-action" onClick={() => openMarkdownLink(DOCS_URL)}>
+              <BookOpen size={14} /> Build a plugin
+            </button>
+            <span className="ps-env">App {env?.appVersion ?? "…"} · SDK {env?.sdkVersion ?? "…"}</span>
+          </div>
+        </nav>
+
+        <section className="ps-main" aria-label={review ? "Review plugin" : detail ? detail.manifest.name : meta.title}>
+          <header className="ps-head">
+            {inList ? (
+              <div className="ps-head-copy">
+                <h3>{meta.title}</h3>
+                <p>{meta.blurb}</p>
+              </div>
+            ) : (
+              <div className="ps-head-copy">
+                <button type="button" className="text-button ps-back" onClick={() => (review ? setReview(null) : setDetailId(null))}>
+                  <ArrowLeft size={13} /> {review && detail ? detail.manifest.name : meta.title}
+                </button>
+              </div>
+            )}
+            {inList && section !== "updates" ? (
+              <label className="ps-search">
+                <Search size={14} />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={section === "discover" ? "Search the registry" : "Filter"} aria-label="Filter plugins" spellCheck={false} />
+              </label>
+            ) : null}
+            {inList && section === "updates" ? (
+              <button type="button" className="secondary-button ps-small" onClick={() => void checkUpdates()} disabled={busy === "updates"}>
+                {busy === "updates" ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />} Check now
+              </button>
+            ) : null}
+            <button type="button" className="icon-button ps-close" onClick={() => setOverlay(null)} aria-label="Close plugins" title="Close">
+              <X size={17} />
+            </button>
+          </header>
+          <div className={`ps-content${inList ? "" : " is-detail"}`}>{body}</div>
+        </section>
+      </div>
     </Modal>
   );
 }
 
-function TabButton({ id, tab, setTab, label, count, badge }: { id: Tab; tab: Tab; setTab: (tab: Tab) => void; label: string; count?: number; badge?: number }) {
+function NavItem({ id, section, go, icon, label, count, badge }: { id: Section; section: Section; go: (section: Section) => void; icon: ReactNode; label: string; count?: number; badge?: number }) {
   return (
-    <button type="button" role="tab" aria-selected={tab === id} className={`plugin-tab${tab === id ? " active" : ""}`} onClick={() => setTab(id)}>
-      {label}
-      {count !== undefined ? <span className="plugin-tab-count">{count}</span> : null}
-      {badge ? <span className="plugin-tab-badge" title={`${badge} update${badge === 1 ? "" : "s"}`}>{badge}</span> : null}
+    <button type="button" className={`ps-nav-item${section === id ? " active" : ""}`} aria-current={section === id ? "page" : undefined} onClick={() => go(id)}>
+      {icon}
+      <span>{label}</span>
+      {badge ? <em className="ps-badge" title={plural(badge, "update")}>{badge}</em> : count !== undefined ? <small>{count}</small> : null}
     </button>
   );
 }
 
-function EmptyState({ title, body, children }: { title: string; body: string; children?: ReactNode }) {
+function FilterChip({ id, filter, setFilter, label, count, tone }: { id: InstalledFilter; filter: InstalledFilter; setFilter: (filter: InstalledFilter) => void; label: string; count: number; tone?: "danger" }) {
+  return (
+    <button type="button" role="radio" aria-checked={filter === id} className={`ps-chip${filter === id ? " active" : ""}${tone ? ` is-${tone}` : ""}`} onClick={() => setFilter(id)}>
+      {label} <small>{count}</small>
+    </button>
+  );
+}
+
+function EmptyState({ icon, title, body, children }: { icon?: ReactNode; title: string; body: string; children?: ReactNode }) {
   return (
     <div className="plugin-empty">
+      {icon ? <span className="plugin-empty-icon">{icon}</span> : null}
       <strong>{title}</strong>
       <p>{body}</p>
-      {children}
+      {children ? <div className="plugin-empty-actions">{children}</div> : null}
     </div>
   );
 }
 
-function PermissionChips({ manifest }: { manifest: Manifest }) {
-  const items = permissionsOf(manifest);
-  if (!items.length) return <div className="permission-list"><span className="permission-chip">No permissions</span></div>;
+function PluginGlyph({ enabled, size = "md" }: { enabled: boolean; size?: "md" | "lg" }) {
   return (
-    <div className="permission-list">
-      {items.map((permission) => {
-        const info = permissionInfo.get(permission);
-        return (
-          <span key={permission} className={`permission-chip risk-${info?.risk ?? "low"}`} title={info ? `${info.title} — ${info.description}` : permission}>
-            {permission}
+    <span className={`ps-glyph is-${size}${enabled ? " is-on" : ""}`} aria-hidden="true">
+      <Puzzle size={size === "lg" ? 20 : 16} strokeWidth={1.7} />
+    </span>
+  );
+}
+
+/** One line that tells you how much a plugin can reach, without listing every permission. */
+function RiskSummary({ manifest }: { manifest: Manifest }) {
+  const risk = riskOf(manifest);
+  const count = (manifest.permissions ?? []).length;
+  const label = risk === "none" ? "No permissions" : `${plural(count, "permission")}${risk === "high" ? " · can change or send data" : ""}`;
+  return (
+    <span className={`ps-risk risk-${risk}`} title={permissionsOf(manifest).join(", ") || undefined}>
+      <ShieldCheck size={12} /> {label}
+    </span>
+  );
+}
+
+interface PluginRowProps {
+  plugin: Info;
+  busy: boolean;
+  runtimeError?: string;
+  update?: PluginUpdate;
+  onOpen: () => void;
+  onToggle: () => void;
+}
+
+function PluginRow({ plugin, busy, runtimeError, update, onOpen, onToggle }: PluginRowProps) {
+  const { manifest } = plugin;
+  const source = sourceLabel(plugin.source);
+  const problem = plugin.problem || (runtimeError ? `Stopped: ${runtimeError}` : "");
+  return (
+    <div className={`ps-row${plugin.enabled ? " is-on" : ""}${problem ? " has-problem" : ""}`}>
+      <button type="button" className="ps-row-hit" onClick={onOpen} aria-label={`${manifest.name} details`}>
+        <PluginGlyph enabled={plugin.enabled} />
+        <span className="ps-row-text">
+          <span className="ps-row-title">
+            <strong>{manifest.name}</strong>
+            <span className="ps-version">v{manifest.version}</span>
+            {update ? <span className="ps-pill is-accent"><ArrowUpCircle size={11} /> {update.latest}</span> : null}
           </span>
-        );
-      })}
+          {problem ? (
+            <span className="ps-row-sub is-problem"><AlertTriangle size={11} /> {problem}</span>
+          ) : (
+            <span className="ps-row-sub">{manifest.description || "No description provided."}</span>
+          )}
+          <span className="ps-row-meta">
+            <span>{source.icon} {source.label}</span>
+            <span>{manifest.author || "Unknown author"}</span>
+            <RiskSummary manifest={manifest} />
+          </span>
+        </span>
+      </button>
+      <div className="ps-row-side">
+        <label className="switch" title={plugin.enabled ? "Turn off" : "Turn on"}>
+          <input type="checkbox" checked={plugin.enabled} disabled={Boolean(plugin.problem) || busy} onChange={onToggle} aria-label={`Enable ${manifest.name}`} />
+          <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
+        </label>
+        <ChevronRight size={15} className="ps-row-chevron" aria-hidden="true" />
+      </div>
     </div>
   );
 }
 
-interface InstalledRowProps {
+interface PluginDetailProps {
   plugin: Info;
   busy: boolean;
   reviewing: boolean;
@@ -514,68 +710,138 @@ interface InstalledRowProps {
   onUpdate: (update: PluginUpdate) => void;
 }
 
-function InstalledRow({ plugin, busy, reviewing, runtimeError, update, onToggle, onUninstall, onRestart, onUpdate }: InstalledRowProps) {
+function PluginDetail({ plugin, busy, reviewing, runtimeError, update, onToggle, onUninstall, onRestart, onUpdate }: PluginDetailProps) {
   const { manifest } = plugin;
   const source = sourceLabel(plugin.source);
-  const repo = manifest.repo || (plugin.source.startsWith("github:") ? plugin.source.slice(7) : "");
+  const repo = repoOf(plugin);
   const optionFields = usePluginOptionFields(manifest);
-  const [optionsOpen, setOptionsOpen] = useState(false);
   usePluginConfigure();
   const hasPage = plugin.enabled && pluginConfigure.hasPage(manifest.id);
+  const contributes = contributionGroups(manifest);
+
   return (
-    <article className={`plugin-row${plugin.enabled ? " enabled" : ""}${plugin.problem || runtimeError ? " has-problem" : ""}`}>
-      <div className="plugin-row-main">
-        <div className="plugin-row-title">
-          <h4>{manifest.name}</h4>
-          <span className="plugin-meta">v{manifest.version}</span>
-          <span className="plugin-source">{source.icon} {source.label}</span>
+    <div className="ps-detail">
+      <header className="ps-detail-head">
+        <PluginGlyph enabled={plugin.enabled} size="lg" />
+        <div className="ps-detail-title">
+          <h3>{manifest.name}</h3>
+          <p>
+            v{manifest.version} · {manifest.author || "Unknown author"} · <span className="ps-source">{source.icon} {source.label}</span>
+          </p>
         </div>
-        <p className="plugin-description">{manifest.description || "No description provided."}</p>
-        {plugin.problem ? <div className="plugin-problem"><AlertTriangle size={13} /> {plugin.problem}</div> : null}
-        {runtimeError ? (
-          <div className="plugin-problem">
-            <AlertTriangle size={13} /> <span>Stopped: {runtimeError}</span>
-            <button type="button" className="text-button" onClick={onRestart}><RotateCcw size={12} /> Restart</button>
-          </div>
-        ) : null}
-        <PermissionChips manifest={manifest} />
-        <div className="plugin-row-foot">
-          <span>{manifest.author || "Unknown author"} · installed {relativeTime(plugin.installedAt)}</span>
-          {repo ? (
-            <button type="button" className="plugin-repo-link" onClick={() => openMarkdownLink(`https://github.com/${repo}`)}>
-              <ExternalLink size={11} /> {repo}
-            </button>
-          ) : null}
-        </div>
-        {optionsOpen && optionFields.length ? <PluginOptions manifest={manifest} /> : null}
-      </div>
-      <div className="plugin-row-side">
-        {optionFields.length || hasPage ? (
-          <button
-            type="button"
-            className={`icon-button plugin-options-toggle${optionsOpen ? " active" : ""}`}
-            onClick={() => (hasPage ? pluginConfigure.open(manifest.id) : setOptionsOpen((open) => !open))}
-            aria-expanded={optionsOpen}
-            title={`${manifest.name} options`}
-            aria-label={`${manifest.name} options`}
-          >
-            <SlidersHorizontal size={14} />
-          </button>
-        ) : null}
-        <label className="switch" title={plugin.enabled ? "Disable plugin" : "Enable plugin"}>
+        <label className="switch ps-detail-switch" title={plugin.enabled ? "Turn off" : "Turn on"}>
+          <span className="ps-switch-label">{plugin.enabled ? "On" : "Off"}</span>
           <input type="checkbox" checked={plugin.enabled} disabled={Boolean(plugin.problem) || busy} onChange={onToggle} aria-label={`Enable ${manifest.name}`} />
           <span className="switch-track" aria-hidden="true"><span className="switch-thumb" /></span>
         </label>
+      </header>
+
+      <div className="ps-actions">
         {update ? (
-          <button type="button" className="primary-button plugin-update" onClick={() => onUpdate(update)} disabled={reviewing}>
-            {reviewing ? <LoaderCircle size={13} className="spin" /> : <ArrowUpCircle size={13} />} {update.latest}
+          <button type="button" className="primary-button ps-small" onClick={() => onUpdate(update)} disabled={reviewing}>
+            {reviewing ? <LoaderCircle size={13} className="spin" /> : <ArrowUpCircle size={13} />} Update to {update.latest}
           </button>
         ) : null}
-        <button type="button" className="icon-button" onClick={onUninstall} disabled={busy} title={`Uninstall ${manifest.name}`} aria-label={`Uninstall ${manifest.name}`}>
-          <Trash2 size={14} />
+        {hasPage ? (
+          <button type="button" className="secondary-button ps-small" onClick={() => pluginConfigure.open(manifest.id)}>
+            <SlidersHorizontal size={13} /> Open settings
+          </button>
+        ) : null}
+        {repo ? (
+          <button type="button" className="secondary-button ps-small" onClick={() => openMarkdownLink(`https://github.com/${repo}`)}>
+            <ExternalLink size={13} /> Repository
+          </button>
+        ) : null}
+        <span className="ps-actions-gap" />
+        <button type="button" className="secondary-button ps-small ps-danger" onClick={onUninstall} disabled={busy}>
+          <Trash2 size={13} /> Uninstall
         </button>
       </div>
-    </article>
+
+      {plugin.problem ? <div className="plugin-problem"><AlertTriangle size={13} /> {plugin.problem}</div> : null}
+      {runtimeError ? (
+        <div className="plugin-problem">
+          <AlertTriangle size={13} /> <span>Stopped: {runtimeError}</span>
+          <button type="button" className="text-button" onClick={onRestart}><RotateCcw size={12} /> Restart</button>
+        </div>
+      ) : null}
+
+      <p className="ps-detail-description">{manifest.description || "No description provided."}</p>
+
+      {optionFields.length && !hasPage ? (
+        <section className="ps-section">
+          <h4><Settings2 size={13} /> Settings</h4>
+          <PluginOptions manifest={manifest} />
+        </section>
+      ) : null}
+
+      {contributes.length ? (
+        <section className="ps-section">
+          <h4><Puzzle size={13} /> What it adds</h4>
+          <ul className="ps-adds">
+            {contributes.map((group) => (
+              <li key={group.label}>
+                <span className="ps-adds-icon">{group.icon}</span>
+                <div>
+                  <strong>{plural(group.items.length, group.label, group.many)}</strong>
+                  <span>{group.items.slice(0, 6).join(" · ")}{group.items.length > 6 ? ` · +${group.items.length - 6} more` : ""}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <section className="ps-section">
+        <h4><ShieldCheck size={13} /> {(manifest.permissions ?? []).length ? "What it can access" : "It asks for no permissions"}</h4>
+        <PermissionList manifest={manifest} />
+      </section>
+
+      <section className="ps-section">
+        <h4>Details</h4>
+        <dl className="ps-facts">
+          <dt>ID</dt><dd><code>{manifest.id}</code></dd>
+          <dt>Installed</dt><dd>{relativeTime(plugin.installedAt)}</dd>
+          <dt>SDK</dt><dd>{manifest.sdkVersion}</dd>
+          {manifest.minAppVersion ? (<><dt>Needs</dt><dd>Noteral {manifest.minAppVersion} or later</dd></>) : null}
+          {manifest.authorUrl ? (<><dt>Author</dt><dd><button type="button" className="plugin-repo-link" onClick={() => openMarkdownLink(manifest.authorUrl!)}>{manifest.authorUrl}</button></dd></>) : null}
+        </dl>
+      </section>
+    </div>
+  );
+}
+
+function contributionGroups(manifest: Manifest) {
+  const c = manifest.contributes ?? {};
+  const groups: { label: string; many?: string; icon: ReactNode; items: string[] }[] = [
+    { label: "command", icon: <SquareTerminal size={14} />, items: list(c.commands).map((item) => item.title || item.id) },
+    { label: "panel", icon: <LayoutPanelLeft size={14} />, items: list(c.panels).map((item) => item.title || item.id) },
+    { label: "status item", icon: <PanelBottom size={14} />, items: list(c.statusItems).map((item) => item.label || item.id) },
+    { label: "menu item", icon: <ListTree size={14} />, items: list(c.menus).map((item) => `${item.title} (${item.menu})`) },
+    { label: "setting", icon: <Settings2 size={14} />, items: list(c.settings).map((item) => item.label || item.key) },
+  ];
+  return groups.filter((group) => group.items.length);
+}
+
+function PermissionList({ manifest, added }: { manifest: Manifest; added?: Set<string> }) {
+  const permissions = permissionsOf(manifest);
+  if (!permissions.length) return <p className="plugin-review-copy">It can only run its own code inside its sandbox.</p>;
+  return (
+    <ul className="plugin-permissions">
+      {permissions.map((permission) => {
+        const info = permissionInfo.get(permission);
+        return (
+          <li key={permission} className={`risk-${info?.risk ?? "low"}`}>
+            <span className="plugin-risk" aria-label={`${info?.risk ?? "low"} risk`}>{info?.risk ?? "low"}</span>
+            <div>
+              <strong>{info?.title ?? permission}{added?.has(permission) ? <em className="plugin-new">new</em> : null}</strong>
+              <span>{info?.description ?? "Unknown permission."}</span>
+            </div>
+            <code>{permission}</code>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -585,61 +851,61 @@ function ReviewScreen({ review, busy, onBack, onApprove }: { review: Review; bus
   const added = new Set(review.added ?? []);
   const highRisk = permissions.some((item) => permissionInfo.get(item)?.risk === "high");
   const blocked = Boolean(review.problem);
+  const contributes = contributionGroups(manifest);
   const origin =
     review.origin === "community"
       ? `github.com/${review.repo}${release?.tag && release.tag.replace(/^v/, "") !== manifest.version ? ` · tag ${release.tag}` : ""}`
       : review.origin === "bundled" ? "Bundled with Noteral" : "Local file";
 
   return (
-    <div className="plugin-review">
-      <button type="button" className="text-button plugin-review-back" onClick={onBack}><ArrowLeft size={13} /> Back to plugins</button>
-      <header className="plugin-review-head">
-        <div>
-          <h3>{manifest.name}</h3>
-          <p className="plugin-meta">
+    <div className="ps-detail plugin-review">
+      <header className="ps-detail-head">
+        <PluginGlyph enabled size="lg" />
+        <div className="ps-detail-title">
+          <h3>{review.installedVersion ? `Update ${manifest.name}` : `Install ${manifest.name}`}</h3>
+          <p>
             {review.installedVersion ? `v${review.installedVersion} → v${manifest.version}` : `v${manifest.version}`} · by {manifest.author || "unknown"} · {origin}
           </p>
         </div>
         {review.origin === "community" && release?.htmlUrl ? (
-          <button type="button" className="secondary-button" onClick={() => openMarkdownLink(release.htmlUrl)}><ExternalLink size={13} /> Release page</button>
+          <button type="button" className="secondary-button ps-small" onClick={() => openMarkdownLink(release.htmlUrl)}><ExternalLink size={13} /> Release page</button>
         ) : null}
       </header>
-      {manifest.description ? <p className="plugin-review-description">{manifest.description}</p> : null}
+      {manifest.description ? <p className="ps-detail-description">{manifest.description}</p> : null}
       {review.problem ? <div className="plugin-problem"><AlertTriangle size={13} /> {review.problem}</div> : null}
 
-      <section className="plugin-review-section">
-        <h4><ShieldCheck size={14} /> {permissions.length ? `It will be able to` : "It asks for no permissions"}</h4>
-        {permissions.length ? (
-          <ul className="plugin-permissions">
-            {permissions.map((permission) => {
-              const info = permissionInfo.get(permission);
-              return (
-                <li key={permission} className={`risk-${info?.risk ?? "low"}`}>
-                  <span className="plugin-risk" aria-label={`${info?.risk ?? "low"} risk`}>{info?.risk ?? "low"}</span>
-                  <div>
-                    <strong>{info?.title ?? permission}{added.has(permission) ? <em className="plugin-new">new</em> : null}</strong>
-                    <span>{info?.description ?? "Unknown permission."}</span>
-                  </div>
-                  <code>{permission}</code>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <p className="plugin-review-copy">It can only run its own code inside its sandbox.</p>
-        )}
+      <section className="ps-section">
+        <h4><ShieldCheck size={13} /> {permissions.length ? "It will be able to" : "It asks for no permissions"}</h4>
+        <PermissionList manifest={manifest} added={added} />
         {highRisk ? <p className="plugin-review-warning"><AlertTriangle size={13} /> High-risk permissions let it change or send your data. Only approve plugins you trust.</p> : null}
       </section>
 
+      {contributes.length ? (
+        <section className="ps-section">
+          <h4><Puzzle size={13} /> What it adds</h4>
+          <ul className="ps-adds">
+            {contributes.map((group) => (
+              <li key={group.label}>
+                <span className="ps-adds-icon">{group.icon}</span>
+                <div>
+                  <strong>{plural(group.items.length, group.label, group.many)}</strong>
+                  <span>{group.items.slice(0, 6).join(" · ")}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {release?.notes ? (
-        <section className="plugin-review-section">
+        <section className="ps-section">
           <h4>Release notes{release.publishedAt ? <span> · {relativeTime(release.publishedAt)}</span> : null}</h4>
           <Markdown source={release.notes.slice(0, 6000)} className="plugin-review-notes" onLink={openMarkdownLink} />
         </section>
       ) : null}
 
       <footer className="plugin-review-foot">
-        <span>Plugins run sandboxed. You can disable or uninstall it any time.</span>
+        <span>Plugins run sandboxed. You can turn it off or uninstall it any time.</span>
         <button type="button" className="secondary-button" onClick={onBack}>Cancel</button>
         <button type="button" className="primary-button" onClick={onApprove} disabled={busy || blocked}>
           {busy ? <LoaderCircle size={14} className="spin" /> : null} {permissions.length ? "Approve and " : ""}{review.installedVersion ? "update" : "install"}

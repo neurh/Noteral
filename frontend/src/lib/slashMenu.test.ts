@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankSlashItems } from "./slashMenu";
+import { arrangeSlashItems, rankSlashItems } from "./slashMenu";
 
 const items = [
   { title: "Heading 1", aliases: ["h1", "title"], group: "Headings" },
@@ -25,5 +25,28 @@ describe("rankSlashItems", () => {
     expect(rankSlashItems(items, "list").map((item) => item.title)).toEqual(["Bullet List"]);
     expect(rankSlashItems(items, "h1").map((item) => item.title)).toEqual(["Heading 1"]);
     expect(rankSlashItems(items, "zzz")).toEqual([]);
+  });
+});
+
+describe("arrangeSlashItems", () => {
+  it("moves known keys into Noteral's groups and keeps other groups after them", () => {
+    const arranged = arrangeSlashItems([
+      { key: "heading_4", title: "Heading 4", group: "Subheadings" },
+      { key: "image", title: "Image", group: "Media" },
+      { title: "Focus", group: "Plugins" },
+      { key: "callout", title: "Callout", group: "Noteral" },
+      { key: "paragraph", title: "Paragraph", group: "Basic blocks" },
+      { title: "Kanban card", group: "Custom blocks" },
+      { key: "database", title: "Database", group: "Noteral" },
+    ]);
+    expect(arranged.map((item) => `${item.group}:${item.title}`)).toEqual([
+      "Basic blocks:Paragraph",
+      "Basic blocks:Callout",
+      "Insert:Database",
+      "Media:Image",
+      "More headings:Heading 4",
+      "Plugins:Focus",
+      "Custom blocks:Kanban card",
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { matchesShortcut, shortcutId, type Shortcut } from "./shortcuts";
 
 export interface AppCommand {
   id: string;
@@ -7,6 +8,8 @@ export interface AppCommand {
   description?: string;
   keywords?: string;
   shortcut?: string;
+  /** A key binding that runs the command (see lib/shortcuts.ts); `shortcut` is its label. */
+  keys?: Shortcut;
   run: () => void | Promise<void>;
 }
 
@@ -48,6 +51,20 @@ class CommandRegistry {
 
   get(id: string): AppCommand | undefined {
     return this.items.get(id);
+  }
+
+  /** The command bound to this shortcut, other than `exceptId`. */
+  boundTo(keys: Shortcut, exceptId?: string): AppCommand | undefined {
+    const id = shortcutId(keys);
+    return [...this.items.values()].find((command) => command.id !== exceptId && command.keys && shortcutId(command.keys) === id);
+  }
+
+  /** The command whose key binding this key press is. */
+  forKeyEvent(event: KeyboardEvent): AppCommand | undefined {
+    for (const command of this.items.values()) {
+      if (command.keys && matchesShortcut(command.keys, event)) return command;
+    }
+    return undefined;
   }
 
   getSnapshot = (): AppCommand[] => this.snapshot;

@@ -16,7 +16,7 @@ import {
   type FloatingUIOptions,
   type SideMenuProps,
 } from "@blocknote/react";
-import { ArrowDown, ArrowUp, Copy, Palette, Repeat2, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Lightbulb, Palette, Repeat2, Trash2 } from "lucide-react";
 import {
   canMoveBlocks,
   duplicateBlocks,
@@ -50,6 +50,12 @@ export function NoteralSideMenu(props: SideMenuProps) {
 
 type FloatingMiddleware = Exclude<NonNullable<NonNullable<FloatingUIOptions["useFloatingOptions"]>["middleware"]>[number], false | null | undefined>;
 
+/** The element BlockNote positions the side menu against (the block's DOM). */
+function referenceElement(reference: unknown): Element | undefined {
+  if (reference instanceof Element) return reference;
+  return (reference as { contextElement?: Element } | undefined)?.contextElement;
+}
+
 /** Top edge (viewport px) of the part of `element` its scroll containers show. */
 function visibleTop(element: Element): number {
   let top = 0;
@@ -60,6 +66,48 @@ function visibleTop(element: Element): number {
   return top;
 }
 
+/** Centre (viewport px) of an element's first line of text. */
+function firstLineMiddle(element: Element): number {
+  const style = getComputedStyle(element);
+  const fontSize = parseFloat(style.fontSize) || 16;
+  const lineHeight = parseFloat(style.lineHeight) || fontSize * 1.3;
+  return element.getBoundingClientRect().top + (parseFloat(style.paddingTop) || 0) + (parseFloat(style.borderTopWidth) || 0) + lineHeight / 2;
+}
+
+/**
+ * Where the handle should line up inside a block: the middle of its first
+ * line of text, or of the title row for a database. Headings carry their
+ * spacing as top padding and code blocks pad their box, so centring on the
+ * block (or using BlockNote's fixed per-level offsets, tuned for its own CSS)
+ * leaves the six dots above or below the text.
+ */
+export function handleAnchorMiddle(block: Element): number | undefined {
+  const content = block.matches(".bn-block-content") ? block : block.querySelector(".bn-block-content");
+  if (!content) return undefined;
+  const inline = content.querySelector(".bn-inline-content");
+  if (inline && !inline.closest("table")) return firstLineMiddle(inline);
+  const anchor = content.querySelector("[data-handle-anchor], .db-inline-title, tr");
+  if (anchor) {
+    const rect = anchor.getBoundingClientRect();
+    return rect.top + Math.min(rect.height, 32) / 2;
+  }
+  return undefined;
+}
+
+/** Lines the side menu up with the first line of the hovered block. */
+const alignToFirstLine: FloatingMiddleware = {
+  name: "noteralAlignToFirstLine",
+  fn: ({ rects, elements }) => {
+    const element = referenceElement(elements.reference);
+    const middle = element && handleAnchorMiddle(element);
+    if (middle === undefined || !element) return {};
+    // Viewport px → floating coordinates (`rects` are relative to the offset parent).
+    const shift = rects.reference.y - elements.reference.getBoundingClientRect().top;
+    const aligned = middle + shift - rects.floating.height / 2;
+    return Number.isFinite(aligned) ? { y: aligned } : {};
+  },
+};
+
 /**
  * Keeps the handle of a tall block (a database) beside the block's visible
  * part. The menu sits at the block's top, so once that top scrolls out of view
@@ -68,24 +116,25 @@ function visibleTop(element: Element): number {
 const keepInView: FloatingMiddleware = {
   name: "noteralKeepInView",
   fn: ({ y, rects, elements }) => {
-    // BlockNote positions against a virtual reference whose `contextElement` is the block.
-    const reference = elements.reference;
-    const element = reference instanceof Element ? reference : (reference as { contextElement?: Element }).contextElement;
+    const element = referenceElement(elements.reference);
     if (!element) return {};
     // Viewport px → floating coordinates (`rects` are relative to the offset parent).
-    const shift = rects.reference.y - reference.getBoundingClientRect().top;
+    const shift = rects.reference.y - elements.reference.getBoundingClientRect().top;
     const min = visibleTop(element) + shift + 4;
     const max = rects.reference.y + rects.reference.height - rects.floating.height;
     return { y: Math.max(y, Math.min(min, max)) };
   },
 };
 
-const tallBlockOptions: Partial<FloatingUIOptions> = { useFloatingOptions: { middleware: [keepInView] } };
+// Passing middleware replaces BlockNote's own (an offset with fixed heading
+// nudges), so the alignment here covers every block type.
+const blockOptions: Partial<FloatingUIOptions> = { useFloatingOptions: { middleware: [alignToFirstLine] } };
+const tallBlockOptions: Partial<FloatingUIOptions> = { useFloatingOptions: { middleware: [alignToFirstLine, keepInView] } };
 
-/** BlockNote's side menu controller, with the handle kept in view on database blocks. */
+/** BlockNote's side menu controller, aligned to each block's first line and kept in view on database blocks. */
 export function NoteralSideMenuController() {
   const type = useExtensionState(SideMenuExtension, { selector: (state) => state?.block?.type }) as string | undefined;
-  return <SideMenuController sideMenu={NoteralSideMenu} floatingUIOptions={type === "database" ? tallBlockOptions : undefined} />;
+  return <SideMenuController sideMenu={NoteralSideMenu} floatingUIOptions={type === "database" ? tallBlockOptions : blockOptions} />;
 }
 
 /**
@@ -105,7 +154,11 @@ export function BlockHandleMenu() {
   const blocks = existingBlocks(editor, ids);
   const textBlocks = blocks.filter(hasInlineContent);
   const allText = blocks.length > 0 && textBlocks.length === blocks.length;
-  const typeItems = blockTypeSelectItems(editor).filter((item) => item.type in editor.schema.blockSchema);
+  const typeItems = [
+    ...blockTypeSelectItems(editor),
+    // Noteral's own text block; BlockNote's list only knows the defaults.
+    { name: "Callout", type: "callout", icon: Lightbulb as unknown as ReturnType<typeof blockTypeSelectItems>[number]["icon"] },
+  ].filter((item) => item.type in editor.schema.blockSchema);
   const current = typeItems.find((item) => isItemFor(item, blocks));
   const colorable = (kind: ColorKind) => blocks.some((b) => kind in (b.props as object));
   const heading = blocks.length > 1 ? `${blocks.length} blocks` : (current?.name ?? typeName(block));

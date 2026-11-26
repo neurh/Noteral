@@ -12,6 +12,7 @@ import { useSyncExternalStore } from "react";
 import { api, errorMessage } from "../lib/api";
 import type { Info, Manifest } from "../lib/api";
 import { commandRegistry } from "../lib/commands";
+import { formatShortcut, parseShortcut, shortcutProblem, type Shortcut } from "../lib/shortcuts";
 import { contributions, emptySet, normalizeMenuItem, normalizeSettingField } from "../lib/contributions";
 import { customizations } from "../lib/customizations";
 import type { ContributionSet } from "../lib/contributions";
@@ -21,6 +22,7 @@ import { popups } from "../lib/popups";
 import { loadOptions, onOptionsSaved, optionFields } from "../lib/pluginOptions";
 import { viewHub } from "../lib/viewFrame";
 import { ApiError, callMethod, hasPermission } from "../sdk-host/host";
+import { SDK_VERSION } from "../sdk-host/handlers";
 import type { PluginSurface } from "../sdk-host/host";
 import { EVENTS, METHOD_MAP } from "../sdk-host/spec";
 import type { PanelAction } from "../sdk-host/types";
@@ -493,7 +495,7 @@ class PluginRuntimeManager {
 
   private postInit(frame: FrameRecord) {
     const theme = useAppStore.getState().resolvedTheme;
-    this.post(frame, { type: "init", manifest: frame.manifest, theme, sdkVersion: "2.0.0" });
+    this.post(frame, { type: "init", manifest: frame.manifest, theme, sdkVersion: SDK_VERSION });
   }
 
   private post(frame: FrameRecord, message: Record<string, unknown>) {
@@ -542,9 +544,29 @@ class PluginRuntimeManager {
         category: frame.manifest.name || "Plugins",
         description: command.description ?? `${frame.manifest.name} plugin`,
         keywords: command.keywords,
+        ...this.commandKeys(frame, fullId, command.shortcut, false),
         run: () => this.runCommand(frame, command.id),
       });
     }
+  }
+
+  /**
+   * The key binding for a plugin command. Bad or taken shortcuts are reported
+   * (thrown for `commands.register`, logged for manifest commands) and skipped.
+   */
+  private commandKeys(frame: FrameRecord, fullId: string, value: unknown, strict: boolean): { keys?: Shortcut; shortcut?: string } {
+    const raw = text(value, 40).trim();
+    if (!raw) return {};
+    let problem = shortcutProblem(raw);
+    const keys = problem ? null : parseShortcut(raw);
+    const taken = keys ? commandRegistry.boundTo(keys, fullId) : undefined;
+    if (taken) problem = `"${raw}" is already used by “${taken.title}”.`;
+    if (problem || !keys) {
+      if (strict) throw new ApiError(problem, "invalid_params");
+      devlog.add(this.logSource(frame), "warn", `Shortcut skipped: ${problem}`);
+      return {};
+    }
+    return { keys, shortcut: formatShortcut(keys) };
   }
 
   private registerDynamicCommand(frame: FrameRecord, params: Record<string, unknown>) {
@@ -557,6 +579,7 @@ class PluginRuntimeManager {
     if (!frame.dynamicCommands.has(localId) && frame.dynamicCommands.size >= MAX_DYNAMIC_COMMANDS) {
       throw new ApiError(`A plugin can register at most ${MAX_DYNAMIC_COMMANDS} commands.`, "invalid_params");
     }
+    const keys = this.commandKeys(frame, fullId, params.shortcut, true);
     frame.dynamicCommands.add(localId);
     commandRegistry.register({
       id: fullId,
@@ -564,6 +587,7 @@ class PluginRuntimeManager {
       category: frame.manifest.name || "Plugins",
       description: text(params.description, 200) || `${frame.manifest.name} plugin`,
       keywords: text(params.keywords, 200) || undefined,
+      ...keys,
       run: () => this.runCommand(frame, localId),
     });
   }

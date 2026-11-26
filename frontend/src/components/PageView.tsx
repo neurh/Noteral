@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type Block, type BlockNoteEditor } from "@blocknote/core";
+import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, insertOrUpdateBlockForSlashMenu, type Block, type BlockNoteEditor } from "@blocknote/core";
 import { en as englishDictionary } from "@blocknote/core/locales";
+import { TextSelection } from "prosemirror-state";
 import {
   BasicTextStyleButton,
   FormattingToolbar,
@@ -12,7 +13,7 @@ import {
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { Blocks, FileSymlink, ImagePlus, Move, Puzzle, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
+import { Blocks, FileSymlink, ImagePlus, Lightbulb, Move, Puzzle, RefreshCw, SmilePlus, Table2, X } from "lucide-react";
 import { api } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
 import { coverPositionOf, coverStyle, isPositionableCover, withCoverPosition, type CoverPosition } from "../lib/covers";
@@ -37,7 +38,8 @@ import { PageBackdrop } from "./PageBackdrop";
 import { usePageBackground } from "../lib/pageBackground";
 import { PagePickerDialog } from "./PagePickerDialog";
 import { FindBar, type FindRequest } from "./FindBar";
-import { rankSlashItems } from "../lib/slashMenu";
+import { arrangeSlashItems, rankSlashItems } from "../lib/slashMenu";
+import { calloutBlockSpec } from "./CalloutBlock";
 import { blockSelectionExtension } from "../lib/blockActions";
 import { NoteralSideMenuController } from "./BlockHandleMenu";
 import { useBlockMarquee } from "./useBlockMarquee";
@@ -48,7 +50,7 @@ const preloadIconPicker = () => { void import("./IconPickerDialog"); };
 const preloadCoverPicker = () => { void import("./CoverPickerDialog"); };
 
 const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, database: databaseBlockSpec(), custom: customBlockSpec() },
+  blockSpecs: { ...defaultBlockSpecs, callout: calloutBlockSpec(), database: databaseBlockSpec(), custom: customBlockSpec() },
   inlineContentSpecs: { ...defaultInlineContentSpecs, pageLink: pageLinkSpec },
 });
 
@@ -321,6 +323,88 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
           cursorBlockId: cursor.id,
         };
       },
+      getBlock: (blockId: string) => {
+        const block = editor.getBlock(blockId);
+        if (!block) return undefined;
+        return {
+          ...summarizeBlock(block, titleOf),
+          parentId: editor.getParentBlock(block)?.id ?? "",
+          prevId: editor.getPrevBlock(block)?.id ?? "",
+          nextId: editor.getNextBlock(block)?.id ?? "",
+        };
+      },
+      moveBlocks: async (blockIds: string[], move: { direction?: "up" | "down"; targetBlockId?: string; placement?: "before" | "after" }) => {
+        const blocks = blockIds.map((id) => editor.getBlock(id));
+        const missing = blockIds.filter((_, index) => !blocks[index]);
+        if (missing.length) throw new Error(`Unknown block ids: ${missing.join(", ")}`);
+        const moving = blocks as NonNullable<(typeof blocks)[number]>[];
+        if (!moving.length) return;
+        let target: string | undefined;
+        let placement: "before" | "after";
+        if (move.targetBlockId) {
+          if (blockIds.includes(move.targetBlockId)) throw new Error("A block cannot move next to itself.");
+          if (!editor.getBlock(move.targetBlockId)) throw new Error(`Block ${move.targetBlockId} does not exist`);
+          target = move.targetBlockId;
+          placement = move.placement ?? "after";
+        } else if (move.direction === "up") {
+          target = editor.getPrevBlock(moving[0])?.id;
+          placement = "before";
+        } else {
+          target = editor.getNextBlock(moving[moving.length - 1])?.id;
+          placement = "after";
+        }
+        if (!target) return; // Already at the edge.
+        const anchor = target;
+        editor.transact(() => {
+          editor.removeBlocks(blockIds);
+          // Blocks keep their ids, so plugins can keep referring to them.
+          editor.insertBlocks(moving as never, anchor, placement);
+        });
+      },
+      insertText: async (text: string) => {
+        editor.focus();
+        editor.insertInlineContent(text as never, { updateSelection: true });
+      },
+      formatText: async (format) => {
+        if (format.blockIds?.length) {
+          const known = format.blockIds.filter((id) => editor.getBlock(id));
+          if (!known.length) throw new Error("None of those blocks exist.");
+          if (known.length === 1) {
+            const block = editor.getBlock(known[0])!;
+            editor.setTextCursorPosition(block, "start");
+            const from = editor.prosemirrorState.selection.from;
+            editor.setTextCursorPosition(block, "end");
+            const to = editor.prosemirrorState.selection.to;
+            editor.transact((tr) => {
+              tr.setSelection(TextSelection.create(tr.doc, from, to));
+            });
+          } else {
+            editor.setSelection(known[0], known[known.length - 1]);
+          }
+        }
+        if (editor.prosemirrorState.selection.empty && !format.link) throw new Error("Select some text first, or pass blockIds.");
+        const styles = Object.fromEntries(
+          Object.entries(format.styles ?? {}).filter(([, value]) => value !== undefined && value !== false && value !== ""),
+        ) as Record<string, boolean | string>;
+        if (Object.keys(styles).length) {
+          if (format.mode === "add") editor.addStyles(styles as never);
+          else if (format.mode === "remove") editor.removeStyles(styles as never);
+          else editor.toggleStyles(styles as never);
+        }
+        if (format.link) editor.createLink(format.link, editor.prosemirrorState.selection.empty ? format.link : undefined);
+        editor.focus();
+      },
+      select: (blockId: string, options: { endBlockId?: string; placement?: "start" | "end" }) => {
+        const block = editor.getBlock(blockId);
+        if (!block) throw new Error(`Block ${blockId} does not exist`);
+        if (options.endBlockId && options.endBlockId !== blockId) {
+          if (!editor.getBlock(options.endBlockId)) throw new Error(`Block ${options.endBlockId} does not exist`);
+          editor.setSelection(blockId, options.endBlockId);
+        } else {
+          editor.setTextCursorPosition(block, options.placement ?? "end");
+        }
+        editor.focus();
+      },
       insertMarkdown: async (markdown: string, position: InsertPosition, blockId?: string) => {
         const parsed = parseMarkdown(markdown);
         if (!parsed.length) return [];
@@ -433,6 +517,12 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
     };
     return editorBridge.register(page.id, handle);
   }, [editor, page.id, kind]);
+
+  // Plugins can follow the cursor (`selection:changed`); only the active editor reports.
+  useEffect(() => {
+    if (!active) return;
+    return editor.onSelectionChange(() => editorBridge.selectionChanged(page.id));
+  }, [editor, page.id, active]);
 
   useEffect(() => {
     if (active && kind === "page") {
@@ -617,7 +707,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
         subtext: def.description ?? `Added by ${def.owner.name}`,
         group: "Custom blocks",
         aliases: [def.type, ...(def.keywords ?? [])],
-        icon: def.icon ? <PageIcon value={def.icon} size={16} /> : <Blocks size={16} />,
+        icon: def.icon ? <PageIcon value={def.icon} size={18} /> : <Blocks size={18} />,
         onItemClick: () => {
           const cursor = editor.getTextCursorPosition().block;
           const block = { type: "custom", props: { kind: def.type, data: def.defaultData === undefined ? "" : serializeBlockData(def.defaultData) } } as never;
@@ -635,19 +725,32 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   const customItems = useMemo(
     () => [
       {
+        key: "callout",
+        title: "Callout",
+        subtext: "Make a note stand out, with an icon",
+        group: "Basic blocks",
+        aliases: ["callout", "note", "tip", "info", "warning", "aside", "admonition", "box"],
+        icon: <Lightbulb size={18} />,
+        onItemClick: () => {
+          insertOrUpdateBlockForSlashMenu(editor, { type: "callout" } as never);
+        },
+      },
+      {
+        key: "page_link",
         title: "Link to page",
         subtext: "Add a stable internal link",
         group: "Noteral",
         aliases: ["link", "page", "internal", "reference"],
-        icon: <FileSymlink size={16} />,
+        icon: <FileSymlink size={18} />,
         onItemClick: () => setPickerOpen(true),
       },
       {
+        key: "database",
         title: "Database",
         subtext: "New database, or a view of an existing one",
         group: "Noteral",
         aliases: ["database", "table", "board", "kanban", "gallery", "calendar", "list", "db", "linked", "existing", "view", "embed"],
-        icon: <Table2 size={16} />,
+        icon: <Table2 size={18} />,
         onItemClick: () => {
           databaseCursor.current = editor.getTextCursorPosition().block.id;
           setDatabasePickerOpen(true);
@@ -843,10 +946,10 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
                       subtext: command.description ?? "Plugin command",
                       group: "Plugins",
                       aliases: command.keywords ? command.keywords.split(/\s+/) : [],
-                      icon: <Puzzle size={16} />,
+                      icon: <Puzzle size={18} />,
                       onItemClick: () => void command.run(),
                     }));
-                  return rankSlashItems([...defaults, ...customItems, ...blockTypeItems, ...pluginItems], query);
+                  return rankSlashItems(arrangeSlashItems([...defaults, ...customItems, ...blockTypeItems, ...pluginItems]), query);
                 }}
               />
             </BlockNoteView>

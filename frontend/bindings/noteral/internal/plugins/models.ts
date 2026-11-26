@@ -29,6 +29,11 @@ export interface CommandContribution {
     "title": string;
     "description"?: string;
     "keywords"?: string;
+
+    /**
+     * Shortcut is an optional key binding such as "Mod+Shift+K" (Mod = Ctrl or ⌘).
+     */
+    "shortcut"?: string;
 }
 
 /**

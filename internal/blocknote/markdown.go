@@ -71,6 +71,17 @@ func renderBlock(block map[string]any, depth int, opts RenderOptions) string {
 			lines[i] = "> " + line
 		}
 		body = strings.Join(lines, "\n")
+	case "callout":
+		icon, _ := props["icon"].(string)
+		text := renderInline(content, opts)
+		if icon != "" {
+			text = icon + " " + text
+		}
+		lines := strings.Split(text, "\n")
+		for i, line := range lines {
+			lines[i] = "> " + line
+		}
+		body = strings.Join(lines, "\n")
 	case "codeBlock":
 		lang, _ := props["language"].(string)
 		code := plainInline(content)
