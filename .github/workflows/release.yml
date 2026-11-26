@@ -175,7 +175,7 @@ jobs:
           (cd build/windows/nsis && makensis -DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user \
             -DINFO_PRODUCTVERSION="${VERSION}" "-DARG_WAILS_${flag}_BINARY=${bin}" project.nsi)
           mkdir -p dist/Noteral
-          mv bin/noteral-*-installer.exe "dist/noteral-windows-${{ matrix.arch }}-setup.exe"
+          mv bin/*-installer.exe "dist/noteral-windows-${{ matrix.arch }}-setup.exe"
           cp bin/noteral.exe LICENSE dist/Noteral/
           (cd dist && 7z a -tzip "noteral-windows-${{ matrix.arch }}.zip" Noteral >/dev/null)
           ls -la dist
