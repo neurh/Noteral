@@ -1,0 +1,287 @@
+# Builds Noteral for every platform on GitHub-hosted runners and publishes a
+# GitHub release. Nothing is built on a developer's machine.
+#
+# - Push a tag vX.Y.Z (matching `Version` in internal/service/service.go) to
+#   build, publish the release, test the installers and publish to npm.
+# - Run it by hand (workflow_dispatch) to build everything without releasing;
+#   the files are kept as workflow artifacts.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  WAILS_VERSION: v3.1.0
+  NODE_VERSION: "22"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        shell: bash
+        run: |
+          app=$(sed -n 's/^const Version = "\(.*\)"/\1/p' internal/service/service.go)
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "v${app}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match Version ${app} in internal/service/service.go"
+            exit 1
+          fi
+          echo "version=${app}" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-22.04 }
+          - { arch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Install GTK 3 and WebKitGTK 4.1
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Install wails3
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Build app
+        env: { CGO_ENABLED: "1", GOOS: linux, GOARCH: "${{ matrix.arch }}" }
+        run: go build -tags production,gtk3 -trimpath -buildvcs=false -ldflags="-w -s" -o bin/noteral .
+      - name: Package
+        env: { GOARCH: "${{ matrix.arch }}" }
+        run: |
+          set -eu
+          sed -i "s/^version: .*/version: \"${VERSION}\"/" build/linux/nfpm/nfpm.yaml
+          mkdir -p dist/noteral
+          cp bin/noteral dist/noteral/noteral
+          cp build/appicon.png dist/noteral/noteral.png
+          cp build/linux/noteral.desktop LICENSE dist/noteral/
+          tar -C dist -czf "dist/noteral-linux-${{ matrix.arch }}.tar.gz" noteral
+          wails3 tool package -name noteral -format deb -config ./build/linux/nfpm/nfpm.yaml -out dist
+          wails3 tool package -name noteral -format rpm -config ./build/linux/nfpm/nfpm.yaml -out dist
+          cd dist
+          mv ./*.deb "noteral-linux-${{ matrix.arch }}.deb"
+          mv ./*.rpm "noteral-linux-${{ matrix.arch }}.rpm"
+          ls -la
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+      CGO_CFLAGS: -mmacosx-version-min=12.0
+      CGO_LDFLAGS: -mmacosx-version-min=12.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Build universal binary
+        env: { CGO_ENABLED: "1", GOOS: darwin }
+        run: |
+          set -eu
+          GOARCH=arm64 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s" -o bin/noteral-arm64 .
+          GOARCH=amd64 go build -tags production -trimpath -buildvcs=false -ldflags="-w -s" -o bin/noteral-amd64 .
+          lipo -create -output bin/noteral bin/noteral-arm64 bin/noteral-amd64
+          lipo -info bin/noteral
+      - name: Bundle Noteral.app
+        run: |
+          set -eu
+          app=dist/Noteral.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp bin/noteral "$app/Contents/MacOS/noteral"
+          cp build/darwin/icons.icns build/darwin/Assets.car "$app/Contents/Resources/"
+          sed -e "s#<string>0.1.0</string>#<string>${VERSION}</string>#g" \
+              -e "s#Noteral 0.1.0#Noteral ${VERSION}#" build/darwin/Info.plist > "$app/Contents/Info.plist"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --verbose "$app"
+          cd dist && ditto -c -k --keepParent Noteral.app noteral-macos-universal.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/noteral-macos-universal.zip
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: windows-2022
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run: { shell: bash }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: true }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Install wails3
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Build app
+        env: { CGO_ENABLED: "0", GOOS: windows, GOARCH: "${{ matrix.arch }}" }
+        run: |
+          set -eu
+          (cd build && wails3 generate syso -arch ${{ matrix.arch }} -icon windows/icon.ico -manifest windows/wails.exe.manifest -info windows/info.json -out ../wails_windows_${{ matrix.arch }}.syso)
+          go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o bin/noteral.exe .
+          rm -f ./*.syso
+      - name: Build installer
+        run: |
+          set -eu
+          export PATH="$PATH:/c/Program Files (x86)/NSIS"
+          command -v makensis >/dev/null || choco install nsis -y --no-progress
+          wails3 generate webview2bootstrapper -dir build/windows/nsis
+          flag=$([ "${{ matrix.arch }}" = amd64 ] && echo AMD64 || echo ARM64)
+          bin="$(cygpath -w "$PWD/bin/noteral.exe")"
+          (cd build/windows/nsis && makensis -DWAILS_INSTALL_SCOPE=user -DREQUEST_EXECUTION_LEVEL=user \
+            -DINFO_PRODUCTVERSION="${VERSION}" "-DARG_WAILS_${flag}_BINARY=${bin}" project.nsi)
+          mkdir -p dist/Noteral
+          mv bin/noteral-*-installer.exe "dist/noteral-windows-${{ matrix.arch }}-setup.exe"
+          cp bin/noteral.exe LICENSE dist/Noteral/
+          (cd dist && 7z a -tzip "noteral-windows-${{ matrix.arch }}.zip" Noteral >/dev/null)
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - name: Checksums
+        run: |
+          set -eu
+          cp scripts/install/install.sh scripts/install/install.ps1 artifacts/
+          cd artifacts && sha256sum noteral-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Publish release
+        run: |
+          set -eu
+          cat > notes.md <<EOF
+          ## Install
+
+          **macOS and Linux**
+          \`\`\`sh
+          curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh | sh
+          \`\`\`
+
+          **Windows** (PowerShell)
+          \`\`\`powershell
+          irm https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.ps1 | iex
+          \`\`\`
+
+          Or download a file below: \`.exe\` setup for Windows, \`.zip\` for macOS, \`.deb\` / \`.rpm\` / \`.tar.gz\` for Linux.
+          EOF
+          gh release create "${GITHUB_REF_NAME}" artifacts/* --title "Noteral ${VERSION}" --notes-file notes.md --verify-tag
+
+  test-install:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install with install.sh
+        if: runner.os != 'Windows'
+        env: { NOTERAL_VERSION: "${{ github.ref_name }}" }
+        run: |
+          set -eu
+          sh scripts/install/install.sh
+          if [ "$(uname)" = Darwin ]; then
+            test -x /Applications/Noteral.app/Contents/MacOS/noteral || test -x "$HOME/Applications/Noteral.app/Contents/MacOS/noteral"
+          else
+            test -x "$HOME/.local/bin/noteral" && test -f "$HOME/.local/share/applications/noteral.desktop"
+          fi
+          sh scripts/install/install.sh --uninstall
+      - name: Install with install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:NOTERAL_VERSION = "${{ github.ref_name }}"
+          ./scripts/install/install.ps1
+          if (-not (Test-Path "$env:LOCALAPPDATA\Programs\Noteral\noteral.exe")) { throw "noteral.exe missing" }
+          $env:NOTERAL_UNINSTALL = "1"
+          ./scripts/install/install.ps1
+          if (Test-Path "$env:LOCALAPPDATA\Programs\Noteral\noteral.exe") { throw "uninstall failed" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}" }
+      - name: npm launcher downloads the release
+        shell: bash
+        run: |
+          cd packaging/npm
+          node bin/noteral.js --path
+
+  npm:
+    needs: [version, test-install]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", registry-url: "https://registry.npmjs.org" }
+      - name: Publish to npm
+        if: env.NODE_AUTH_TOKEN != ''
+        working-directory: packaging/npm
+        run: |
+          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm publish --provenance --access public
+      - name: Skip npm
+        if: env.NODE_AUTH_TOKEN == ''
+        run: echo "::notice::NPM_TOKEN secret is not set, so the npm package was not published."

@@ -1,0 +1,15 @@
+{
+  "name": "noteral",
+  "version": "0.1.0",
+  "description": "Install and open Noteral, a quiet, local-first notes app for the desktop.",
+  "keywords": ["notes", "note-taking", "local-first", "markdown", "desktop", "knowledge-base"],
+  "homepage": "https://github.com/neurh/Noteral#readme",
+  "bugs": "https://github.com/neurh/Noteral/issues",
+  "repository": { "type": "git", "url": "git+https://github.com/neurh/Noteral.git", "directory": "packaging/npm" },
+  "license": "MIT",
+  "bin": { "noteral": "bin/noteral.js" },
+  "files": ["bin", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"]
+}

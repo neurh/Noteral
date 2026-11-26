@@ -1,10 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=noteral
+Name=Noteral
+GenericName=Notes
+Comment=A quiet, local-first notes app
 Exec=noteral
 Icon=noteral
-Categories=Development;
+Categories=Office;Utility;
+Keywords=notes;notebook;wiki;markdown;database;
 Terminal=false
-Keywords=wails
-Version=1.0
-StartupNotify=false
+StartupNotify=true
+StartupWMClass=noteral

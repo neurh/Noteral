@@ -19,7 +19,38 @@ A quiet, local-first notes app for the desktop.
 
 ![Dark theme](docs/images/editor-dark.jpg)
 
-## Run it
+## Install
+
+**macOS and Linux**
+
+```sh
+curl -fsSL https://github.com/neurh/Noteral/releases/latest/download/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://github.com/neurh/Noteral/releases/latest/download/install.ps1 | iex
+```
+
+**npm** (any system with Node.js 18+)
+
+```sh
+npm install -g noteral
+noteral
+```
+
+The installers pick the right build for your system and check its checksum. You can also
+download a file yourself from [Releases](https://github.com/neurh/Noteral/releases): a
+setup `.exe` for Windows, a `.zip` for macOS, and `.deb`, `.rpm` or `.tar.gz` for Linux.
+
+- **Linux** needs GTK 3 and WebKitGTK 4.1; the script installs them if they are missing.
+- **macOS**: the app is not notarized yet. The script clears the download quarantine;
+  if you download the `.zip` yourself, right-click Noteral.app and choose Open the first time.
+- **Uninstall**: run the same command with `--uninstall` (`| sh -s -- --uninstall`), or on
+  Windows remove Noteral in Settings > Apps. Your notes are kept.
+
+## Build from source
 
 You need Go, Node.js and the [Wails 3](https://v3.wails.io) CLI.
 
@@ -41,3 +72,7 @@ Plugins are built with the SDK. The SDK, its docs and the community plugin regis
 - [Assistant](docs/assistant.md)
 - [Plugin SDK](docs/PLUGIN_SDK.md)
 - [Testing](docs/TESTING.md)
+
+## License
+
+[MIT](LICENSE)
