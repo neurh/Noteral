@@ -1,0 +1,29 @@
+# Publishes the `noteral` npm package (packaging/npm) by hand. The release
+# workflow also does this on every version tag; use this to publish or
+# republish without making a new release. The GitHub release matching
+# packaging/npm/package.json's version must already exist.
+name: Publish npm
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "22", registry-url: "https://registry.npmjs.org" }
+      - name: Check the release exists
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          v=$(node -p "require('./packaging/npm/package.json').version")
+          gh release view "v$v" >/dev/null || { echo "::error::No GitHub release v$v"; exit 1; }
+          if npm view "noteral@$v" version >/dev/null 2>&1; then echo "::error::noteral@$v is already on npm"; exit 1; fi
+      - name: Publish
+        working-directory: packaging/npm
+        env: { NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" }
+        run: npm publish --provenance --access public
