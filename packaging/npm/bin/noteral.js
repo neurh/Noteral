@@ -81,7 +81,10 @@ async function ensureInstalled() {
     if (want !== got) fail(`checksum mismatch for ${t.asset}; not installing it.`);
   }
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "noteral-"));
+  // Unpack next to the cache (not in os.tmpdir()) so the final rename never
+  // crosses drives or filesystems.
+  fs.mkdirSync(cacheRoot(), { recursive: true });
+  const tmp = fs.mkdtempSync(path.join(cacheRoot(), ".download-"));
   try {
     const archive = path.join(tmp, t.asset);
     fs.writeFileSync(archive, data);
@@ -91,7 +94,6 @@ async function ensureInstalled() {
     else if (process.platform === "win32") extractZipWindows(archive, out);
     else run("tar", ["-xf", archive, "-C", out]);
     fs.rmSync(dir, { recursive: true, force: true });
-    fs.mkdirSync(path.dirname(dir), { recursive: true });
     fs.renameSync(out, dir);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -100,7 +102,7 @@ async function ensureInstalled() {
   if (process.platform !== "win32") fs.chmodSync(exe, 0o755);
   // Drop older cached versions.
   for (const name of fs.readdirSync(cacheRoot())) {
-    if (name !== VERSION) fs.rmSync(path.join(cacheRoot(), name), { recursive: true, force: true });
+    if (name !== VERSION && !name.startsWith(".download-")) fs.rmSync(path.join(cacheRoot(), name), { recursive: true, force: true });
   }
   return { exe, dir, t };
 }
