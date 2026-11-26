@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "description": "Local-first notes for the desktop",
   "scripts": {
-    "plugins:build": "node scripts/build-plugins.mjs"
+    "plugins:build": "node scripts/build-plugins.mjs",
+    "hub:export": "node scripts/build-plugins.mjs && node scripts/export-plugin-hub.mjs ../noteral-plugins",
+    "hub:check": "node scripts/check-plugin-hub.mjs"
   }
 }

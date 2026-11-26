@@ -98,7 +98,7 @@ Data directory: `/tmp/noteral-final` (removed before the run). Binary:
 9. **Theme** — light/dark/system switching was exercised; the chosen setting
    persisted across restart.
 
-The screenshot in the README (`docs/noteral-editor.png`) is from this run.
+The original README screenshot came from this run; the current ones in `docs/images/` were taken in server mode with sample pages.
 
 ## Things that were not tested
 
