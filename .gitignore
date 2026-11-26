@@ -3,6 +3,7 @@
 .agents
 AGENTS.md
 bin
+!packaging/npm/bin/
 frontend/dist
 frontend/node_modules
 graphify-out

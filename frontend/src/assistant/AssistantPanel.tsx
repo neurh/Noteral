@@ -29,7 +29,7 @@ import { Composer, FileChip, MentionChip, focusComposer, useComposer } from "./C
 import { hasFiles } from "./attachments";
 import { canMention, mentionsFromDrop } from "./mentions";
 import { displayModel } from "./models";
-import { LedgerButton } from "./Ledger";
+import { LedgerButton } from "./LedgerButton";
 import { ProvidersView } from "./ProvidersView";
 import { useAssistant } from "./store";
 import { ApprovalCard, ChangeList, QuestionCard, SourceList, ThinkingLoader, Timeline, changesOf, formatTokens, layoutReply, sourcesOf, useNow } from "./Activity";

@@ -28,7 +28,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: v
         shell: bash
         run: |
@@ -51,15 +51,15 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
       - name: Install GTK 3 and WebKitGTK 4.1
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: Install wails3
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
+        run: go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
       - name: Build frontend
         working-directory: frontend
         run: npm ci && npm run build
@@ -82,7 +82,7 @@ jobs:
           mv ./*.deb "noteral-linux-${{ matrix.arch }}.deb"
           mv ./*.rpm "noteral-linux-${{ matrix.arch }}.rpm"
           ls -la
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux-${{ matrix.arch }}
           path: |
@@ -100,10 +100,10 @@ jobs:
       CGO_CFLAGS: -mmacosx-version-min=12.0
       CGO_LDFLAGS: -mmacosx-version-min=12.0
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
       - name: Build frontend
         working-directory: frontend
@@ -129,7 +129,7 @@ jobs:
           codesign --force --deep --sign - "$app"
           codesign --verify --verbose "$app"
           cd dist && ditto -c -k --keepParent Noteral.app noteral-macos-universal.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: macos
           path: dist/noteral-macos-universal.zip
@@ -147,10 +147,10 @@ jobs:
     defaults:
       run: { shell: bash }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, cache: true }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: "${{ env.NODE_VERSION }}", cache: npm, cache-dependency-path: frontend/package-lock.json }
       - name: Install wails3
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS_VERSION}
@@ -179,7 +179,7 @@ jobs:
           cp bin/noteral.exe LICENSE dist/Noteral/
           (cd dist && 7z a -tzip "noteral-windows-${{ matrix.arch }}.zip" Noteral >/dev/null)
           ls -la dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-${{ matrix.arch }}
           path: |
@@ -197,8 +197,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
         with: { path: artifacts, merge-multiple: true }
       - name: Checksums
         run: |
@@ -233,7 +233,7 @@ jobs:
         os: [ubuntu-22.04, ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install with install.sh
         if: runner.os != 'Windows'
         env: { NOTERAL_VERSION: "${{ github.ref_name }}" }
@@ -256,7 +256,7 @@ jobs:
           $env:NOTERAL_UNINSTALL = "1"
           ./scripts/install/install.ps1
           if (Test-Path "$env:LOCALAPPDATA\Programs\Noteral\noteral.exe") { throw "uninstall failed" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: "${{ env.NODE_VERSION }}" }
       - name: npm launcher downloads the release
         shell: bash
@@ -273,8 +273,8 @@ jobs:
     env:
       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: "${{ env.NODE_VERSION }}", registry-url: "https://registry.npmjs.org" }
       - name: Publish to npm
         if: env.NODE_AUTH_TOKEN != ''
