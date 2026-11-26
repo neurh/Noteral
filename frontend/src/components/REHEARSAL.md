@@ -479,3 +479,13 @@ Driven with Playwright against the server build (`/tmp/ai-rh/r8/flow.mjs <width>
   - Order: code first, then status, then a Preview card, then Ask AI as a composer at the bottom.
   - The Preview card has a row switcher (‹ › plus a picker with search that lists each row's result), the big result and the values of the properties the formula reads, and a footer with "Works for all N rows" or "K rows have errors" plus a Show link.
   - At 390 the switcher hides its count. No page errors.
+
+## Round 9 — formula editor: autosave, undo/redo, docs under the code, Functions / Ask AI tabs (2026-11-26)
+## Round 9: formula editor
+
+- Saves as you type (450 ms after the last change; an invalid formula keeps the last working one). There is no Save/Cancel footer, and the toolbar shows Saved / Saving… / Not saved.
+- Undo/redo uses its own history (lib/editHistory.ts), because a controlled textarea loses the browser's stack. Quick typing merges into one step; completions, inserts and AI applies are separate steps.
+- The preview shows only the result of the chosen row. The function reference sits under the code (caret or hover), and its examples are checked by formulaDocs.test.ts.
+- The side panel has two tabs, Functions and Ask AI (a chat-like feed and composer).
+- Completions open while typing or on Ctrl+Space, not when the caret is placed in a name, so that function's reference shows instead.
+- Checked with /tmp/ai-rh/r9/fx9.mjs at 1366 and 390 dark: no footer, no input rows, both tabs present, autosave Saving…→Saved, error keeps the last good formula, undo/redo via keys and button, the value persists after closing, no page errors.
