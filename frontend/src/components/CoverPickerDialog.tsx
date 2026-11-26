@@ -11,9 +11,11 @@ import {
   coverName,
   coverStyle,
   customGradientValue,
+  linkValue,
   parseCustomGradient,
   type CoverOption,
 } from "../lib/covers";
+import { ImageLinkField } from "./ImageLinkField";
 import { Modal } from "./Modal";
 
 const ACCEPTED_IMAGES = "image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp";
@@ -21,13 +23,14 @@ const MAX_UPLOAD = 12 * 1024 * 1024;
 const DEFAULT_COLOR = "#b86e55";
 const DEFAULT_GRADIENT = { angle: 135, from: "#f6d5b8", to: "#bf6b62" };
 
-type CoverTab = "colors" | "gradients" | "images" | "upload";
+type CoverTab = "colors" | "gradients" | "images" | "upload" | "link";
 
 const tabs: Array<{ id: CoverTab; label: string }> = [
   { id: "images", label: "Images" },
   { id: "colors", label: "Colors" },
   { id: "gradients", label: "Gradients" },
   { id: "upload", label: "Upload" },
+  { id: "link", label: "From link" },
 ];
 
 function matches(option: CoverOption, query: string): boolean {
@@ -150,7 +153,7 @@ export function CoverPickerDialog({ open, onClose, workspaceId, pageId, current,
     <Modal
       open={open}
       title={current ? "Change cover" : "Add cover"}
-      subtitle="Choose photography, a color, a gradient, or an image of your own."
+      subtitle="Choose photography, a color, a gradient, an image of your own, or one from a link."
       onClose={onClose}
       width="large"
       className="appearance-modal cover-modal"
@@ -181,7 +184,7 @@ export function CoverPickerDialog({ open, onClose, workspaceId, pageId, current,
         ))}
       </div>
 
-      {tab !== "upload" ? (
+      {tab !== "upload" && tab !== "link" ? (
         <label className="picker-search appearance-search">
           <Search size={14} />
           <input
@@ -195,7 +198,17 @@ export function CoverPickerDialog({ open, onClose, workspaceId, pageId, current,
         </label>
       ) : null}
 
-      {tab === "upload" ? (
+      {tab === "link" ? (
+        <ImageLinkField
+          title="A cover from the web"
+          applyLabel="Use as cover"
+          initial={currentBase.startsWith("link:") ? currentBase.slice(5) : ""}
+          onApply={(href) => {
+            const value = linkValue(href);
+            if (value) onPick(value);
+          }}
+        />
+      ) : tab === "upload" ? (
         <div
           className={`appearance-upload cover-upload ${dragging ? "dragging" : ""}`}
           onDragOver={(event) => { event.preventDefault(); setDragging(true); }}

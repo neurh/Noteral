@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { commandRegistry } from "../lib/commands";
-import { useContributions } from "../lib/contributions";
+import { contributions, useContributions } from "../lib/contributions";
+import type { PopupMenuItem } from "../lib/popups";
 import type { MenuItemContribution, MenuSlot } from "../lib/contributions";
 import { pluginRuntime } from "../plugins/runtime";
 import { useAppStore } from "../store";
@@ -15,6 +16,8 @@ export interface MenuContext {
   blockId?: string;
   blockType?: string;
   tabKey?: string;
+  /** Every selected page (treeSelection menu). */
+  pageIds?: string[];
 }
 
 function matches(item: MenuItemContribution, context: MenuContext): boolean {
@@ -23,6 +26,13 @@ function matches(item: MenuItemContribution, context: MenuContext): boolean {
   if (item.nodeTypes?.length && (!context.nodeType || !item.nodeTypes.includes(context.nodeType))) return false;
   if (item.blockTypes?.length && (!context.blockType || !item.blockTypes.includes(context.blockType))) return false;
   return true;
+}
+
+/** Contributed items as popup menu entries (for menus opened with lib/popups). */
+export function contributedMenuEntries(context: MenuContext, items: MenuItemContribution[] = contributions.current().menuItems): PopupMenuItem[] {
+  return items
+    .filter((item) => matches(item, context))
+    .map((item) => ({ id: item.key, label: item.title, icon: item.icon, danger: item.danger, run: () => runMenuItem(item, context) }));
 }
 
 export function useMenuItems(context: MenuContext): MenuItemContribution[] {

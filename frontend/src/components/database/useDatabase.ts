@@ -24,10 +24,13 @@ export interface DatabaseApi {
   rowErrors: Map<string, Record<string, string>>;
   /** Applies a change to the latest stored schema (never a stale render copy). */
   updateSchema: (change: (schema: DatabaseSchema) => DatabaseSchema | void) => void;
-  /** True when the database is locked: row and cell writes are refused (see `DatabaseSchema.locked`). */
+  /**
+   * True when the database is locked: its properties can't be added, moved,
+   * resized or have their formulas edited. Rows and cell values stay editable.
+   */
   locked: boolean;
   setValue: (rowId: string, propertyId: string, value: unknown) => void;
-  /** `force` writes even when locked, for schema changes that rewrite values (e.g. converting a property). */
+  /** `force` is kept for callers that rewrite values as part of a schema change; locking never blocks cell writes. */
   setValues: (rowId: string, change: (values: RowValues) => RowValues, options?: { force?: boolean }) => void;
   renameRow: (rowId: string, title: string) => void;
   addRow: (values?: RowValues, title?: string) => Promise<PageMeta | null>;
@@ -37,17 +40,6 @@ export interface DatabaseApi {
   openRow: (rowId: string) => void;
 }
 
-let lockNoticeAt = 0;
-/** True (and says so, at most every few seconds) when the database is locked. */
-function refuseLocked(databaseId: string): boolean {
-  if (!latestSchema(databaseId).locked) return false;
-  const now = Date.now();
-  if (now - lockNoticeAt > 2500) {
-    lockNoticeAt = now;
-    useAppStore.getState().notify("This database is locked. Unlock it in the view settings to edit rows.", "info");
-  }
-  return true;
-}
 
 function latestSchema(databaseId: string): DatabaseSchema {
   const meta = useAppStore.getState().pages.find((page) => page.id === databaseId);
@@ -89,14 +81,13 @@ export function useDatabase(databaseId: string): DatabaseApi {
   );
 
   const setValues = useCallback(
-    (rowId: string, change: (values: RowValues) => RowValues, options?: { force?: boolean }) => {
-      if (!options?.force && refuseLocked(databaseId)) return;
+    (rowId: string, change: (values: RowValues) => RowValues, _options?: { force?: boolean }) => {
       const row = useAppStore.getState().pages.find((page) => page.id === rowId);
       if (!row) return;
       const next = change({ ...parseRowValues(row.data) });
       void setPageData(rowId, serializeRowValues(next));
     },
-    [databaseId, setPageData],
+    [setPageData],
   );
 
   const setValue = useCallback(
@@ -115,20 +106,19 @@ export function useDatabase(databaseId: string): DatabaseApi {
     setValue,
     setValues,
     renameRow: (rowId, title) => {
-      if (!refuseLocked(databaseId)) void renamePage(rowId, title);
+      void renamePage(rowId, title);
     },
     addRow: async (values = {}, title = "") =>
-      refuseLocked(databaseId) ? null : createItem("page", databaseId, { open: false, title, data: serializeRowValues(values) }),
+      createItem("page", databaseId, { open: false, title, data: serializeRowValues(values) }),
     deleteRows: async (rowIds) => {
-      if (refuseLocked(databaseId)) return;
       for (const id of rowIds) await trashPage(id, { quiet: true });
       if (rowIds.length) useAppStore.getState().notify(rowIds.length === 1 ? "Row moved to trash." : `${rowIds.length} rows moved to trash.`, "info");
     },
     duplicateRow: async (rowId) => {
-      if (!refuseLocked(databaseId)) await duplicatePage(rowId, { open: false });
+      await duplicatePage(rowId, { open: false });
     },
     moveRow: async (rowId, beforeId) => {
-      if (!refuseLocked(databaseId)) await movePage(rowId, databaseId, beforeId);
+      await movePage(rowId, databaseId, beforeId);
     },
     openRow: (rowId) => void selectPage(rowId),
   };

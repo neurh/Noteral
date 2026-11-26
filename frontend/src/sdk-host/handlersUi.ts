@@ -19,6 +19,7 @@ import {
   LIMITS,
   TYPE_ID,
   contributions,
+  MENU_SLOTS,
   jsonClone,
   normalizeBlockType,
   normalizeMenuItem,
@@ -39,13 +40,18 @@ import {
   lookOf,
 } from "../lib/customizations";
 import type { Customizations, Layer, Look } from "../lib/customizations";
+import { effectiveStatusBar } from "../lib/customizations";
+import { isStatusItemHidden, mergeStatusBar, normalizeStatusBar, normalizeStatusItem, normalizeStatusWidth } from "../lib/statusLayout";
+import type { StatusBarLayout, StatusItemLayout } from "../lib/statusLayout";
 import { devlog } from "../lib/devlog";
+import { pluginConfigure } from "../lib/pluginConfigure";
 import { dialogs } from "../lib/dialogs";
 import { activateSidebarTab, availableTabs, moveSidebarTab, resolveSidebar, setSidebarGroups } from "../lib/sidebarLayout";
 import { viewHub } from "../lib/viewFrame";
 import { pluginRuntime } from "../plugins/runtime";
 import { loadOptions } from "../lib/pluginOptions";
 import { PERMISSIONS } from "./spec";
+import { POPUP_HANDLERS } from "./handlersPopups";
 import { applyEdits } from "./textEdits";
 import type { TextEdit } from "./textEdits";
 import { SNIPPET_ID, applyTokens, displayTitle, editCustomizations, editorFor, pluginInfo, requireMeta, store } from "./handlers";
@@ -64,6 +70,7 @@ import type {
   SidebarInfo,
   SidebarTabInfo,
   StatusWidgetInfo,
+  StatusBarLayoutInfo,
 } from "./types";
 import { SDK_VERSION } from "./handlers";
 
@@ -436,22 +443,108 @@ const SIDEBAR_HANDLERS: Record<string, Handler> = {
 // ── status bar ────────────────────────────────────────────────────────────
 
 function statusInfos(): StatusWidgetInfo[] {
-  const builtins: StatusWidgetInfo[] = BUILTIN_STATUS_WIDGETS.map((widget) => ({ key: widget.id, id: widget.id, side: widget.side, order: widget.order, builtin: true, text: widget.title, kind: "builtin" }));
-  const contributed: StatusWidgetInfo[] = contributions.current().statusWidgets.map((widget) => ({
-    key: widget.key,
-    id: widget.id,
-    side: widget.side,
-    order: widget.order,
-    builtin: false,
-    ...(widget.text ? { text: widget.text } : {}),
-    kind: widget.html ? "html" : "text",
-    owner: ownerInfo(widget.owner),
-  }));
-  return [...builtins, ...contributed].sort((a, b) => (a.side === b.side ? a.order - b.order : a.side === "left" ? -1 : 1));
+  const layout = effectiveStatusBar(customizations.get());
+  const items = layout?.items ?? {};
+  const place = (info: StatusWidgetInfo): StatusWidgetInfo => {
+    const custom = items[info.key];
+    const hidden = isStatusItemHidden(info.key, layout);
+    return {
+      ...info,
+      ...(custom?.side ? { side: custom.side } : {}),
+      ...(custom?.order !== undefined ? { order: custom.order } : {}),
+      ...(custom?.width !== undefined ? { width: custom.width } : {}),
+      ...(hidden ? { hidden: true } : {}),
+    };
+  };
+  const builtins: StatusWidgetInfo[] = BUILTIN_STATUS_WIDGETS.map((widget) =>
+    place({ key: `builtin:${widget.id}`, id: widget.id, side: widget.side, order: widget.order, builtin: true, text: widget.title, kind: "builtin" }),
+  );
+  const contributed: StatusWidgetInfo[] = contributions.current().statusWidgets.map((widget) =>
+    place({
+      key: widget.key,
+      id: widget.id,
+      side: widget.side,
+      order: widget.order,
+      builtin: false,
+      ...(widget.text ? { text: widget.text } : {}),
+      ...(widget.width !== undefined ? { width: widget.width } : {}),
+      kind: widget.html ? "html" : "text",
+      owner: ownerInfo(widget.owner),
+    }),
+  );
+  const rank = { left: 0, center: 1, right: 2 } as const;
+  return [...builtins, ...contributed].sort((a, b) => (a.side === b.side ? a.order - b.order : rank[a.side] - rank[b.side]));
+}
+
+function statusLayoutInfo(): StatusBarLayoutInfo {
+  const layout = effectiveStatusBar(customizations.get());
+  return {
+    ...(layout?.hidden ? { hidden: true } : {}),
+    separator: layout?.separator ?? "none",
+    ...(layout?.gap !== undefined ? { gap: layout.gap } : {}),
+    ...(layout?.height !== undefined ? { height: layout.height } : {}),
+    ...(layout?.padding !== undefined ? { padding: layout.padding } : {}),
+    ...(layout?.fontSize !== undefined ? { fontSize: layout.fontSize } : {}),
+    items: jsonClone(layout?.items ?? {}),
+    widgets: statusInfos(),
+  };
+}
+
+/** Item keys as given ("save", "builtin:save", own widget id, full key) → layout keys. */
+function statusLayoutKey(key: string, ctx: CallContext): string {
+  const known = statusInfos().map((info) => info.key);
+  if (known.includes(key)) return key;
+  if (known.includes(`builtin:${key}`)) return `builtin:${key}`;
+  if (ctx.caller === "plugin" && ctx.pluginId && !ctx.pluginId.includes(":")) {
+    const own = keyOf({ kind: "plugin", id: ctx.pluginId }, key);
+    if (known.includes(own)) return own;
+  }
+  const own = viewLayerId(ctx);
+  if (own && known.includes(keyOf({ kind: "layer", id: own }, key))) return keyOf({ kind: "layer", id: own }, key);
+  const matches = known.filter((item) => item.endsWith(`:${key}`));
+  if (matches.length === 1) return matches[0];
+  if (/^[A-Za-z0-9:._-]{1,200}$/.test(key)) return key; // a widget that isn't running yet
+  throw new Error(`No status bar item "${key}". statusBar.list shows every item key.`);
+}
+
+async function editStatusLayout(ctx: CallContext, layer: unknown, change: (current: StatusBarLayout | undefined) => StatusBarLayout | undefined): Promise<StatusBarLayoutInfo> {
+  const target = appearanceTarget(ctx, layer);
+  await editCustomizations((draft) => {
+    const holder: { statusBar?: StatusBarLayout } = target ? layerFor(draft, target) : draft;
+    const next = normalizeStatusBar(change(holder.statusBar));
+    if (next) holder.statusBar = next;
+    else delete holder.statusBar;
+  });
+  return statusLayoutInfo();
+}
+
+function statusItemPatch(p: Params): StatusItemLayout {
+  const item = normalizeStatusItem(p) ?? {};
+  if (p.width !== undefined && normalizeStatusWidth(p.width) === undefined) throw new Error('width is a px number, "auto", "fill" or "NN%".');
+  return item;
 }
 
 const STATUS_HANDLERS: Record<string, Handler> = {
   "statusBar.list": () => statusInfos(),
+  "statusBar.getLayout": () => statusLayoutInfo(),
+  "statusBar.configure": (p, ctx) => {
+    const patch: StatusBarLayout = {};
+    for (const key of ["separator", "gap", "height", "padding", "fontSize", "hidden"] as const) if (p[key] !== undefined) (patch as Record<string, unknown>)[key] = p[key];
+    if (p.items !== undefined) {
+      if (!p.items || typeof p.items !== "object" || Array.isArray(p.items)) throw new Error("items maps item keys to { hidden, side, order, width, align }.");
+      patch.items = {};
+      for (const [key, value] of Object.entries(p.items as Record<string, unknown>)) {
+        patch.items[statusLayoutKey(key, ctx)] = statusItemPatch((value ?? {}) as Params);
+      }
+    }
+    const clean = normalizeStatusBar(patch) ?? {};
+    return editStatusLayout(ctx, p.layer, (current) => mergeStatusBar(p.reset === true ? undefined : current, clean));
+  },
+  "statusBar.setItem": (p, ctx) => {
+    const key = statusLayoutKey(String(p.key ?? ""), ctx);
+    const item = statusItemPatch(p);
+    return editStatusLayout(ctx, p.layer, (current) => mergeStatusBar(current, { items: { [key]: item } }));
+  },
   "statusBar.setWidget": async (p, ctx) => {
     if (!p.text && !p.html && !p.icon) throw new Error("A status widget needs text, an icon or html.");
     const def = normalizeStatusWidget(p);
@@ -507,7 +600,7 @@ const MENU_HANDLERS: Record<string, Handler> = {
   "menus.list": (p) => contributions.current().menuItems.filter((item) => !p.menu || item.menu === p.menu).map(menuItemInfo),
   "menus.addItem": async (p, ctx) => {
     const def = normalizeMenuItem(p);
-    if (!def) throw new Error("Menu items need an id (letters, digits, . - _), a menu (page, tree, block, tab, status), a title and a command.");
+    if (!def) throw new Error(`Menu items need an id (letters, digits, . - _), a menu (${MENU_SLOTS.join(", ")}), a title and a command.`);
     const target = contributionTarget(ctx, p.layer);
     if (target.kind === "layer" && !def.command.includes(":") && !def.command.includes(".")) {
       throw new Error(`"${def.command}" is not an app command id. Use commands.list to find one.`);
@@ -541,6 +634,27 @@ const MENU_HANDLERS: Record<string, Handler> = {
   "settings.options": async (_p, ctx) => {
     if (!ctx.pluginId) throw new Error("settings.* is only available to plugins.");
     return loadOptions(ctx.pluginId, settingFieldsOf(ctx.pluginId));
+  },
+  "settings.openOptions": (_p, ctx) => {
+    if (!ctx.pluginId || ctx.caller !== "plugin" || ctx.pluginId.includes(":")) throw new Error("settings.openOptions is only available to plugins.");
+    pluginConfigure.open(ctx.pluginId);
+  },
+  "settings.setPage": (p, ctx) => {
+    if (!ctx.pluginId || ctx.caller !== "plugin" || ctx.pluginId.includes(":")) throw new Error("settings.setPage is only available to plugins.");
+    const html = typeof p.html === "string" ? p.html.slice(0, 200_000) : "";
+    if (!html.trim()) {
+      pluginConfigure.setPage(ctx.pluginId, null);
+      return;
+    }
+    const num = (value: unknown, min: number, max: number) => (typeof value === "number" && Number.isFinite(value) ? Math.round(Math.min(max, Math.max(min, value))) : undefined);
+    pluginConfigure.setPage(ctx.pluginId, {
+      html,
+      ...(typeof p.title === "string" && p.title.trim() ? { title: p.title.trim().slice(0, 80) } : {}),
+      ...(num(p.width, 320, 1000) ? { width: num(p.width, 320, 1000) } : {}),
+      ...(num(p.height, 80, 900) ? { height: num(p.height, 80, 900) } : {}),
+      ...(p.showFields === false ? { showFields: false } : {}),
+    });
+    if (p.open === true) pluginConfigure.open(ctx.pluginId);
   },
 };
 
@@ -821,6 +935,7 @@ export const UI_HANDLERS: Record<string, Handler> = {
   ...BLOCK_HANDLERS,
   ...VIEW_HANDLERS,
   ...PLUGIN_HANDLERS,
+  ...POPUP_HANDLERS,
 };
 
 /** Exposed for the Created tab and tests. */

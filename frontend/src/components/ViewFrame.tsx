@@ -47,24 +47,38 @@ interface ViewFrameProps {
   onData?: (data: unknown) => void;
   /** The view called noteral.post(name, payload) and isn't a plugin's (plugins get it in their worker). */
   onAction?: (name: string, payload: unknown) => void;
+  /** The view called noteral.close(value) (modal and popover views). */
+  onClose?: (value: unknown) => void;
   className?: string;
   title: string;
 }
 
 const MAX_MESSAGE = 512 * 1024;
 
+/** Methods whose x/y/anchor are positions inside the calling view. */
+const POSITIONED = new Set(["ui.menu", "ui.popover"]);
+
+function translateToWindow(params: Record<string, unknown>, frame: DOMRect) {
+  if (typeof params.x === "number") params.x = params.x + frame.left;
+  if (typeof params.y === "number") params.y = params.y + frame.top;
+  const anchor = params.anchor;
+  if (isObject(anchor) && typeof anchor.x === "number" && typeof anchor.y === "number") {
+    params.anchor = { ...anchor, x: anchor.x + frame.left, y: anchor.y + frame.top };
+  }
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surface, initialHeight, minHeight = 0, maxHeight = 4000, onData, onAction, className, title }: ViewFrameProps) {
+export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surface, initialHeight, minHeight = 0, maxHeight = 4000, onData, onAction, onClose, className, title }: ViewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight ?? (fill ? 0 : 80));
   const [error, setError] = useState("");
   const theme = useAppStore((state) => state.resolvedTheme);
   const doc = useCustomizations();
-  const latest = useRef({ props, permissions, owner, onData, onAction });
-  latest.current = { props, permissions, owner, onData, onAction };
+  const latest = useRef({ props, permissions, owner, onData, onAction, onClose });
+  latest.current = { props, permissions, owner, onData, onAction, onClose };
 
   // Rebuild the document only when the HTML changes; props travel by message.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,6 +140,9 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surf
           if (current.owner.kind === "plugin") pluginRuntime.viewMessage(current.owner.id, { view: viewKey, name: String(data.name ?? ""), payload: data.payload ?? null });
           else current.onAction?.(String(data.name ?? ""), data.payload ?? null);
           return;
+        case "close":
+          current.onClose?.(data.value ?? null);
+          return;
         case "open": {
           const target = String(data.target ?? "");
           const state = useAppStore.getState();
@@ -137,7 +154,10 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surf
           const id = data.id;
           const method = String(data.method ?? "");
           try {
-            const result = await callMethod(method, isObject(data.params) ? data.params : {}, {
+            const params = isObject(data.params) ? { ...data.params } : {};
+            // Popups opened from inside the frame give frame coordinates; make them window coordinates.
+            if (POSITIONED.has(method)) translateToWindow(params, iframe.getBoundingClientRect());
+            const result = await callMethod(method, params, {
               caller: "plugin",
               pluginId: current.owner.kind === "plugin" ? current.owner.id : `${current.owner.kind}:${current.owner.id}`,
               pluginName: current.owner.name,

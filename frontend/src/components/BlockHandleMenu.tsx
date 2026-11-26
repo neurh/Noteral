@@ -6,12 +6,14 @@ import { SideMenuExtension } from "@blocknote/core/extensions";
 import {
   DragHandleMenu,
   SideMenu,
+  SideMenuController,
   TableColumnHeaderItem,
   TableRowHeaderItem,
   blockTypeSelectItems,
   useBlockNoteEditor,
   useComponentsContext,
   useExtensionState,
+  type FloatingUIOptions,
   type SideMenuProps,
 } from "@blocknote/react";
 import { ArrowDown, ArrowUp, Copy, Palette, Repeat2, Trash2 } from "lucide-react";
@@ -44,6 +46,46 @@ function colorName(color: string) {
 /** The block side menu with Noteral's drag-handle menu. */
 export function NoteralSideMenu(props: SideMenuProps) {
   return <SideMenu {...props} dragHandleMenu={BlockHandleMenu} />;
+}
+
+type FloatingMiddleware = Exclude<NonNullable<NonNullable<FloatingUIOptions["useFloatingOptions"]>["middleware"]>[number], false | null | undefined>;
+
+/** Top edge (viewport px) of the part of `element` its scroll containers show. */
+function visibleTop(element: Element): number {
+  let top = 0;
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll" || overflow === "overlay") top = Math.max(top, node.getBoundingClientRect().top);
+  }
+  return top;
+}
+
+/**
+ * Keeps the handle of a tall block (a database) beside the block's visible
+ * part. The menu sits at the block's top, so once that top scrolls out of view
+ * it would float over whatever is above the scroll container.
+ */
+const keepInView: FloatingMiddleware = {
+  name: "noteralKeepInView",
+  fn: ({ y, rects, elements }) => {
+    // BlockNote positions against a virtual reference whose `contextElement` is the block.
+    const reference = elements.reference;
+    const element = reference instanceof Element ? reference : (reference as { contextElement?: Element }).contextElement;
+    if (!element) return {};
+    // Viewport px → floating coordinates (`rects` are relative to the offset parent).
+    const shift = rects.reference.y - reference.getBoundingClientRect().top;
+    const min = visibleTop(element) + shift + 4;
+    const max = rects.reference.y + rects.reference.height - rects.floating.height;
+    return { y: Math.max(y, Math.min(min, max)) };
+  },
+};
+
+const tallBlockOptions: Partial<FloatingUIOptions> = { useFloatingOptions: { middleware: [keepInView] } };
+
+/** BlockNote's side menu controller, with the handle kept in view on database blocks. */
+export function NoteralSideMenuController() {
+  const type = useExtensionState(SideMenuExtension, { selector: (state) => state?.block?.type }) as string | undefined;
+  return <SideMenuController sideMenu={NoteralSideMenu} floatingUIOptions={type === "database" ? tallBlockOptions : undefined} />;
 }
 
 /**

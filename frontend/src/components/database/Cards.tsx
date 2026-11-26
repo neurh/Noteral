@@ -69,20 +69,16 @@ export function RowActions({ db, row, anchor, onClose, onRename }: { db: Databas
         <button type="button" className="db-menu-item" onClick={() => { onClose(); db.openRow(row.id); }}>
           <ArrowUpRight size={14} /> Open
         </button>
-        {db.locked ? null : (
-          <>
-            <button type="button" className="db-menu-item" onClick={() => { onClose(); onRename(); }}>
-              <Pencil size={14} /> Rename
-            </button>
-            <button type="button" className="db-menu-item" onClick={() => { onClose(); void db.duplicateRow(row.id); }}>
-              <Copy size={14} /> Duplicate
-            </button>
-            <div className="db-menu-sep" />
-            <button type="button" className="db-menu-item danger" onClick={() => { onClose(); void db.deleteRows([row.id]); }}>
-              <Trash2 size={14} /> Delete
-            </button>
-          </>
-        )}
+        <button type="button" className="db-menu-item" onClick={() => { onClose(); onRename(); }}>
+          <Pencil size={14} /> Rename
+        </button>
+        <button type="button" className="db-menu-item" onClick={() => { onClose(); void db.duplicateRow(row.id); }}>
+          <Copy size={14} /> Duplicate
+        </button>
+        <div className="db-menu-sep" />
+        <button type="button" className="db-menu-item danger" onClick={() => { onClose(); void db.deleteRows([row.id]); }}>
+          <Trash2 size={14} /> Delete
+        </button>
       </div>
     </Popover>
   );
@@ -112,7 +108,7 @@ export function RowCard({ db, view, row, hideProperty, editingTitle, onTitleDone
     <article
       className={`db-card ${dragging ? "is-dragging" : ""} ${preview ? "has-preview" : ""}`}
       data-row-id={row.id}
-      draggable={!!onDragStart && !editing && !db.locked}
+      draggable={!!onDragStart && !editing}
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("application/x-noteral-row", row.id);

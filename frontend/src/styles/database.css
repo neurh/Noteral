@@ -324,12 +324,14 @@ button.db-switch::before { content: none; }
 }
 .db-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background-color 120ms ease; }
 .db-resize:hover::after, .db-resize.is-active::after { background: color-mix(in srgb, var(--accent) 60%, transparent); }
-.db-th.is-dragging { opacity: 0.45; }
-.db-th.drop-left::before, .db-th.drop-right::before {
+.db-th[data-reorder-id] { cursor: grab; }
+.db-th[data-reorder-id] .db-th-button { cursor: inherit; }
+.db-th[data-reorder-id].is-dragging { border-radius: 0; z-index: 5; }
+.db-th.is-drop-before::before, .db-th.is-drop-after::before {
   content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); z-index: 4;
 }
-.db-th.drop-left::before { left: -1px; }
-.db-th.drop-right::before { right: -1px; }
+.db-th.is-drop-before::before { left: -1px; }
+.db-th.is-drop-after::before { right: -1px; }
 
 .db-td { display: flex; align-items: flex-start; padding: 7px 8px; line-height: 20px; cursor: default; overflow: hidden; }
 .db-td:not(.db-gutter):not(.db-td-add):not(.db-td-fill):not(.is-readonly):hover { background: color-mix(in srgb, var(--bg-hover) 60%, transparent); }
@@ -887,14 +889,6 @@ select.db-adv-conj { height: 28px; text-align: left; }
 .db.is-page .db-custom:not(.is-inline) { height: max(420px, calc(100vh - 260px)); }
 .db-custom-frame { width: 100%; height: 100%; }
 .db-custom-frame > .view-frame, .db-custom-frame iframe { width: 100%; height: 100%; }
-.db-custom-edit {
-  position: absolute; top: 8px; right: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 5px;
-  height: 26px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg-raised); color: var(--text-muted); font-size: 12px; box-shadow: var(--shadow-sm);
-  opacity: 0; transition: opacity 120ms ease;
-}
-.db-custom:hover .db-custom-edit, .db-custom-edit:focus-visible { opacity: 1; }
-.db-custom-edit:hover { color: var(--text); }
 .db-custom-editor { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 .db-code {
   width: 100%; min-height: 360px; height: 52vh; resize: vertical; padding: 12px 14px;
@@ -990,22 +984,11 @@ select.db-adv-conj { height: 28px; text-align: left; }
 .db-reorder-list [data-reorder-id].is-drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 body.db-reordering, body.db-reordering * { cursor: grabbing !important; user-select: none !important; }
 
-/* Locked database: rows are read-only, so their edit affordances go away. */
-.db.is-locked :is(.db-row-handle, .db-row-check, .db-new-row, .db-board-new, .db-gallery-new, .db-calendar-add, .db-board-add) { display: none !important; }
-.db-td.is-locked:not(.is-title) { cursor: default; }
-.db-td.is-locked:hover { background: transparent !important; }
-.db-td.is-locked .db-checkbox { cursor: default; }
 /* Cells take focus only to anchor their editors; a click leaves no ring. */
 .db-td[tabindex="-1"]:focus { outline: none; }
-.db-locked-badge { gap: 5px; color: var(--text-muted); padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; height: 28px; }
+/* Locked database: a small lock beside "New"; the schema is frozen, rows are not. */
+.db-locked-badge { color: var(--text-muted); }
 .db-locked-badge:hover { color: var(--text); }
 .db-td.is-formula-cell { cursor: pointer; }
 .db-td.is-formula-cell:hover { background: color-mix(in srgb, var(--bg-hover) 60%, transparent); }
 
-/* Formula cell popover: the row's result and "Edit formula". */
-.db-fx-cell-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 10px 2px; }
-.db-fx-cell-row { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; color: var(--text); }
-.db-fx-cell-prop { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; }
-.db-fx-cell-value { display: flex; align-items: flex-start; gap: 6px; min-height: 28px; padding: 6px 10px 8px; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
-.db-fx-cell-value.is-error { color: var(--danger, #c2412d); font-size: 12.5px; }
-.db-fx-cell-value.is-error svg { flex: 0 0 auto; margin-top: 2px; }

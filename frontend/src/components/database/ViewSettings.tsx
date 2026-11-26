@@ -375,7 +375,7 @@ export function ViewSettings({ db, view, anchor, onClose, onDuplicate, onDelete,
         ) : null}
 
         <div className="db-menu-sep" />
-        <Row icon={db.locked ? Lock : LockOpen} label="Lock database" hint={db.locked ? "Rows can't be edited, added or removed" : undefined}>
+        <Row icon={db.locked ? Lock : LockOpen} label="Lock database" hint={db.locked ? "Properties can't be added, moved or resized" : undefined}>
           <Switch on={db.locked} label="Lock database" onToggle={() => db.updateSchema((draft) => { draft.locked = !draft.locked || undefined; })} />
         </Row>
         <div className="db-menu-sep" />
@@ -535,7 +535,7 @@ function PropertiesPage({ db, view, onBack }: { db: DatabaseApi; view: DatabaseV
             <div
               key={property.id}
               className={`db-settings-prop ${dragId === property.id ? "is-dragging" : ""} ${overId === property.id && dragId !== property.id ? "is-over" : ""}`}
-              draggable={!isTitle && !needle}
+              draggable={!isTitle && !needle && !db.locked}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move";
                 setDragId(property.id);
@@ -556,7 +556,7 @@ function PropertiesPage({ db, view, onBack }: { db: DatabaseApi; view: DatabaseV
                 setOverId(null);
               }}
             >
-              <span className="db-grip" aria-hidden>{isTitle || needle ? null : <GripVertical size={13} />}</span>
+              <span className="db-grip" aria-hidden>{isTitle || needle || db.locked ? null : <GripVertical size={13} />}</span>
               <PropertyIcon property={property} />
               <span className={`db-settings-prop-name ${isHidden ? "is-muted" : ""}`}>{property.name}</span>
               {isTitle ? null : (

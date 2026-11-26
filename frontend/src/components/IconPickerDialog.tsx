@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check, ImagePlus, LoaderCircle, Search, Shapes, Shuffle, Smile, Upload, X } from "lucide-react";
+import { Check, ImagePlus, Link2, LoaderCircle, Search, Shapes, Shuffle, Smile, Upload, X } from "lucide-react";
+import { ImageLinkField } from "./ImageLinkField";
 import { api, errorMessage } from "../lib/api";
 import { fileToBase64 } from "../lib/base64";
 import { EMOJI, EMOJI_GROUPS, emojiGroupLabel, emojiSkins, type EmojiEntry } from "../lib/emoji";
@@ -181,7 +182,7 @@ interface IconPickerDialogProps {
 }
 
 export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, onPick, subtitle }: IconPickerDialogProps) {
-  const [tab, setTab] = useState<"icons" | "emoji" | "upload">("icons");
+  const [tab, setTab] = useState<"icons" | "emoji" | "upload" | "link">("icons");
   const [query, setQuery] = useState("");
   const [emojiGroup, setEmojiGroup] = useState<number | "all">("all");
   const [popover, setPopover] = useState<PopoverState | null>(null);
@@ -343,9 +344,12 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
           <button type="button" role="tab" aria-selected={tab === "upload"} className={tab === "upload" ? "active" : ""} onClick={() => { setTab("upload"); setPopover(null); }}>
             <Upload size={15} /> Upload
           </button>
+          <button type="button" role="tab" aria-selected={tab === "link"} className={tab === "link" ? "active" : ""} onClick={() => { setTab("link"); setPopover(null); }}>
+            <Link2 size={15} /> From link
+          </button>
         </div>
 
-        {tab !== "upload" ? (
+        {tab === "icons" || tab === "emoji" ? (
           <div className="appearance-search-row">
             <label className="picker-search appearance-search">
               <Search size={14} />
@@ -508,6 +512,17 @@ export function IconPickerDialog({ open, onClose, workspaceId, pageId, current, 
             </button>
             {uploadError ? <div className="appearance-error" role="alert">{uploadError}</div> : null}
           </div>
+        ) : null}
+
+        {tab === "link" ? (
+          <ImageLinkField
+            preview="square"
+            title="An icon from the web"
+            note="Paste an http:// or https:// link to a small square image. It loads from that site each time the page opens."
+            applyLabel="Use as icon"
+            initial={current.startsWith("link:") ? current.slice(5) : ""}
+            onApply={(href) => onPick(`link:${href}`)}
+          />
         ) : null}
       </Modal>
 

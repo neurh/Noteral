@@ -9,6 +9,8 @@
  *
  * Anything that renders HTML runs in a sandboxed <ViewFrame> with the owner's permissions.
  */
+import { normalizeStatusWidth } from "./statusLayout";
+import type { StatusSide, StatusWidth } from "./statusLayout";
 import { useSyncExternalStore } from "react";
 import type { PanelAction } from "../sdk-host/types";
 
@@ -43,9 +45,9 @@ export interface StatusWidgetDef {
   icon?: string;
   /** HTML widget, rendered in a small sandboxed frame (height 22px). */
   html?: string;
-  /** Width in px for HTML widgets (default 120). */
-  width?: number;
-  side: "left" | "right";
+  /** Width: px (HTML widgets default to 120), "auto", "fill" (free space) or "NN%" of the bar. */
+  width?: StatusWidth;
+  side: StatusSide;
   /** Lower comes first. */
   order: number;
   /** A command id to run on click (see commands.list). */
@@ -80,8 +82,13 @@ export interface NodeTypeDef {
   layout?: "full" | "page";
 }
 
-/** App menus a plugin or layer can add items to. */
-export const MENU_SLOTS = ["page", "tree", "block", "tab", "status"] as const;
+/**
+ * App menus a plugin or layer can add items to: page (page actions ⋯), tree (page tree row),
+ * block (block handle), tab (pane tab options ⌄), tabItem (right-click a tab), status
+ * (right-click the status bar), assistant (the AI button's ⌄ menu), treeSelection (several
+ * pages selected in the tree).
+ */
+export const MENU_SLOTS = ["page", "tree", "block", "tab", "tabItem", "status", "assistant", "treeSelection"] as const;
 export type MenuSlot = (typeof MENU_SLOTS)[number];
 export const MENU_ITEM_KINDS = ["page", "folder", "database", "custom"] as const;
 
@@ -231,7 +238,7 @@ export function normalizeStatusWidget(value: unknown): StatusWidgetDef | undefin
   if (!LOCAL_ID.test(id)) return undefined;
   const widget: StatusWidgetDef = {
     id,
-    side: value.side === "left" ? "left" : "right",
+    side: value.side === "left" ? "left" : value.side === "center" ? "center" : "right",
     order: typeof value.order === "number" && Number.isFinite(value.order) ? Math.round(value.order) : 0,
   };
   const text = optStr(value.text, 160);
@@ -242,7 +249,8 @@ export function normalizeStatusWidget(value: unknown): StatusWidgetDef | undefin
   if (icon) widget.icon = icon;
   const html = str(value.html, 60_000);
   if (html.trim()) widget.html = html;
-  if (typeof value.width === "number" && Number.isFinite(value.width)) widget.width = Math.max(16, Math.min(480, Math.round(value.width)));
+  const width = normalizeStatusWidth(value.width);
+  if (width !== undefined) widget.width = width;
   const command = optStr(value.command, 160);
   if (command) widget.command = command;
   return widget;
@@ -490,13 +498,19 @@ export function useContributions(): ContributionSnapshot {
 
 // ── built-ins ─────────────────────────────────────────────────────────────
 
-/** Status bar items the app always shows (they can still be hidden with appearance.styleComponent). */
-export const BUILTIN_STATUS_WIDGETS = [
-  { id: "save", side: "left", order: -100, title: "Save state" },
+/**
+ * Status bar items built into the app. Each can be hidden, moved and sized with the status
+ * bar layout (lib/statusLayout: right-click the status bar, or statusBar.configure);
+ * "local", "page" and "clock" start hidden.
+ */
+export const BUILTIN_STATUS_WIDGETS: readonly { id: "save" | "stats" | "plugins" | "local" | "page" | "clock"; side: StatusSide; order: number; title: string }[] = [
+  { id: "page", side: "left", order: -110, title: "Open page title" },
   { id: "stats", side: "left", order: -90, title: "Word and block count" },
   { id: "plugins", side: "right", order: -50, title: "Plugin status items" },
-  { id: "local", side: "right", order: 100, title: "Local-first badge" },
-] as const;
+  { id: "clock", side: "right", order: 80, title: "Clock" },
+  { id: "local", side: "right", order: 90, title: "Local-first badge" },
+  { id: "save", side: "right", order: 100, title: "Save state" },
+];
 
 /** Titles of the built-in sidebar tabs. */
 export const BUILTIN_SIDEBAR_TAB_INFO: Record<string, { title: string; icon: string }> = {

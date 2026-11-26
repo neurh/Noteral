@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -13,6 +13,9 @@ interface ModalProps {
   labelledBy?: string;
   className?: string;
   bodyClassName?: string;
+  style?: CSSProperties;
+  /** No header: the content draws its own (title stays for screen readers). */
+  bare?: boolean;
 }
 
 const focusableSelector = [
@@ -24,7 +27,7 @@ const focusableSelector = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-export function Modal({ open, title, subtitle, onClose, children, footer, width = "medium", labelledBy, className, bodyClassName }: ModalProps) {
+export function Modal({ open, title, subtitle, onClose, children, footer, width = "medium", labelledBy, className, bodyClassName, style, bare }: ModalProps) {
   const panel = useRef<HTMLElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -95,8 +98,14 @@ export function Modal({ open, title, subtitle, onClose, children, footer, width 
         aria-describedby={subtitleId}
         tabIndex={-1}
         className={`modal modal-${width} ${className ?? ""}`}
+        style={style}
       >
-        <header className="modal-header">
+        {bare ? (
+          <h2 id={headingId} className="sr-only">
+            {title}
+          </h2>
+        ) : null}
+        <header className="modal-header" hidden={bare}>
           <div className="modal-header-copy">
             <h2 id={headingId}>{title}</h2>
             {subtitle ? <p id={subtitleId}>{subtitle}</p> : null}

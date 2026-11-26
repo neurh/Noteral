@@ -141,7 +141,7 @@ function isDatabase(meta: PageMeta | undefined): boolean {
   return meta?.kind === "database";
 }
 
-function kindOfMeta(meta: PageMeta): PageInfo["kind"] {
+export function kindOfMeta(meta: PageMeta): PageInfo["kind"] {
   if (meta.kind === "database") return "database";
   if (meta.kind === "folder") return "folder";
   if (meta.kind === "custom") return "custom";
@@ -388,9 +388,12 @@ export function requireDatabase(databaseId: string): { meta: PageMeta; schema: D
   return { meta, schema: parseSchema(meta.data) };
 }
 
-/** Row writes are refused on a locked database (see `DatabaseSchema.locked`). */
-export function assertUnlocked(meta: PageMeta, schema: DatabaseSchema): void {
-  if (schema.locked) throw new Error(`"${displayTitle(meta.id)}" is locked, so its rows can't change. Ask the user to unlock it (view settings → Lock database), or call databases.setLocked.`);
+/**
+ * A locked database keeps its structure: no new properties, no formula changes and no
+ * property reordering. Rows and cells still change freely (see `DatabaseSchema.locked`).
+ */
+export function assertUnlocked(meta: PageMeta, schema: DatabaseSchema, what = "its properties can't change"): void {
+  if (schema.locked) throw new Error(`"${displayTitle(meta.id)}" is locked, so ${what}. Ask the user to unlock it (the lock icon by New, or view settings → Lock database), or call databases.setLocked.`);
 }
 
 export function propertyByName(schema: DatabaseSchema, name: string): Property | undefined {
@@ -1023,6 +1026,7 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "databases.addProperty": async (p) => {
     const { meta, schema } = requireDatabase(p.databaseId);
+    assertUnlocked(meta, schema, "no properties can be added");
     const property = buildProperty(uniquePropertyName(schema, p.name.trim() || "Property"), p.type, p.options);
     applyPropertyExtras(schema, property, p);
     schema.properties.push(property);
@@ -1031,7 +1035,6 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "databases.addRow": async (p) => {
     const { meta, schema } = requireDatabase(p.databaseId);
-    assertUnlocked(meta, schema);
     const values: RowValues = {};
     const applied = applyValues(schema, values, p.values);
     if (applied.schemaChanged) await store().setPageData(meta.id, serializeSchema(schema));
@@ -1042,7 +1045,6 @@ export const HANDLERS: Record<string, Handler> = {
   },
   "databases.addRows": async (p) => {
     const { meta, schema } = requireDatabase(p.databaseId);
-    assertUnlocked(meta, schema);
     const input = (p.rows ?? []) as { title?: string; values?: Record<string, unknown> }[];
     if (!input.length) throw new Error("rows is empty.");
     let schemaChanged = false;
@@ -1072,7 +1074,6 @@ export const HANDLERS: Record<string, Handler> = {
       if (!database || database.kind !== "database") throw new Error(`Row ${index + 1}: "${displayTitle(row.id)}" is not a database row.`);
       let entry = schemas.get(database.id);
       if (!entry) schemas.set(database.id, (entry = { schema: parseSchema(database.data), changed: false }));
-      assertUnlocked(database, entry.schema);
       const values = parseRowValues(row.data);
       let title = update.title;
       if (update.values) {
@@ -1100,7 +1101,6 @@ export const HANDLERS: Record<string, Handler> = {
     const database = row.parentId ? findMeta(row.parentId) : undefined;
     if (!database || database.kind !== "database") throw new Error(`"${displayTitle(row.id)}" is not a database row.`);
     const schema = parseSchema(database.data);
-    assertUnlocked(database, schema);
     const values = parseRowValues(row.data);
     const applied = applyValues(schema, values, p.values);
     if (applied.schemaChanged) await store().setPageData(database.id, serializeSchema(schema));

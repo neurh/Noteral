@@ -16,6 +16,8 @@ import { contributions, emptySet, normalizeMenuItem, normalizeSettingField } fro
 import { customizations } from "../lib/customizations";
 import type { ContributionSet } from "../lib/contributions";
 import { devlog } from "../lib/devlog";
+import { pluginConfigure } from "../lib/pluginConfigure";
+import { popups } from "../lib/popups";
 import { loadOptions, onOptionsSaved, optionFields } from "../lib/pluginOptions";
 import { viewHub } from "../lib/viewFrame";
 import { ApiError, callMethod, hasPermission } from "../sdk-host/host";
@@ -519,6 +521,8 @@ class PluginRuntimeManager {
     frame.style?.remove();
     this.frames.delete(id);
     if (!frame.trial) contributions.remove({ kind: "plugin", id: frame.manifest.id });
+    popups.closeOwnedBy({ kind: "plugin", id: frame.manifest.id });
+    if (!frame.trial) pluginConfigure.forget(frame.manifest.id);
     this.rebuild();
   }
 

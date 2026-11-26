@@ -9,7 +9,9 @@ import {
   coverStyle,
   customGradientValue,
   isPositionableCover,
+  linkValue,
   parseCustomGradient,
+  safeImageLink,
   withCoverPosition,
 } from "./covers";
 
@@ -53,5 +55,32 @@ describe("page covers", () => {
     expect(isPositionableCover("image:alpine-boat")).toBe(true);
     expect(isPositionableCover("upload:/__assets/ws/one.png")).toBe(true);
     expect(isPositionableCover("gradient:blue-hour")).toBe(false);
+  });
+
+  it("accepts image links from http(s) and renders them like uploads", () => {
+    expect(safeImageLink("  https://example.com/a b.jpg#frag ")).toBe("https://example.com/a%20b.jpg");
+    expect(safeImageLink("http://example.com/x.png?w=1200")).toBe("http://example.com/x.png?w=1200");
+    expect(safeImageLink("javascript:alert(1)")).toBeUndefined();
+    expect(safeImageLink("data:image/png;base64,AAAA")).toBeUndefined();
+    expect(safeImageLink("ftp://example.com/a.png")).toBeUndefined();
+    expect(safeImageLink("https://user:pw@example.com/a.png")).toBeUndefined();
+    expect(safeImageLink("not a url")).toBeUndefined();
+    expect(safeImageLink(`https://example.com/${"a".repeat(2100)}`)).toBeUndefined();
+
+    const value = linkValue("https://example.com/cover.jpg");
+    expect(value).toBe("link:https://example.com/cover.jpg");
+    expect(coverStyle(value!)).toEqual({
+      backgroundImage: 'url("https://example.com/cover.jpg")',
+      backgroundSize: "cover",
+      backgroundPosition: "50% 50%",
+    });
+    expect(coverName(value!)).toBe("Linked image");
+    expect(isPositionableCover(value!)).toBe(true);
+    const moved = withCoverPosition(value!, 20, 80);
+    expect(moved).toBe("link:https://example.com/cover.jpg#pos=20,80");
+    expect(coverStyle(moved)?.backgroundPosition).toBe("20% 80%");
+    expect(coverStyle('link:https://example.com/a".png')?.backgroundImage ?? "").not.toContain('a"');
+    expect(coverStyle("link:javascript:alert(1)")).toBeUndefined();
+    expect(linkValue("file:///etc/passwd")).toBeUndefined();
   });
 });

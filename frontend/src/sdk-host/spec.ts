@@ -9,7 +9,7 @@
  * Adding a capability: add a spec here, implement it in ./handlers.ts (a unit test fails
  * until both exist), then run `npm run sdk:build` from the repo root.
  */
-import { EMPTY, s, type ObjectSchema } from "./schema";
+import { EMPTY, s, type JsonSchema, type ObjectSchema } from "./schema";
 
 /** Permission ids. Keep in sync with internal/plugins/plugins.go (allowedPermissions). */
 export type Permission =
@@ -277,9 +277,10 @@ const newProperties = s.arr(
   40,
 );
 const iconParam = s.str("Icon: an emoji or a Lucide icon name such as \"chart-line\".", { maxLength: 60 });
-const menuSlot = s.str("Menu: page (the page \"…\" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu).", {
-  enum: ["page", "tree", "block", "tab", "status"],
-});
+const menuSlot = s.str(
+  "Menu: page (the page ⋯ actions menu), tree (page tree item menu), block (block handle menu), tab (a pane's tab options ⌄ menu), tabItem (right-click a tab), status (right-click the status bar), assistant (the AI button's ⌄ menu next to search) or treeSelection (several pages selected in the tree).",
+  { enum: ["page", "tree", "block", "tab", "tabItem", "status", "assistant", "treeSelection"] },
+);
 const settingField = s.obj(
   {
     key: s.str("Option key (letters, digits, . - _).", { maxLength: 64, minLength: 1 }),
@@ -296,6 +297,19 @@ const settingField = s.obj(
   },
   ["key", "type"],
 );
+const popupAnchor = s.obj(
+  { x: s.num("Left."), y: s.num("Top."), width: s.num("Width."), height: s.num("Height.") },
+  ["x", "y"],
+  "Rect to open next to (window coordinates, or frame coordinates from a view — noteral.menu/popover fill it from an element).",
+);
+const popupPlacement = s.str("Where to open relative to the anchor.", { enum: ["bottom-start", "bottom-end", "top-start", "top-end", "right-start", "left-start"] });
+const menuEntry = s.any(
+  'A menu item { id, label, icon?, hint?, description?, checked?, danger?, disabled?, children? }, a header { type: "header", label }, or a separator ("-" or { type: "separator" }).',
+);
+const statusWidth: JsonSchema = {
+  description: 'Width: px (16-1200), "auto" (fit content), "fill" (take the free space) or "NN%" of the bar. HTML widgets default to 120px.',
+  anyOf: [{ type: "integer", minimum: 16, maximum: 1200 }, { type: "string", maxLength: 8 }],
+};
 const layerParam = s.str(
   "Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. \"base\" writes the base look.",
   { maxLength: 80 },
@@ -325,6 +339,14 @@ const widgetPatch = {
 
 export const METHODS: MethodSpec[] = [
   // ── app ────────────────────────────────────────────────────────────────
+  {
+    name: "app.state",
+    summary: "What the window shows now: the open page, panes and their tabs, sidebars and their tabs, whether the assistant is open, the open overlay, theme, window size and history.",
+    permission: null,
+    tier: "read",
+    params: EMPTY,
+    returns: "AppState",
+  },
   {
     name: "app.info",
     summary: "Get the app version, SDK version, theme and the open workspace.",
@@ -501,6 +523,16 @@ export const METHODS: MethodSpec[] = [
     returns: "PageInfo[]",
     example: `const pages = await app.pages.list({ parentId: "" });`,
   },
+  {
+    name: "pages.stats",
+    summary: "Content facts about a page: words, characters, blocks by type, headings, to-dos, links, page links, embedded databases, images, tables, code blocks, reading time, child pages (defaults to the open page).",
+    details: "Open pages are counted from the live editor (unsaved edits included); closed pages from the saved copy. Database pages also return rows, properties and views.",
+    permission: "pages.read",
+    tier: "read",
+    params: s.obj({ pageId: s.str("Page id (default: the open page).") }),
+    returns: "PageStats",
+    example: 'const s = await noteral.app.pages.stats(); noteral.setData(`${s.words} words · ${s.readingMinutes} min`);',
+  },
   { name: "pages.get", summary: "Get one page's metadata.", permission: "pages.read", tier: "read", params: s.obj({ pageId: s.str("Page id.") }, ["pageId"]), returns: "PageInfo" },
   {
     name: "pages.read",
@@ -581,6 +613,37 @@ export const METHODS: MethodSpec[] = [
     tier: "content",
     params: s.obj({ pageId: s.str("Page id."), cover: s.str("Cover value.", { maxLength: 2000 }) }, ["pageId", "cover"]),
     returns: "void",
+  },
+  {
+    name: "pages.getBackground",
+    summary: "Read the page's background (the layer behind the whole page, not the cover), or null.",
+    permission: "pages.read",
+    tier: "read",
+    params: s.obj({ pageId: s.str("Page id. Default: the active page.") }),
+    returns: "PageBackgroundInfo | null",
+  },
+  {
+    name: "pages.setBackground",
+    summary: "Set the background behind a whole page: a color, gradient, image or animated ASCII scene (null clears).",
+    details: [
+      "kind color: value is a CSS color (hex, rgb()/hsl()/oklch(), a name or var(--token)).",
+      "kind gradient: value is a CSS linear-/radial-/conic-gradient (no url()).",
+      "kind image: value is an https URL, a data:image URL (max 48 KB) or an uploaded asset (/__assets/…).",
+      "kind ascii: ascii = { scene (required): ascii-moon | ascii-sunset | ascii-galaxy | ascii-rain | ascii-dunes | ascii-topo (\"moon\" ok), speed 0.25–3 (default 1), ink \"#rrggbb\", density fine|normal|large, still: bool, cursor: bool }. Uses the same ASCII engine as Home backgrounds.",
+      "opacity (0–1) fades the background; dim (0–1) lays a page-colored veil over it so text stays readable (defaults: image 0.35, ascii 0.55, else 0).",
+      "Saved per workspace. Users set it from the page ⋯ menu → Background….",
+    ].join(" "),
+    permission: "pages.write",
+    tier: "content",
+    params: s.obj(
+      {
+        pageId: s.str("Page id. Default: the active page."),
+        background: s.any("{ kind: color|gradient|image|ascii, value?, ascii?, opacity?, dim? }, or null to remove."),
+      },
+      ["background"],
+    ),
+    returns: "PageBackgroundInfo | null",
+    example: "await noteral.pages.setBackground({ background: { kind: 'ascii', ascii: { scene: 'rain', speed: 0.8 }, dim: 0.6 } })",
   },
   {
     name: "pages.move",
@@ -878,7 +941,7 @@ export const METHODS: MethodSpec[] = [
   },
   {
     name: "databases.setLocked",
-    summary: "Lock or unlock a database. A locked database refuses row edits, new rows and deletes (from the user, plugins and the assistant); properties and views can still change.",
+    summary: "Lock or unlock a database. A locked database keeps its structure: no new properties, formula or type changes, and no column moves or resizes (for the user, plugins and the assistant). Rows, cells and views still change freely.",
     permission: "databases.write",
     tier: "content",
     confirm: true,
@@ -896,6 +959,17 @@ export const METHODS: MethodSpec[] = [
 
   // ── workspaces ─────────────────────────────────────────────────────────
   { name: "workspaces.list", summary: "List workspaces.", permission: "workspaces.read", tier: "read", params: EMPTY, returns: "WorkspaceInfo[]" },
+  {
+    name: "workspaces.stats",
+    summary: "Counts for the open workspace: pages, databases, rows, folders, favorites, trash, nesting depth, last edited page; with content: true also total words, characters, to-dos and the longest pages.",
+    permission: "pages.read",
+    tier: "read",
+    params: s.obj({
+      content: s.bool("Also read every page's text (slower).", { default: false }),
+      limit: s.int("Pages to read with content (default 500).", { minimum: 1, maximum: 2000 }),
+    }),
+    returns: "WorkspaceStats",
+  },
   { name: "workspaces.current", summary: "Get the open workspace.", permission: "workspaces.read", tier: "read", params: EMPTY, returns: "WorkspaceInfo | null" },
   { name: "workspaces.open", summary: "Switch to another workspace.", permission: "workspaces.write", tier: "app", confirm: true, params: s.obj({ workspaceId: s.str("Workspace id.") }, ["workspaceId"]), returns: "void" },
   { name: "workspaces.create", summary: "Create a workspace and switch to it.", permission: "workspaces.write", tier: "app", confirm: true, params: s.obj({ name: s.str("Name.", { maxLength: 80, minLength: 1 }) }, ["name"]), returns: "void" },
@@ -966,7 +1040,7 @@ export const METHODS: MethodSpec[] = [
   {
     name: "settings.options",
     summary: "The plugin's user options: saved values merged over the defaults of its declared fields.",
-    details: "Fields come from manifest contributes.settings and settings.define. The user edits them under Plugins → Installed → Options; each change raises settings:changed.",
+    details: "Fields come from manifest contributes.settings and settings.define. The user edits them in the plugin's Configure dialog (Plugins → Installed → Options, the palette's \"Configure <plugin>\", or settings.openOptions); each change raises settings:changed.",
     permission: "settings.read",
     tier: "read",
     callers: ["plugin"],
@@ -981,6 +1055,36 @@ export const METHODS: MethodSpec[] = [
     callers: ["plugin"],
     params: s.obj({ fields: s.arr("Fields, in order.", settingField, 40) }, ["fields"]),
     returns: "SettingFieldInfo[]",
+  },
+
+  {
+    name: "settings.openOptions",
+    summary: "Open the plugin's Configure dialog (its option fields and its custom options page).",
+    details: "Users also reach it from Plugins → Installed, the command palette (\"Configure <plugin>\") and the right-click menu of the plugin's status widgets.",
+    permission: null,
+    tier: "app",
+    callers: ["plugin"],
+    params: EMPTY,
+    returns: "void",
+  },
+  {
+    name: "settings.setPage",
+    summary: "Give the plugin's Configure dialog a custom HTML options page (null removes it).",
+    details:
+      "The page is a sandboxed view like a panel: it can call noteral.call('settings.options'), noteral.call('settings.set', …) and noteral.close() to dismiss the dialog. The plain option fields still show below it unless showFields is false. Register it again on every start (it isn't saved).",
+    permission: null,
+    tier: "app",
+    callers: ["plugin"],
+    params: s.obj({
+      html: s.str("Page HTML (body content; scripts allowed). Empty or omitted removes the page.", { maxLength: 200_000 }),
+      title: s.str("Dialog title. Default \"<plugin> options\".", { maxLength: 80 }),
+      width: s.int("Dialog width in px (320-1000).", { minimum: 320, maximum: 1000 }),
+      height: s.int("Page height in px (80-900). The view also resizes to its content.", { minimum: 80, maximum: 900 }),
+      showFields: s.bool("Show the declared option fields under the page (default true)."),
+      open: s.bool("Open the dialog right away."),
+    }),
+    returns: "void",
+    example: "await noteral.settings.setPage({ html: '<h3>Hello</h3><button class=\"n-btn\" onclick=\"noteral.close()\">Done</button>' })",
   },
 
   // ── preferences ────────────────────────────────────────────────────────
@@ -1162,6 +1266,76 @@ export const METHODS: MethodSpec[] = [
     returns: "AskResult",
   },
   {
+    name: "ui.menu",
+    summary: "Open a menu (context menu or dropdown) and wait for the choice. Resolves to the chosen item id, or null when dismissed.",
+    details:
+      "Items can have icons (emoji or Lucide names), hints (shortcuts), descriptions, check marks, danger styling, headers, separators (\"-\") and submenus (`children`, up to 3 levels). In a view use `noteral.menu(items, event)` or `noteral.menu(items, element)` — it positions the menu at the click or under the element, even from a small widget. Without a position the menu opens at the last pointer position.",
+    permission: "ui.modal",
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj(
+      {
+        items: s.arr("Menu items.", menuEntry, 200),
+        x: s.num("Open at this x (window, or frame coordinates from a view)."),
+        y: s.num("Open at this y."),
+        anchor: popupAnchor,
+        placement: popupPlacement,
+        width: s.int("Menu width in px.", { minimum: 140, maximum: 480 }),
+        filter: s.bool("Show a filter box above the items (long lists).", { default: false }),
+      },
+      ["items"],
+    ),
+    returns: "string | null",
+    example: 'const choice = await noteral.menu([{ id: "rename", label: "Rename", icon: "pencil" }, "-", { label: "Color", children: [{ id: "red", label: "Red" }, { id: "blue", label: "Blue" }] }, { id: "delete", label: "Delete", danger: true }], event);',
+  },
+  {
+    name: "ui.showModal",
+    summary: "Open a modal dialog that renders your HTML, and wait until it closes. Resolves to the value passed to noteral.close(value) (or noteral.setData), or null when dismissed.",
+    details:
+      "The modal runs the HTML in a sandboxed view with your permissions (it can call noteral.call / noteral.app.* like any view). `data` arrives as `noteral.props.data`. Set `bare` to draw your own header, `dismissible: false` to require noteral.close().",
+    permission: "ui.modal",
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj(
+      {
+        html: htmlView,
+        title: s.str("Title (also the accessible name).", { maxLength: 120 }),
+        subtitle: s.str("Line under the title.", { maxLength: 240 }),
+        data: s.any("JSON passed to the view as noteral.props.data."),
+        width: s.int("Max width in px (default 820).", { minimum: 240, maximum: 1400 }),
+        height: s.int("Fixed height in px; omit to grow with the content.", { minimum: 80, maximum: 1200 }),
+        dismissible: s.bool("Escape / backdrop / close button close it.", { default: true }),
+        bare: s.bool("No header or padding around the view.", { default: false }),
+      },
+      ["html"],
+    ),
+    returns: "unknown",
+    example: 'const result = await noteral.modal({ title: "Pick a color", width: 360, html: \'<button class="n-btn" onclick="noteral.close(\\\'red\\\')">Red</button>\' });',
+  },
+  {
+    name: "ui.popover",
+    summary: "Open a small floating panel with your HTML next to an element or point; it closes on outside click or Escape. Resolves to the value passed to noteral.close(value), or null.",
+    permission: "ui.modal",
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj(
+      {
+        html: htmlView,
+        data: s.any("JSON passed to the view as noteral.props.data."),
+        x: s.num("Open at this x."),
+        y: s.num("Open at this y."),
+        anchor: popupAnchor,
+        placement: popupPlacement,
+        width: s.int("Width in px (default 300).", { minimum: 120, maximum: 900 }),
+        height: s.int("Fixed height in px; omit to grow with the content.", { minimum: 40, maximum: 900 }),
+      },
+      ["html"],
+    ),
+    returns: "unknown",
+    example: 'button.onclick = () => noteral.popover({ html: "<p>Details…</p>", width: 260 }, button);',
+  },
+  { name: "ui.closePopups", summary: "Close every modal and popover you opened.", permission: "ui.modal", tier: "read", callers: ["plugin"], params: EMPTY, returns: "void" },
+  {
     name: "ui.setStatus",
     summary: "Show text in the status bar (declare the item in manifest.contributes.statusItems or by id).",
     permission: "ui.status",
@@ -1324,8 +1498,8 @@ export const METHODS: MethodSpec[] = [
         tooltip: s.str("Tooltip.", { maxLength: 300 }),
         icon: iconParam,
         html: htmlView,
-        width: s.int("Width in px for HTML widgets.", { minimum: 16, maximum: 480, default: 120 }),
-        side: s.str("Side.", { enum: ["left", "right"], default: "right" }),
+        width: statusWidth,
+        side: s.str("Side.", { enum: ["left", "center", "right"], default: "right" }),
         order: s.int("Order (lower first).", { minimum: -100, maximum: 100, default: 0 }),
         command: s.str("Command id to run on click (see commands.list).", { maxLength: 200 }),
         layer: layerParam,
@@ -1335,6 +1509,54 @@ export const METHODS: MethodSpec[] = [
     returns: "StatusWidgetInfo",
   },
   { name: "statusBar.removeWidget", summary: "Remove a status bar widget.", permission: "ui.status", tier: "app", params: s.obj({ id: s.str("Widget id."), layer: layerParam }, ["id"]), returns: "void" },
+  {
+    name: "statusBar.getLayout",
+    summary: "The status bar layout in effect (separators, gap, height, per-item hidden/side/order/width) and every item with where it shows now.",
+    permission: null,
+    tier: "read",
+    params: EMPTY,
+    returns: "StatusBarLayoutInfo",
+  },
+  {
+    name: "statusBar.configure",
+    summary: "Customize the whole status bar: hide/move/reorder/resize any item (built-in or custom), separators between items, gap, height, padding, text size, or hide the bar.",
+    details:
+      "Item keys come from statusBar.list (built-ins: builtin:save, builtin:stats, builtin:plugins, builtin:page, builtin:clock, builtin:local; a short id like \"save\" or your own widget id also works). Separators default to none. Widths: px number, \"auto\", \"fill\" (takes free space) or \"NN%\" of the bar. Changes merge with the current layout; reset: true starts over. Plugins write their own layer (applies while they run); the assistant writes its chat layer, or the user's settings with layer: \"base\".",
+    permission: "ui.status",
+    tier: "app",
+    params: s.obj({
+      separator: s.str("What goes between items.", { enum: ["none", "line", "dot", "slash", "space"] }),
+      gap: s.int("Space between items, px.", { minimum: 0, maximum: 48 }),
+      height: s.int("Bar height, px.", { minimum: 16, maximum: 48 }),
+      padding: s.int("Side padding, px.", { minimum: 0, maximum: 48 }),
+      fontSize: s.num("Text size, px.", { minimum: 8, maximum: 16 }),
+      hidden: s.bool("Hide the whole status bar."),
+      items: s.map("Per item: { hidden?, side?: left|center|right, order? (-1000..1000), width?, align?: start|center|end }, keyed by item key."),
+      reset: s.bool("Clear this target's layout first.", { default: false }),
+      layer: layerParam,
+    }),
+    returns: "StatusBarLayoutInfo",
+    example: 'await noteral.app.statusBar.configure({ separator: "line", items: { "builtin:save": { side: "right", order: 100 }, "builtin:clock": { hidden: false } } });',
+  },
+  {
+    name: "statusBar.setItem",
+    summary: "Show, hide, move, reorder or resize one status bar item (built-in or custom).",
+    permission: "ui.status",
+    tier: "app",
+    params: s.obj(
+      {
+        key: s.str("Item key or id (see statusBar.list).", { maxLength: 200, minLength: 1 }),
+        hidden: s.bool("Hide it."),
+        side: s.str("Side.", { enum: ["left", "center", "right"] }),
+        order: s.int("Order (lower first).", { minimum: -1000, maximum: 1000 }),
+        width: statusWidth,
+        align: s.str("Content alignment within its width.", { enum: ["start", "center", "end"] }),
+        layer: layerParam,
+      },
+      ["key"],
+    ),
+    returns: "StatusBarLayoutInfo",
+  },
 
   // ── menus ───────────────────────────────────────────────────────────────
   { name: "menus.list", summary: "List custom items in app menus (optionally one menu).", permission: null, tier: "read", params: s.obj({ menu: menuSlot }), returns: "MenuItemInfo[]" },

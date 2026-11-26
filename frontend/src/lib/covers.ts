@@ -130,6 +130,38 @@ function safeUploadSrc(src: string): string | undefined {
   return src.startsWith("/__assets/") && !/["\\\n\r]/.test(src) ? src : undefined;
 }
 
+/** Longest image link accepted for covers, icons and page backgrounds. */
+export const MAX_IMAGE_LINK = 2048;
+
+/**
+ * Validates an image link typed by the user (or sent by a plugin): only
+ * http(s), no credentials, no fragment (so it never collides with `#pos=`),
+ * and nothing that could break out of a CSS `url("…")`. Returns the
+ * normalized href, or undefined when the link is unusable.
+ */
+export function safeImageLink(input: string): string | undefined {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (!raw || raw.length > MAX_IMAGE_LINK) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  if (!url.hostname || url.username || url.password) return undefined;
+  url.hash = "";
+  const href = url.href;
+  if (href.length > MAX_IMAGE_LINK || /["\\\s<>]/.test(href)) return undefined;
+  return href;
+}
+
+/** The cover/icon value for an image link: `link:<https url>`. */
+export function linkValue(input: string): string | undefined {
+  const href = safeImageLink(input);
+  return href ? `link:${href}` : undefined;
+}
+
 export function coverBase(value: string): string {
   return value.replace(POSITION_SUFFIX, "");
 }
@@ -144,6 +176,7 @@ export function isPositionableCover(value: string): boolean {
   const base = coverBase(value);
   if (base.startsWith("image:")) return Boolean(findCover(base));
   if (base.startsWith("upload:")) return safeUploadSrc(base.slice(7)) !== undefined;
+  if (base.startsWith("link:")) return safeImageLink(base.slice(5)) !== undefined;
   return false;
 }
 
@@ -210,8 +243,8 @@ export function coverStyle(value: string): Record<string, string> | undefined {
         }
       : undefined;
   }
-  if (base.startsWith("upload:")) {
-    const src = safeUploadSrc(base.slice(7));
+  if (base.startsWith("upload:") || base.startsWith("link:")) {
+    const src = base.startsWith("link:") ? safeImageLink(base.slice(5)) : safeUploadSrc(base.slice(7));
     if (!src) return undefined;
     const position = coverPositionOf(value);
     return {
@@ -230,5 +263,6 @@ export function coverName(value: string): string {
   if (base.startsWith("color:") && coverColor(base)) return "Custom color";
   const catalog = findCover(base);
   if (catalog) return catalog.name;
+  if (base.startsWith("link:")) return safeImageLink(base.slice(5)) ? "Linked image" : "Cover";
   return safeUploadSrc(base.slice(7)) ? "Uploaded image" : "Cover";
 }

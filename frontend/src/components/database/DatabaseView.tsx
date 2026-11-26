@@ -1,18 +1,20 @@
 import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Database, GripVertical, Lock, Pencil, Plus, Search, SlidersHorizontal, Smile, Table2, Trash2, X } from "lucide-react";
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useAppStore } from "../../store";
+import { kindOf, useAppStore } from "../../store";
 import {
   NO_GROUP,
   VIEW_TYPES,
   applyView,
   countRules,
   defaultFilter,
+  defaultSchema,
   groupRows,
   newView,
   parseSchema,
   propertyById,
   seedValuesForView,
+  serializeSchema,
   uid,
   valueType,
   type BoardGroup,
@@ -472,6 +474,19 @@ export function DatabaseView({ databaseId, inline = false, stateKey, refs = NO_R
     setViewId(fresh.id);
   }
 
+  /**
+   * Creates a brand new database and adds a table view of it to this block.
+   * It lives in the page being edited (the block's host), like a database
+   * made from the slash menu.
+   */
+  async function createSourceView() {
+    const state = useAppStore.getState();
+    const active = state.pages.find((page) => page.id === state.activePageId && !page.deletedAt);
+    const parentId = active && kindOf(active) === "page" ? active.id : state.pages.find((page) => page.id === databaseId)?.parentId ?? "";
+    const meta = await state.createItem("database", parentId, { open: false, data: serializeSchema(defaultSchema()) });
+    if (meta) createView("table", meta.id);
+  }
+
   function duplicate(id: string) {
     const from = sourceOf(id);
     const copyId = uid("view");
@@ -646,17 +661,16 @@ export function DatabaseView({ databaseId, inline = false, stateKey, refs = NO_R
             <button
               type="button"
               className="db-action db-locked-badge"
-              title="Locked: rows can't be edited. Click to unlock."
+              title="Locked: properties can't be added, moved or resized. Click to unlock."
               aria-label="Unlock database"
               onClick={() => db.updateSchema((draft) => { delete draft.locked; })}
             >
-              <Lock size={13} /> <span className="db-action-label">Locked</span>
+              <Lock size={13} />
             </button>
-          ) : (
-            <button type="button" className="db-new" onClick={() => void addRow()}>
-              <Plus size={14} /> <span className="db-new-label">New</span>
-            </button>
-          )}
+          ) : null}
+          <button type="button" className="db-new" onClick={() => void addRow()}>
+            <Plus size={14} /> <span className="db-new-label">New</span>
+          </button>
         </div>
       </div>
       <FilterBar db={db} view={current} editRuleId={editRuleId} setEditRuleId={setEditRuleId} onOpenAdvanced={openAdvanced} />
@@ -697,6 +711,11 @@ export function DatabaseView({ databaseId, inline = false, stateKey, refs = NO_R
           {addView.page === "sources" ? (
             <SourcePicker
               label="New table from"
+              newLabel="New source"
+              onNew={() => {
+                setAddView(null);
+                void createSourceView();
+              }}
               onPick={(from) => {
                 setAddView(null);
                 createView("table", from);

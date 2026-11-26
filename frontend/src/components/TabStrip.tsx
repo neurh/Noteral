@@ -1,4 +1,6 @@
-import { ContributedMenuItems } from "./ContributedMenuItems";
+import { ContributedMenuItems, contributedMenuEntries } from "./ContributedMenuItems";
+import { popups, type PopupMenuItem } from "../lib/popups";
+import { dialogs } from "../lib/dialogs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -28,6 +30,18 @@ import { KindIcon } from "./KindIcon";
 
 interface TabStripProps {
   pane: PaneNode;
+}
+
+/** Show a page in the left sidebar's tree (it expands to the active page by itself). */
+function revealInTree(pageId: string) {
+  const state = useAppStore.getState();
+  state.selectTab(pageId);
+  state.setLeftTab("tree");
+  if (!state.settings.leftOpen) state.updateSettings({ leftOpen: true });
+  window.setTimeout(() => {
+    const row = document.querySelector<HTMLElement>(`[data-tree-id="${CSS.escape(pageId)}"]`);
+    row?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, 120);
 }
 
 /**
@@ -104,6 +118,79 @@ export function TabStrip({ pane }: TabStripProps) {
       window.removeEventListener("resize", onResize);
     };
   }, [menuOpen]);
+
+  const openTabMenu = (event: { clientX: number; clientY: number; preventDefault: () => void }, tabId: string) => {
+    const state = useAppStore.getState();
+    const home = isHomeTab(tabId);
+    const page = home ? undefined : pageById.get(tabId);
+    const index = pane.tabs.indexOf(tabId);
+    const closable = (id: string) => !(isHomeTab(id) && paneCount === 1 && pane.tabs.length === 1);
+    const others = pane.tabs.filter((id) => id !== tabId);
+    const right = pane.tabs.slice(index + 1);
+    const closeMany = async (ids: string[]) => {
+      for (const id of ids) if (closable(id)) await closeTab(id);
+    };
+    const moveToSplit = (side: "right" | "bottom") => {
+      splitPane(pane.id, side);
+      const after = useAppStore.getState();
+      const target = paneList(after.layout).find((item) => item.id === after.focusedPaneId);
+      if (!target || target.id === pane.id) return;
+      const placeholder = target.tabs[0];
+      moveTab(tabId, target.id, null);
+      if (placeholder && placeholder !== tabId) void closeTab(placeholder);
+      selectTab(tabId);
+    };
+    const otherPanes = panes.filter((item) => item.id !== pane.id);
+    const favorite = page ? state.favorites.includes(page.id) : false;
+    const items: PopupMenuItem[] = [
+      { id: "close", label: "Close", icon: "x", hint: "Ctrl+W", disabled: !closable(tabId), run: () => void closeTab(tabId) },
+      { id: "close-others", label: "Close others", disabled: !others.length, run: () => void closeMany(others) },
+      { id: "close-right", label: "Close tabs to the right", disabled: !right.length, run: () => void closeMany(right) },
+      { id: "close-all", label: "Close all", disabled: pane.tabs.length < 2 && !closable(tabId), run: () => void closeMany([...pane.tabs]) },
+      { type: "separator" },
+      { id: "split-right", label: "Move to split right", icon: "columns-2", disabled: pane.tabs.length < 2, run: () => moveToSplit("right") },
+      { id: "split-down", label: "Move to split down", icon: "rows-2", disabled: pane.tabs.length < 2, run: () => moveToSplit("bottom") },
+      ...(otherPanes.length
+        ? [{
+            label: "Move to pane",
+            icon: "panels-top-left",
+            children: otherPanes.map((item) => ({
+              id: `pane:${item.id}`,
+              label: `Pane ${panes.indexOf(item) + 1}${item.activeTabId ? ` · ${titleFor(item.activeTabId)}` : ""}`,
+              run: () => {
+                moveTab(tabId, item.id, null);
+                selectTab(tabId);
+              },
+            })),
+          } satisfies PopupMenuItem]
+        : []),
+      { id: "new-tab", label: "New tab", icon: "plus", hint: "Ctrl+T", run: () => openHomeTab(undefined, pane.id) },
+    ];
+    if (page) {
+      items.push(
+        { type: "separator" },
+        { id: "favorite", label: favorite ? "Remove from favorites" : "Add to favorites", icon: "star", run: () => void state.toggleFavorite(page.id) },
+        {
+          id: "rename",
+          label: "Rename…",
+          icon: "pencil",
+          run: () => {
+            void dialogs.prompt({ title: "Rename page", value: page.title, placeholder: "Untitled" }).then((title) => {
+              if (title !== null && title.trim() !== page.title) void state.renamePage(page.id, title.trim());
+            });
+          },
+        },
+        { id: "duplicate", label: "Duplicate", icon: "copy", run: () => void state.duplicatePage(page.id, { open: true }) },
+        { id: "copy-link", label: "Copy link", icon: "link", run: () => void navigator.clipboard?.writeText(`noteral://page/${page.id}`) },
+        { id: "copy-title", label: "Copy title", icon: "type", run: () => void navigator.clipboard?.writeText(page.title || "Untitled") },
+        { id: "reveal", label: "Reveal in sidebar", icon: "folder-tree", run: () => revealInTree(page.id) },
+      );
+    }
+    const contributed = contributedMenuEntries({ menu: "tabItem", tabKey: tabId, ...(page ? { pageId: page.id, kind: page.kind ?? "page" } : {}) });
+    if (contributed.length) items.push({ type: "separator" }, ...contributed);
+    if (page) items.push({ type: "separator" }, { id: "trash", label: "Move to trash", icon: "trash-2", danger: true, run: () => void state.trashPage(page.id) });
+    void popups.contextMenu(event, items, { width: 230 });
+  };
 
   const titleFor = useCallback(
     (tabId: string) => {
@@ -248,6 +335,7 @@ export function TabStrip({ pane }: TabStripProps) {
                   .filter(Boolean)
                   .join(" ")}
                 onClick={() => selectTab(tabId)}
+                onContextMenu={(event) => openTabMenu(event, tabId)}
                 onAuxClick={(event) => {
                   if (event.button === 1 && canClose) {
                     event.preventDefault();

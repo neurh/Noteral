@@ -59,6 +59,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .n-list{list-style:none;margin:0;padding:0}.n-list>li{padding:6px 8px;border-radius:var(--radius-sm)}.n-list>li:hover{background:var(--bg-hover)}
 .n-item{display:flex;align-items:center;gap:8px;width:100%;min-height:30px;padding:4px 8px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text);text-align:left;cursor:pointer}.n-item:hover{background:var(--bg-hover)}
 html[data-surface=database] body{padding:10px 2px}
+html[data-surface=modal] body{padding:4px 2px}html[data-surface=popover] body{padding:10px}
 table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid var(--border);padding:5px 6px;text-align:left}th{color:var(--text-muted);font-weight:600;font-size:12px}
 ::selection{background:var(--selection)}
 }
@@ -82,8 +83,16 @@ on:function(ev,f){ev=String(ev);if(!subs[ev]){subs[ev]=[];send({type:"subscribe"
 post:function(name,payload){send({type:"post",name:String(name),payload:payload===undefined?null:payload});},
 open:function(target){send({type:"open",target:String(target)});},
 notify:function(message,kind){return N.call("ui.notify",{message:String(message),kind:kind||"info"});},
-resize:function(){measure(true);}
+resize:function(){measure(true);},
+menu:function(items,at,opts){var p=Object.assign({},opts||{},{items:items||[]});var r=rectOf(at);if(r){if(r.point){p.x=r.x;p.y=r.y;}else p.anchor=r;}return N.call("ui.menu",p);},
+contextMenu:function(e,items,opts){if(e&&e.preventDefault)e.preventDefault();return N.menu(items,e,opts);},
+modal:function(opts){return N.call("ui.showModal",opts||{});},
+popover:function(opts,at){var p=Object.assign({},opts||{});var r=rectOf(at||p.anchor);delete p.anchor;if(r){if(r.point){p.x=r.x;p.y=r.y;}else p.anchor=r;}return N.call("ui.popover",p);},
+close:function(value){send({type:"close",value:value===undefined?null:value});}
 };
+function rectOf(at){if(!at)return null;if(typeof at.clientX==="number"){if(at.type==="click"&&at.currentTarget&&at.currentTarget.getBoundingClientRect&&at.currentTarget!==window&&at.currentTarget!==document)return rectOf(at.currentTarget);return{point:true,x:at.clientX,y:at.clientY};}
+if(typeof at==="string")at=document.querySelector(at);if(at&&at.getBoundingClientRect){var b=at.getBoundingClientRect();return{x:b.left,y:b.top,width:b.width,height:b.height};}
+if(typeof at.x==="number"&&typeof at.y==="number"){if(typeof at.width==="number")return{x:at.x,y:at.y,width:at.width,height:at.height||0};return{point:true,x:at.x,y:at.y};}return null;}
 N.setProps=N.setData;
 N.app=new Proxy({},{get:function(_,ns){return new Proxy({},{get:function(_,m){return function(p){return N.call(String(ns)+"."+String(m),p)}}})}});
 window.noteral=N;
@@ -123,7 +132,7 @@ export function currentTheme(): "light" | "dark" {
 }
 
 /** Where a view is mounted. Views read it as `noteral.surface` and `html[data-surface]`. */
-export type ViewSurface = "page" | "block" | "sidebar" | "status" | "home" | "panel" | "database";
+export type ViewSurface = "page" | "block" | "sidebar" | "status" | "home" | "panel" | "database" | "modal" | "popover";
 
 export interface ViewDocOptions {
   html: string;

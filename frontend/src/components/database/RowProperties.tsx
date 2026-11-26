@@ -37,7 +37,7 @@ export function RowProperties({ databaseId, rowId }: RowPropertiesProps) {
       {db.schema.properties.map((property) => {
         const value = cellValue(row, property);
         const empty = property.type !== "checkbox" && isEmptyValue(property.type === "date" ? dateStart(value) : value);
-        const editable = isEditable(property) && !db.locked;
+        const editable = isEditable(property);
         return (
           <div key={property.id} className="db-rowprop">
             <button type="button" className="db-rowprop-name" onClick={(event) => setMenu({ property, anchor: event.currentTarget })}>
@@ -71,9 +71,11 @@ export function RowProperties({ databaseId, rowId }: RowPropertiesProps) {
           </div>
         );
       })}
-      <button type="button" className="db-ghost db-rowprops-add" onClick={(event) => setAdding(event.currentTarget)}>
-        <Plus size={14} /> Add a property
-      </button>
+      {db.locked ? null : (
+        <button type="button" className="db-ghost db-rowprops-add" onClick={(event) => setAdding(event.currentTarget)}>
+          <Plus size={14} /> Add a property
+        </button>
+      )}
       {editing && editingProperty ? (
         <CellEditor property={editingProperty} row={row} db={db} anchor={editing.anchor} onClose={() => setEditing(null)} />
       ) : null}

@@ -1,7 +1,8 @@
 import { ContributedMenuItems } from "./ContributedMenuItems";
 import { parseNodeData } from "./CustomNodeView";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, Download, FilePlus2, Maximize2, MoreHorizontal, Pencil, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, Download, FilePlus2, Maximize2, MoreHorizontal, Pencil, Star, Trash2, Wallpaper } from "lucide-react";
+import { PageBackgroundDialog } from "./PageBackgroundDialog";
 import { api, errorMessage } from "../lib/api";
 import { editorBridge } from "../lib/editorBridge";
 import { kindOf, useAppStore } from "../store";
@@ -26,10 +27,12 @@ export function PageHeader({ pageId }: { pageId?: string }) {
   const fullWidth = useAppStore((state) => state.settings.fullWidth);
   const notify = useAppStore((state) => state.notify);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [backgroundOpen, setBackgroundOpen] = useState(false);
   const menuAnchor = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMenuOpen(false);
+    setBackgroundOpen(false);
   }, [headerId]);
 
   useEffect(() => {
@@ -150,6 +153,11 @@ export function PageHeader({ pageId }: { pageId?: string }) {
                     <Maximize2 size={14} /> Full width
                     <span className="menu-check" aria-hidden="true">{fullWidth ? <Check size={13} /> : null}</span>
                   </button>
+                  {page.kind !== "custom" ? (
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setBackgroundOpen(true); }}>
+                      <Wallpaper size={14} /> Background…
+                    </button>
+                  ) : null}
                   <div className="menu-separator" />
                   <button type="button" role="menuitem" onClick={() => void exportPage("markdown")}><Download size={14} /> Export Markdown</button>
                   <button type="button" role="menuitem" onClick={() => void exportPage("json")}><Download size={14} /> Export JSON</button>
@@ -169,6 +177,7 @@ export function PageHeader({ pageId }: { pageId?: string }) {
                 </div>
               ) : null}
             </div>
+            {backgroundOpen ? <PageBackgroundDialog open onClose={() => setBackgroundOpen(false)} pageId={page.id} /> : null}
           </>
         ) : null}
       </div>

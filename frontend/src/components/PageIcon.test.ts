@@ -14,6 +14,8 @@ describe("page icon parsing", () => {
     expect(parsePageIcon("emoji:👋🏽")).toEqual({ kind: "emoji", char: "👋🏽" });
     expect(parsePageIcon("🌿")).toEqual({ kind: "emoji", char: "🌿" });
     expect(parsePageIcon("upload:/__assets/ws/assets/icon.png")).toEqual({ kind: "image", src: "/__assets/ws/assets/icon.png" });
+    expect(parsePageIcon("link:https://example.com/icon.png")).toEqual({ kind: "image", src: "https://example.com/icon.png" });
+    expect(parsePageIcon("link:javascript:alert(1)")).toBeNull();
     expect(parsePageIcon("✦")).toBeNull();
     expect(parsePageIcon("")).toBeNull();
   });

@@ -1,4 +1,3 @@
-import { Code2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   DEFAULT_CUSTOM_VIEW,
@@ -116,7 +115,6 @@ function writableValues(db: DatabaseApi, input: unknown): Record<string, unknown
 
 /** A view whose whole body is HTML (often written by the assistant or a plugin). */
 export function CustomView({ db, view, rows, inline }: { db: DatabaseApi; view: DatabaseView; rows: DatabaseRow[]; inline: boolean }) {
-  const [editing, setEditing] = useState(false);
   const html = view.custom?.html || DEFAULT_CUSTOM_VIEW;
   const properties = useMemo(() => {
     const ids = visiblePropertyIds(db.schema, view);
@@ -172,10 +170,6 @@ export function CustomView({ db, view, rows, inline }: { db: DatabaseApi; view: 
         title={view.name || "Custom view"}
         className="db-custom-frame"
       />
-      <button type="button" className="db-custom-edit" onClick={() => setEditing(true)} aria-label="Edit view code">
-        <Code2 size={13} /> Edit code
-      </button>
-      {editing ? <CustomViewEditor db={db} view={view} onClose={() => setEditing(false)} /> : null}
     </div>
   );
 }

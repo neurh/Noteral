@@ -4,7 +4,9 @@
  * permission and the assistant in Creator mode), stored in
  * `<data dir>/customizations.json` and applied through one <style> element.
  */
-import { useSyncExternalStore } from "react";
+import { mergeStatusBar, normalizeStatusBar } from "./statusLayout";
+import type { StatusBarLayout } from "./statusLayout";
+import { useMemo, useSyncExternalStore } from "react";
 import { api } from "./api";
 import { contributions, emptySet, normalizeSet } from "./contributions";
 import type { ContributionSet } from "./contributions";
@@ -51,6 +53,8 @@ export interface Layer extends Look, ContributionSet {
   chatId?: string;
   /** The plugin that made it (appearance changes made through the SDK). */
   pluginId?: string;
+  /** Status bar layout changes; merged over earlier layers, under the user's own. */
+  statusBar?: StatusBarLayout;
 }
 
 export interface SidebarGroup {
@@ -70,6 +74,8 @@ export interface Customizations extends Look {
   version: 2;
   layers: Layer[];
   sidebar?: SidebarLayout;
+  /** Status bar layout (items shown, sides, order, widths, separators). */
+  statusBar?: StatusBarLayout;
 }
 
 export const LAYER_ID = /^[a-z0-9][a-z0-9:._-]{0,79}$/;
@@ -226,6 +232,8 @@ function normalizeLayer(raw: unknown): Layer | undefined {
   if (typeof value.description === "string" && value.description.trim()) layer.description = value.description.slice(0, 400);
   if (typeof value.chatId === "string") layer.chatId = value.chatId.slice(0, 80);
   if (typeof value.pluginId === "string") layer.pluginId = value.pluginId.slice(0, 120);
+  const statusBar = normalizeStatusBar(value.statusBar);
+  if (statusBar) layer.statusBar = statusBar;
   return layer;
 }
 
@@ -258,6 +266,8 @@ export function normalizeCustomizations(raw: unknown): Customizations {
   }
   const sidebar = normalizeSidebar(value.sidebar);
   if (sidebar) doc.sidebar = sidebar;
+  const statusBar = normalizeStatusBar(value.statusBar);
+  if (statusBar) doc.statusBar = statusBar;
   return doc;
 }
 
@@ -454,6 +464,18 @@ export const customizations = {
     emit();
   },
 };
+
+/** The status bar layout in effect: live layers in order, then the user's own settings. */
+export function effectiveStatusBar(doc: Customizations): StatusBarLayout | undefined {
+  let out: StatusBarLayout | undefined;
+  for (const layer of doc.layers) if (layer.statusBar && layerIsLive(layer)) out = mergeStatusBar(out, layer.statusBar);
+  return doc.statusBar ? mergeStatusBar(out, doc.statusBar) : out;
+}
+
+export function useStatusBarLayout(): StatusBarLayout | undefined {
+  const doc = useCustomizations();
+  return useMemo(() => effectiveStatusBar(doc), [doc]);
+}
 
 export function useCustomizations(): Customizations {
   return useSyncExternalStore(customizations.subscribe, customizations.get, customizations.get);

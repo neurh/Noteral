@@ -487,3 +487,23 @@ Driven with Playwright against the server build (`/tmp/ai-rh/r8/flow.mjs <width>
 - The side panel has two tabs, Functions and Ask AI (a chat-like feed and composer).
 - Completions open while typing or on Ctrl+Space, not when the caret is placed in a name, so that function's reference shows instead.
 - Checked with /tmp/ai-rh/r9/fx9.mjs at 1366 and 390 dark: no footer, no input rows, both tabs present, autosave Saving…→Saved, error keeps the last good formula, undo/redo via keys and button, the value persists after closing, no page errors.
+
+# Rehearsal: popups, AI split button, tab menu, status bar layout
+
+Gold: the existing `.menu` popup (tree/page menus) for the shared popup menu (`HostPopups.tsx`, `lib/popups.ts`); the existing `.topbar-search` field for the AI split button inside it (`TopBar.tsx`).
+
+States: AI split menu, Rewrite submenu, tab right-click menu, status bar right-click menu, tree multi-select bulk menu and row menu; light 1366×745 and dark 390×844. A test plugin (`com.test.popups`, server data dir only) drove the SDK end to end: an HTML status widget calling `noteral.menu` (with a submenu) and `noteral.modal`, and `pages.stats` from plugin code.
+
+Harness: server mode (`CGO_ENABLED=0 go build -tags server,production -o bin/noteral-server .`, `WAILS_SERVER_PORT=8131`, data in `/tmp/nrh-data`), Playwright scripts `/tmp/nrh/shots.mjs` and `/tmp/nrh/plug.mjs`, frames in `/tmp/nrh/`.
+
+Gate: a real app screen, so the `film --gate` loop does not apply. Rehearsed with exact-width stills plus scripted interaction checks.
+
+Frames → findings → fixes:
+- `dark-390-03-ai-submenu.png`: at 390 the Rewrite submenu could fit on neither side and covered its parent item. Fix: `placePopup` drops a submenu below its item, indented 24px, when neither side fits (`lib/popups.ts`, with a test).
+- `dark-390-04-tab-menu.png`: items without icons ("Close others", "Close all") sat left of the items with icons. Fix: when any item in a panel has an icon, the others keep an empty 14px icon slot.
+- `light-1366-02/03`, `05`, `06`: no faults. The menus stay inside the window, there is no horizontal scroll, and the status bar shows words · blocks on the left and Saved at the far right, with no Local-first badge and no separators.
+- Plugin checks: the widget menu opened above the 22px status bar (190×105 at 129,613). Choosing More → Beta resolved `"b"`. The modal opened from the menu, and `noteral.close(42)` closed it and returned `42` to the widget. `pages.stats` returned words=11, chars=51 for the open page. There were zero console errors.
+
+Checks: `tsc --noEmit` clean; vitest 38 files / 887 tests pass; `npm run build` OK; SDK rebuilt (163 plugin methods).
+
+Not checked: the real Wails/GTK window, the popover method (`ui.popover`) with a real plugin, the page-background dialog and the ASCII backdrop (built by a sub-agent and type/test checked, not filmed), the database fixes in the browser (unit tests only), screen readers, and touch.

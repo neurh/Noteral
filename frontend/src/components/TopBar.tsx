@@ -1,5 +1,7 @@
-import { MessagesSquare, PanelLeft, PanelRight, Search } from "lucide-react";
+import { ChevronDown, PanelLeft, PanelRight, Search, Sparkles } from "lucide-react";
 import { toggleAssistant } from "../assistant/open";
+import { assistantQuickActions } from "../assistant/quickActions";
+import { popups } from "../lib/popups";
 import { useAppStore } from "../store";
 import { WindowControls } from "./WindowControls";
 
@@ -36,29 +38,47 @@ export function TopBar() {
         </button>
       </div>
       <div className="topbar-center">
-        <button
-          type="button"
-          className="topbar-search"
-          aria-label="Search notes and commands"
-          title="Search notes and commands (Ctrl/⌘ K)"
-          onClick={() => setOverlay("palette")}
-        >
-          <Search size={14} />
-          <span className="topbar-search-label">Search notes and commands</span>
-          <kbd>{isMac ? "⌘K" : "Ctrl K"}</kbd>
-        </button>
+        <div className="topbar-search-box">
+          <button
+            type="button"
+            className="topbar-search"
+            aria-label="Search notes and commands"
+            title="Search notes and commands (Ctrl/⌘ K)"
+            onClick={() => setOverlay("palette")}
+          >
+            <Search size={14} />
+            <span className="topbar-search-label">Search notes and commands</span>
+            <kbd>{isMac ? "⌘K" : "Ctrl K"}</kbd>
+          </button>
+          <div className={`topbar-ai ${assistantOpen ? "is-on" : ""}`} role="group" aria-label="Assistant">
+            <button
+              type="button"
+              className="topbar-ai-main"
+              aria-pressed={assistantOpen}
+              aria-label={assistantOpen ? "Hide assistant" : "Show assistant"}
+              title={`${assistantOpen ? "Hide" : "Show"} assistant (${isMac ? "⌘J" : "Ctrl+J"})`}
+              onClick={() => toggleAssistant()}
+            >
+              <Sparkles size={13} />
+              <span className="topbar-ai-label">AI</span>
+            </button>
+            <button
+              type="button"
+              className="topbar-ai-more"
+              aria-label="Assistant actions"
+              aria-haspopup="menu"
+              title="Assistant actions"
+              onClick={(event) => {
+                const group = event.currentTarget.parentElement ?? event.currentTarget;
+                void popups.menuAt(group, assistantQuickActions(), { placement: "bottom-end", width: 250 });
+              }}
+            >
+              <ChevronDown size={13} />
+            </button>
+          </div>
+        </div>
       </div>
       <div className="topbar-right">
-        <button
-          type="button"
-          className={`icon-button topbar-assistant ${assistantOpen ? "is-on" : ""}`}
-          aria-label={assistantOpen ? "Hide assistant" : "Show assistant"}
-          aria-pressed={assistantOpen}
-          title={`${assistantOpen ? "Hide" : "Show"} assistant (${isMac ? "⌘J" : "Ctrl+J"})`}
-          onClick={() => toggleAssistant()}
-        >
-          <MessagesSquare size={16} />
-        </button>
         <button
           type="button"
           className={`icon-button topbar-toggle-right ${rightOpen ? "is-on" : ""}`}

@@ -44,6 +44,14 @@ All methods take one params object and return a promise.
 
 ## app
 
+### `app.state`
+
+What the window shows now: the open page, panes and their tabs, sidebars and their tabs, whether the assistant is open, the open overlay, theme, window size and history.
+
+**Permission:** none · **Returns:** `AppState` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+No parameters.
+
 ### `app.info`
 
 Get the app version, SDK version, theme and the open workspace.
@@ -256,6 +264,22 @@ Pass parentId "" for top-level items. Database rows are pages whose parent is th
 const pages = await app.pages.list({ parentId: "" });
 ```
 
+### `pages.stats`
+
+Content facts about a page: words, characters, blocks by type, headings, to-dos, links, page links, embedded databases, images, tables, code blocks, reading time, child pages (defaults to the open page).
+
+Open pages are counted from the live editor (unsaved edits included); closed pages from the saved copy. Database pages also return rows, properties and views.
+
+**Permission:** `pages.read` · **Returns:** `PageStats` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `pageId` | `string` |  | Page id (default: the open page). |
+
+```ts
+const s = await noteral.app.pages.stats(); noteral.setData(`${s.words} words · ${s.readingMinutes} min`);
+```
+
 ### `pages.get`
 
 Get one page's metadata.
@@ -411,6 +435,33 @@ Set a page's cover: a CSS color/gradient, an image URL, or "" to clear.
 | --- | --- | --- | --- |
 | `pageId` | `string` | yes | Page id. |
 | `cover` | `string` | yes | Cover value. |
+
+### `pages.getBackground`
+
+Read the page's background (the layer behind the whole page, not the cover), or null.
+
+**Permission:** `pages.read` · **Returns:** `PageBackgroundInfo | null` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `pageId` | `string` |  | Page id. Default: the active page. |
+
+### `pages.setBackground`
+
+Set the background behind a whole page: a color, gradient, image or animated ASCII scene (null clears).
+
+kind color: value is a CSS color (hex, rgb()/hsl()/oklch(), a name or var(--token)). kind gradient: value is a CSS linear-/radial-/conic-gradient (no url()). kind image: value is an https URL, a data:image URL (max 48 KB) or an uploaded asset (/__assets/…). kind ascii: ascii = { scene (required): ascii-moon | ascii-sunset | ascii-galaxy | ascii-rain | ascii-dunes | ascii-topo ("moon" ok), speed 0.25–3 (default 1), ink "#rrggbb", density fine|normal|large, still: bool, cursor: bool }. Uses the same ASCII engine as Home backgrounds. opacity (0–1) fades the background; dim (0–1) lays a page-colored veil over it so text stays readable (defaults: image 0.35, ascii 0.55, else 0). Saved per workspace. Users set it from the page ⋯ menu → Background….
+
+**Permission:** `pages.write` · **Returns:** `PageBackgroundInfo | null` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `pageId` | `string` |  | Page id. Default: the active page. |
+| `background` | `unknown` | yes | { kind: color\|gradient\|image\|ascii, value?, ascii?, opacity?, dim? }, or null to remove. |
+
+```ts
+await noteral.pages.setBackground({ background: { kind: 'ascii', ascii: { scene: 'rain', speed: 0.8 }, dim: 0.6 } })
+```
 
 ### `pages.move`
 
@@ -826,7 +877,7 @@ Move rows to the trash.
 
 ### `databases.setLocked`
 
-Lock or unlock a database. A locked database refuses row edits, new rows and deletes (from the user, plugins and the assistant); properties and views can still change.
+Lock or unlock a database. A locked database keeps its structure: no new properties, formula or type changes, and no column moves or resizes (for the user, plugins and the assistant). Rows, cells and views still change freely.
 
 **Permission:** `databases.write` · **Returns:** `{ locked: boolean }` · **Callers:** plugins, assistant · **Assistant modes:** Edit, Creator · **Asks first**
 
@@ -856,6 +907,17 @@ List workspaces.
 **Permission:** `workspaces.read` · **Returns:** `WorkspaceInfo[]` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
 
 No parameters.
+
+### `workspaces.stats`
+
+Counts for the open workspace: pages, databases, rows, folders, favorites, trash, nesting depth, last edited page; with content: true also total words, characters, to-dos and the longest pages.
+
+**Permission:** `pages.read` · **Returns:** `WorkspaceStats` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `content` | `boolean` |  | Also read every page's text (slower). Default `false`. |
+| `limit` | `number` |  | Pages to read with content (default 500). |
 
 ### `workspaces.current`
 
@@ -1074,7 +1136,7 @@ Merge a patch into the plugin's saved settings.
 
 The plugin's user options: saved values merged over the defaults of its declared fields.
 
-Fields come from manifest contributes.settings and settings.define. The user edits them under Plugins → Installed → Options; each change raises settings:changed.
+Fields come from manifest contributes.settings and settings.define. The user edits them in the plugin's Configure dialog (Plugins → Installed → Options, the palette's "Configure <plugin>", or settings.openOptions); each change raises settings:changed.
 
 **Permission:** `settings.read` · **Returns:** `Record<string, unknown>` · **Callers:** plugins
 
@@ -1089,6 +1151,37 @@ Declare (replace) the fields of the plugin's Options screen at runtime.
 | Param | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `fields` | `{ /** Option key (letters, digits, . - _). */ key: string; /** Control. */ type: "toggle" \| "text" \| "textarea" \| "number" \| "slider" \| "select" \| "color"; /** Label. */ label?: string; /** Help text under the control. */ description?: string; /** Heading to group under. */ section?: string; /** Placeholder (text fields). */ placeholder?: string; /** Default value. */ default?: unknown; /** Choices (select). */ options?: { /** Stored value. */ value: string; /** Label. */ label?: string; }[]; /** Minimum (number, slider). */ min?: number; /** Maximum (number, slider). */ max?: number; /** Step (number, slider). */ step?: number; }[]` | yes | Fields, in order. |
+
+### `settings.openOptions`
+
+Open the plugin's Configure dialog (its option fields and its custom options page).
+
+Users also reach it from Plugins → Installed, the command palette ("Configure <plugin>") and the right-click menu of the plugin's status widgets.
+
+**Permission:** none · **Returns:** `void` · **Callers:** plugins
+
+No parameters.
+
+### `settings.setPage`
+
+Give the plugin's Configure dialog a custom HTML options page (null removes it).
+
+The page is a sandboxed view like a panel: it can call noteral.call('settings.options'), noteral.call('settings.set', …) and noteral.close() to dismiss the dialog. The plain option fields still show below it unless showFields is false. Register it again on every start (it isn't saved).
+
+**Permission:** none · **Returns:** `void` · **Callers:** plugins
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `html` | `string` |  | Page HTML (body content; scripts allowed). Empty or omitted removes the page. |
+| `title` | `string` |  | Dialog title. Default "<plugin> options". |
+| `width` | `number` |  | Dialog width in px (320-1000). |
+| `height` | `number` |  | Page height in px (80-900). The view also resizes to its content. |
+| `showFields` | `boolean` |  | Show the declared option fields under the page (default true). |
+| `open` | `boolean` |  | Open the dialog right away. |
+
+```ts
+await noteral.settings.setPage({ html: '<h3>Hello</h3><button class="n-btn" onclick="noteral.close()">Done</button>' })
+```
 
 ## preferences
 
@@ -1351,6 +1444,80 @@ For the assistant this renders an inline question card in the chat; for plugins 
 | `allowText` | `boolean` |  | Allow a typed answer (always on when there are no options). Default `true`. |
 | `placeholder` | `string` |  | Placeholder for the typed answer. |
 
+### `ui.menu`
+
+Open a menu (context menu or dropdown) and wait for the choice. Resolves to the chosen item id, or null when dismissed.
+
+Items can have icons (emoji or Lucide names), hints (shortcuts), descriptions, check marks, danger styling, headers, separators ("-") and submenus (`children`, up to 3 levels). In a view use `noteral.menu(items, event)` or `noteral.menu(items, element)` — it positions the menu at the click or under the element, even from a small widget. Without a position the menu opens at the last pointer position.
+
+**Permission:** `ui.modal` · **Returns:** `string | null` · **Callers:** plugins
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `items` | `unknown[]` | yes | Menu items. |
+| `x` | `number` |  | Open at this x (window, or frame coordinates from a view). |
+| `y` | `number` |  | Open at this y. |
+| `anchor` | `{ /** Left. */ x: number; /** Top. */ y: number; /** Width. */ width?: number; /** Height. */ height?: number; }` |  | Rect to open next to (window coordinates, or frame coordinates from a view — noteral.menu/popover fill it from an element). |
+| `placement` | `"bottom-start" \| "bottom-end" \| "top-start" \| "top-end" \| "right-start" \| "left-start"` |  | Where to open relative to the anchor. |
+| `width` | `number` |  | Menu width in px. |
+| `filter` | `boolean` |  | Show a filter box above the items (long lists). Default `false`. |
+
+```ts
+const choice = await noteral.menu([{ id: "rename", label: "Rename", icon: "pencil" }, "-", { label: "Color", children: [{ id: "red", label: "Red" }, { id: "blue", label: "Blue" }] }, { id: "delete", label: "Delete", danger: true }], event);
+```
+
+### `ui.showModal`
+
+Open a modal dialog that renders your HTML, and wait until it closes. Resolves to the value passed to noteral.close(value) (or noteral.setData), or null when dismissed.
+
+The modal runs the HTML in a sandboxed view with your permissions (it can call noteral.call / noteral.app.* like any view). `data` arrives as `noteral.props.data`. Set `bare` to draw your own header, `dismissible: false` to require noteral.close().
+
+**Permission:** `ui.modal` · **Returns:** `unknown` · **Callers:** plugins
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `html` | `string` | yes | HTML for a sandboxed view (a fragment or a full document; inline <style> and <script> are fine, no remote scripts). The script gets a global `noteral` (props, setData, call, on, open, notify — see the View API guide). Theme tokens are available as CSS variables, and the kit classes n-btn, n-input, n-card, n-row, n-col, n-grid, n-chip, n-list, n-muted are predefined. |
+| `title` | `string` |  | Title (also the accessible name). |
+| `subtitle` | `string` |  | Line under the title. |
+| `data` | `unknown` |  | JSON passed to the view as noteral.props.data. |
+| `width` | `number` |  | Max width in px (default 820). |
+| `height` | `number` |  | Fixed height in px; omit to grow with the content. |
+| `dismissible` | `boolean` |  | Escape / backdrop / close button close it. Default `true`. |
+| `bare` | `boolean` |  | No header or padding around the view. Default `false`. |
+
+```ts
+const result = await noteral.modal({ title: "Pick a color", width: 360, html: '<button class="n-btn" onclick="noteral.close(\'red\')">Red</button>' });
+```
+
+### `ui.popover`
+
+Open a small floating panel with your HTML next to an element or point; it closes on outside click or Escape. Resolves to the value passed to noteral.close(value), or null.
+
+**Permission:** `ui.modal` · **Returns:** `unknown` · **Callers:** plugins
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `html` | `string` | yes | HTML for a sandboxed view (a fragment or a full document; inline <style> and <script> are fine, no remote scripts). The script gets a global `noteral` (props, setData, call, on, open, notify — see the View API guide). Theme tokens are available as CSS variables, and the kit classes n-btn, n-input, n-card, n-row, n-col, n-grid, n-chip, n-list, n-muted are predefined. |
+| `data` | `unknown` |  | JSON passed to the view as noteral.props.data. |
+| `x` | `number` |  | Open at this x. |
+| `y` | `number` |  | Open at this y. |
+| `anchor` | `{ /** Left. */ x: number; /** Top. */ y: number; /** Width. */ width?: number; /** Height. */ height?: number; }` |  | Rect to open next to (window coordinates, or frame coordinates from a view — noteral.menu/popover fill it from an element). |
+| `placement` | `"bottom-start" \| "bottom-end" \| "top-start" \| "top-end" \| "right-start" \| "left-start"` |  | Where to open relative to the anchor. |
+| `width` | `number` |  | Width in px (default 300). |
+| `height` | `number` |  | Fixed height in px; omit to grow with the content. |
+
+```ts
+button.onclick = () => noteral.popover({ html: "<p>Details…</p>", width: 260 }, button);
+```
+
+### `ui.closePopups`
+
+Close every modal and popover you opened.
+
+**Permission:** `ui.modal` · **Returns:** `void` · **Callers:** plugins
+
+No parameters.
+
 ### `ui.setStatus`
 
 Show text in the status bar (declare the item in manifest.contributes.statusItems or by id).
@@ -1557,8 +1724,8 @@ HTML widgets render in a 22px-high sandboxed frame (`width` px wide) and can cal
 | `tooltip` | `string` |  | Tooltip. |
 | `icon` | `string` |  | Icon: an emoji or a Lucide icon name such as "chart-line". |
 | `html` | `string` |  | HTML for a sandboxed view (a fragment or a full document; inline <style> and <script> are fine, no remote scripts). The script gets a global `noteral` (props, setData, call, on, open, notify — see the View API guide). Theme tokens are available as CSS variables, and the kit classes n-btn, n-input, n-card, n-row, n-col, n-grid, n-chip, n-list, n-muted are predefined. |
-| `width` | `number` |  | Width in px for HTML widgets. Default `120`. |
-| `side` | `"left" \| "right"` |  | Side. Default `"right"`. |
+| `width` | `unknown` |  | Width: px (16-1200), "auto" (fit content), "fill" (take the free space) or "NN%" of the bar. HTML widgets default to 120px. |
+| `side` | `"left" \| "center" \| "right"` |  | Side. Default `"right"`. |
 | `order` | `number` |  | Order (lower first). Default `0`. |
 | `command` | `string` |  | Command id to run on click (see commands.list). |
 | `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
@@ -1574,6 +1741,54 @@ Remove a status bar widget.
 | `id` | `string` | yes | Widget id. |
 | `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
 
+### `statusBar.getLayout`
+
+The status bar layout in effect (separators, gap, height, per-item hidden/side/order/width) and every item with where it shows now.
+
+**Permission:** none · **Returns:** `StatusBarLayoutInfo` · **Callers:** plugins, assistant · **Assistant modes:** Ask, Edit, Creator
+
+No parameters.
+
+### `statusBar.configure`
+
+Customize the whole status bar: hide/move/reorder/resize any item (built-in or custom), separators between items, gap, height, padding, text size, or hide the bar.
+
+Item keys come from statusBar.list (built-ins: builtin:save, builtin:stats, builtin:plugins, builtin:page, builtin:clock, builtin:local; a short id like "save" or your own widget id also works). Separators default to none. Widths: px number, "auto", "fill" (takes free space) or "NN%" of the bar. Changes merge with the current layout; reset: true starts over. Plugins write their own layer (applies while they run); the assistant writes its chat layer, or the user's settings with layer: "base".
+
+**Permission:** `ui.status` · **Returns:** `StatusBarLayoutInfo` · **Callers:** plugins, assistant · **Assistant modes:** Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `separator` | `"none" \| "line" \| "dot" \| "slash" \| "space"` |  | What goes between items. |
+| `gap` | `number` |  | Space between items, px. |
+| `height` | `number` |  | Bar height, px. |
+| `padding` | `number` |  | Side padding, px. |
+| `fontSize` | `number` |  | Text size, px. |
+| `hidden` | `boolean` |  | Hide the whole status bar. |
+| `items` | `Record<string, unknown>` |  | Per item: { hidden?, side?: left\|center\|right, order? (-1000..1000), width?, align?: start\|center\|end }, keyed by item key. |
+| `reset` | `boolean` |  | Clear this target's layout first. Default `false`. |
+| `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
+
+```ts
+await noteral.app.statusBar.configure({ separator: "line", items: { "builtin:save": { side: "right", order: 100 }, "builtin:clock": { hidden: false } } });
+```
+
+### `statusBar.setItem`
+
+Show, hide, move, reorder or resize one status bar item (built-in or custom).
+
+**Permission:** `ui.status` · **Returns:** `StatusBarLayoutInfo` · **Callers:** plugins, assistant · **Assistant modes:** Creator
+
+| Param | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `key` | `string` | yes | Item key or id (see statusBar.list). |
+| `hidden` | `boolean` |  | Hide it. |
+| `side` | `"left" \| "center" \| "right"` |  | Side. |
+| `order` | `number` |  | Order (lower first). |
+| `width` | `unknown` |  | Width: px (16-1200), "auto" (fit content), "fill" (take the free space) or "NN%" of the bar. HTML widgets default to 120px. |
+| `align` | `"start" \| "center" \| "end"` |  | Content alignment within its width. |
+| `layer` | `string` |  | Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. "base" writes the base look. |
+
 ## menus
 
 ### `menus.list`
@@ -1584,7 +1799,7 @@ List custom items in app menus (optionally one menu).
 
 | Param | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `menu` | `"page" \| "tree" \| "block" \| "tab" \| "status"` |  | Menu: page (the page "…" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu). |
+| `menu` | `"page" \| "tree" \| "block" \| "tab" \| "tabItem" \| "status" \| "assistant" \| "treeSelection"` |  | Menu: page (the page ⋯ actions menu), tree (page tree item menu), block (block handle menu), tab (a pane's tab options ⌄ menu), tabItem (right-click a tab), status (right-click the status bar), assistant (the AI button's ⌄ menu next to search) or treeSelection (several pages selected in the tree). |
 
 ### `menus.addItem`
 
@@ -1597,7 +1812,7 @@ Choosing the item runs `command`. For plugins it is one of the plugin's own comm
 | Param | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | `string` | yes | Item id. |
-| `menu` | `"page" \| "tree" \| "block" \| "tab" \| "status"` | yes | Menu: page (the page "…" menu), tree (item menu in the page tree), block (block handle menu), tab (sidebar tab menu) or status (status bar menu). |
+| `menu` | `"page" \| "tree" \| "block" \| "tab" \| "tabItem" \| "status" \| "assistant" \| "treeSelection"` | yes | Menu: page (the page ⋯ actions menu), tree (page tree item menu), block (block handle menu), tab (a pane's tab options ⌄ menu), tabItem (right-click a tab), status (right-click the status bar), assistant (the AI button's ⌄ menu next to search) or treeSelection (several pages selected in the tree). |
 | `title` | `string` | yes | Label. |
 | `icon` | `string` |  | Icon: an emoji or a Lucide icon name such as "chart-line". |
 | `command` | `string` | yes | Command to run (see details). |
@@ -2204,6 +2419,108 @@ export interface EditorSnapshot {
   outline: OutlineItem[];
 }
 
+/** Content facts about a page (pages.stats). Database pages also get `database`. */
+/** A page's background (behind the whole page, not the cover). */
+export interface PageBackgroundInfo {
+  kind: "color" | "gradient" | "image" | "ascii";
+  value?: string;
+  ascii?: { scene: string; speed?: number; ink?: string; density?: "fine" | "normal" | "large"; still?: boolean; cursor?: boolean };
+  opacity?: number;
+  dim?: number;
+}
+
+export interface PageStats {
+  pageId: string;
+  title: string;
+  kind: "page" | "folder" | "database" | "row" | "custom";
+  icon: string;
+  parentId: string;
+  createdAt: string;
+  updatedAt: string;
+  /** 0 for top-level pages. */
+  depth: number;
+  childPages: number;
+  favorite: boolean;
+  /** The page is the one in focus. */
+  active: boolean;
+  /** Counted from the open editor (includes unsaved edits). */
+  open: boolean;
+  words: number;
+  characters: number;
+  charactersNoSpaces: number;
+  blocks: number;
+  paragraphs: number;
+  lines: number;
+  blockTypes: Record<string, number>;
+  headings: { level: number; text: string; blockId: string }[];
+  todos: { total: number; done: number; open: number };
+  links: { url: string; text: string }[];
+  pageLinks: { pageId: string; title: string }[];
+  databases: { id: string; title: string; blockId: string }[];
+  customBlocks: { kind: string; count: number }[];
+  images: number;
+  media: number;
+  files: number;
+  tables: number;
+  codeBlocks: number;
+  quotes: number;
+  readingMinutes: number;
+  speakingMinutes: number;
+  database?: { rows: number; properties: { id: string; name: string; type: string }[]; views: number; viewTypes: string[] };
+}
+
+export interface WorkspaceStats {
+  workspaceId: string | null;
+  workspaceName: string;
+  /** Every live item (pages, databases, rows, folders, custom). */
+  total: number;
+  pages: number;
+  databases: number;
+  rows: number;
+  folders: number;
+  custom: number;
+  topLevel: number;
+  favorites: number;
+  trashed: number;
+  maxDepth: number;
+  lastEdited: { pageId: string; title: string; updatedAt: string } | null;
+  /** With content: true — totals read from every page's text. */
+  content?: {
+    scanned: number;
+    words: number;
+    characters: number;
+    blocks: number;
+    todos: { total: number; done: number; open: number };
+    longest: { pageId: string; title: string; words: number }[];
+    readingMinutes: number;
+  };
+}
+
+/** What the window shows right now (app.state). */
+export interface AppState {
+  activePageId: string;
+  activeTitle: string;
+  focusedPaneId: string;
+  panes: {
+    id: string;
+    focused: boolean;
+    maximized: boolean;
+    activeTab: string;
+    tabs: { id: string; pageId: string; title: string; kind: "home" | "page" | "folder" | "database" | "row" | "custom"; active: boolean }[];
+  }[];
+  openTabs: number;
+  leftSidebar: { open: boolean; tab: string };
+  rightSidebar: { open: boolean; tab: string };
+  assistantOpen: boolean;
+  /** Open overlay ("palette", "settings", …) or "". */
+  overlay: string;
+  theme: "light" | "dark";
+  online: boolean;
+  window: { width: number; height: number };
+  workspaceId: string | null;
+  history: { canGoBack: boolean; canGoForward: boolean };
+}
+
 export interface PageInfo {
   id: string;
   title: string;
@@ -2647,14 +2964,39 @@ export interface SidebarInfo {
 }
 
 export interface StatusWidgetInfo {
+  /** Use this key with statusBar.setItem / statusBar.configure (built-ins: "builtin:<id>"). */
   key: string;
   id: string;
-  side: "left" | "right";
+  /** Where it shows now (after the layout). */
+  side: "left" | "center" | "right";
   order: number;
   builtin: boolean;
   text?: string;
   kind: "builtin" | "text" | "html";
   owner?: ContributionOwnerInfo;
+  /** Hidden by the layout (built-ins "local", "page" and "clock" start hidden). */
+  hidden?: boolean;
+  width?: number | string;
+}
+
+export interface StatusItemLayoutInfo {
+  hidden?: boolean;
+  side?: "left" | "center" | "right";
+  order?: number;
+  width?: number | string;
+  align?: "start" | "center" | "end";
+}
+
+export interface StatusBarLayoutInfo {
+  hidden?: boolean;
+  separator: "none" | "line" | "dot" | "slash" | "space";
+  gap?: number;
+  height?: number;
+  padding?: number;
+  fontSize?: number;
+  items: Record<string, StatusItemLayoutInfo>;
+  /** Every item with its effective placement. */
+  widgets: StatusWidgetInfo[];
 }
 
 export interface BlockTypeInfo {

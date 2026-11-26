@@ -15,11 +15,12 @@ import {
 } from "../../lib/database";
 import { PageIcon } from "../PageIcon";
 import { CellDisplay, CellEditor, isEditable } from "./CellValue";
-import { FormulaCellMenu } from "./FormulaCellMenu";
+import { FormulaEditor } from "./FormulaEditor";
 import { PropertyIcon } from "./parts";
 import { Popover } from "./Popover";
 import { PropertyMenu, TypeList } from "./PropertyMenu";
 import { autofitColumn } from "./autofit";
+import { consumeDragClick, startReorder } from "./dragReorder";
 import { addProperty, movePropertyInView, updateView } from "./ops";
 import type { DatabaseApi } from "./useDatabase";
 
@@ -66,7 +67,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
     [schema, view],
   );
   const [editing, setEditing] = useState<CellRef | null>(null);
-  const [formulaCell, setFormulaCell] = useState<{ row: DatabaseRow; property: Property; anchor: HTMLElement } | null>(null);
+  const [formulaCell, setFormulaCell] = useState<{ rowId: string; propertyId: string } | null>(null);
   const [menu, setMenu] = useState<{ propertyId: string; anchor: HTMLElement } | null>(null);
   const [pendingMenu, setPendingMenu] = useState<string | null>(null);
   const [addAnchor, setAddAnchor] = useState<HTMLElement | null>(null);
@@ -74,14 +75,12 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
   const [calcMenu, setCalcMenu] = useState<{ property: Property; anchor: HTMLElement } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [widths, setWidths] = useState<Record<string, number>>({});
-  const [dragCol, setDragCol] = useState<string | null>(null);
-  const [dropCol, setDropCol] = useState<{ id: string; side: "left" | "right" } | null>(null);
   const [dragRow, setDragRow] = useState<string | null>(null);
   const [dropRow, setDropRow] = useState<{ id: string; side: "above" | "below" } | null>(null);
   const cells = useRef(new Map<string, HTMLElement>());
   const headers = useRef(new Map<string, HTMLElement>());
   const resize = useRef<{ id: string; startX: number; startWidth: number } | null>(null);
-  const canReorderRows = view.sorts.length === 0 && !db.locked;
+  const canReorderRows = view.sorts.length === 0;
 
   const widthOf = (property: Property) => widths[property.id] ?? view.widths[property.id] ?? defaultWidth(property);
   const template = `34px ${columns.map((p) => `${widthOf(p)}px`).join(" ")} 40px minmax(40px, 1fr)`;
@@ -116,6 +115,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
   const editingAnchor = editing ? cells.current.get(`${editing.rowId}:${editing.propertyId}`) : undefined;
   const editingRow = editing ? rows.find((r) => r.id === editing.rowId) : undefined;
   const editingProperty = editing ? columns.find((p) => p.id === editing.propertyId) : undefined;
+  const formulaProperty = formulaCell ? schema.properties.find((p) => p.id === formulaCell.propertyId) : undefined;
 
   function navigate(from: CellRef, direction: "next" | "prev" | "down") {
     const rowIndex = rows.findIndex((r) => r.id === from.rowId);
@@ -132,7 +132,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
     while (r >= 0 && r < rows.length) {
       while (c >= 0 && c < columns.length) {
         const property = columns[c];
-        if (!db.locked && isEditable(property) && property.type !== "checkbox") {
+        if (isEditable(property) && property.type !== "checkbox") {
           setEditing({ rowId: rows[r].id, propertyId: property.id });
           return;
         }
@@ -190,9 +190,9 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
   }
 
   function onCellClick(row: DatabaseRow, property: Property, element: HTMLElement) {
-    if (db.locked) return;
     if (property.type === "formula") {
-      setFormulaCell({ row, property, anchor: element });
+      // Locked databases keep their formulas; the cell just shows its value.
+      if (!db.locked) setFormulaCell({ rowId: row.id, propertyId: property.id });
       return;
     }
     if (!isEditable(property)) return;
@@ -204,16 +204,16 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
     setEditing({ rowId: row.id, propertyId: property.id });
   }
 
-  function onHeaderDrop(event: DragEvent) {
-    event.preventDefault();
-    const target = dropCol;
-    const source = dragCol;
-    setDragCol(null);
-    setDropCol(null);
-    if (!source || !target || source === target.id) return;
+  /**
+   * Columns reorder with the pointer, not native drag and drop: inside the
+   * editor a native drag also drives the editor's own drop cursor.
+   */
+  function onHeaderDrop(source: string, targetId: string, after: boolean) {
+    if (source === targetId) return;
     const ids = columns.map((p) => p.id);
-    const index = ids.indexOf(target.id);
-    const before = target.side === "left" ? target.id : ids[index + 1] ?? "";
+    const index = ids.indexOf(targetId);
+    const before = after ? ids[index + 1] ?? "" : targetId;
+    if (before === source) return;
     // Hidden properties keep their relative spot; aim at the next visible one.
     movePropertyInView(db, view.id, source, before);
   }
@@ -237,16 +237,10 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
 
   return (
     <div className={`db-table ${view.wrap ? "is-wrap" : ""}`} role="grid" aria-rowcount={rows.length + 1}>
-      {formulaCell ? (
-        <FormulaCellMenu
-          db={db}
-          row={rows.find((item) => item.id === formulaCell.row.id) ?? formulaCell.row}
-          property={formulaCell.property}
-          anchor={formulaCell.anchor}
-          onClose={() => setFormulaCell(null)}
-        />
+      {formulaCell && formulaProperty && !db.locked ? (
+        <FormulaEditor db={db} property={formulaProperty} previewRowId={formulaCell.rowId} onClose={() => setFormulaCell(null)} />
       ) : null}
-      {selected.size && !db.locked ? (
+      {selected.size ? (
         <div className="db-selection-bar" role="toolbar" aria-label="Selected rows">
           <span className="db-selection-count">{selected.size} selected</span>
           <button
@@ -297,31 +291,30 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
                   if (node) headers.current.set(property.id, node);
                   else headers.current.delete(property.id);
                 }}
-                className={`db-th ${dragCol === property.id ? "is-dragging" : ""} ${dropCol?.id === property.id ? `drop-${dropCol.side}` : ""}`}
+                className="db-th"
                 role="columnheader"
-                draggable
-                onDragStart={(event) => {
-                  setDragCol(property.id);
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData("application/x-noteral-column", property.id);
-                }}
-                onDragOver={(event) => {
-                  if (!dragCol) return;
-                  event.preventDefault();
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  const side = event.clientX < rect.left + rect.width / 2 ? "left" : "right";
-                  if (dropCol?.id !== property.id || dropCol.side !== side) setDropCol({ id: property.id, side });
-                }}
-                onDrop={onHeaderDrop}
-                onDragEnd={() => {
-                  setDragCol(null);
-                  setDropCol(null);
-                }}
+                data-reorder-id={db.locked ? undefined : property.id}
+                onPointerDown={
+                  db.locked
+                    ? undefined
+                    : (event) => {
+                        const container = event.currentTarget.parentElement;
+                        if (container) startReorder(event, { axis: "x", container, id: property.id, onDrop: onHeaderDrop });
+                      }
+                }
               >
-                <button type="button" className="db-th-button" onClick={(event) => setMenu({ propertyId: property.id, anchor: event.currentTarget.parentElement as HTMLElement })}>
+                <button
+                  type="button"
+                  className="db-th-button"
+                  onClick={(event) => {
+                    if (consumeDragClick()) return;
+                    setMenu({ propertyId: property.id, anchor: event.currentTarget.parentElement as HTMLElement });
+                  }}
+                >
                   <PropertyIcon property={property} />
                   <span className="db-th-name">{property.name || "Untitled"}</span>
                 </button>
+                {db.locked ? null : (
                 <div
                   className="db-resize"
                   role="separator"
@@ -337,12 +330,15 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
                     autoFit(property);
                   }}
                 />
+                )}
               </div>
             ))}
             <div className="db-th db-th-add" role="columnheader">
-              <button type="button" className="icon-button tiny" aria-label="Add a property" onClick={(event) => setAddAnchor(event.currentTarget)}>
-                <Plus size={14} />
-              </button>
+              {db.locked ? null : (
+                <button type="button" className="icon-button tiny" aria-label="Add a property" onClick={(event) => setAddAnchor(event.currentTarget)}>
+                  <Plus size={14} />
+                </button>
+              )}
             </div>
             <div className="db-th db-th-fill" aria-hidden />
           </div>
@@ -406,7 +402,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
                       if (node) cells.current.set(key, node);
                       else cells.current.delete(key);
                     }}
-                    className={`db-td type-${property.type} ${isTitle ? "is-title" : ""} ${isActive ? "is-editing" : ""} ${isEditable(property) ? "" : "is-readonly"} ${db.locked ? "is-locked" : property.type === "formula" ? "is-formula-cell" : ""}`}
+                    className={`db-td type-${property.type} ${isTitle ? "is-title" : ""} ${isActive ? "is-editing" : ""} ${isEditable(property) ? "" : "is-readonly"} ${property.type === "formula" && !db.locked ? "is-formula-cell" : ""}`}
                     role="gridcell"
                     tabIndex={property.type === "checkbox" ? 0 : -1}
                     onClick={(event) => onCellClick(row, property, event.currentTarget)}
@@ -448,13 +444,11 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
             </div>
           ))}
 
-          {db.locked ? null : (
-            <div className="db-tr db-tnew">
-              <button type="button" className="db-new-row" onClick={onAddRow}>
-                <Plus size={14} /> New page
-              </button>
-            </div>
-          )}
+          <div className="db-tr db-tnew">
+            <button type="button" className="db-new-row" onClick={onAddRow}>
+              <Plus size={14} /> New page
+            </button>
+          </div>
 
           <div className={`db-tr db-tcalc ${hasCalcs ? "has-calcs" : ""}`}>
             <div className="db-td db-gutter" aria-hidden />

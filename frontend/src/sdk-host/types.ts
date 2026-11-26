@@ -52,6 +52,108 @@ export interface EditorSnapshot {
   outline: OutlineItem[];
 }
 
+/** Content facts about a page (pages.stats). Database pages also get `database`. */
+/** A page's background (behind the whole page, not the cover). */
+export interface PageBackgroundInfo {
+  kind: "color" | "gradient" | "image" | "ascii";
+  value?: string;
+  ascii?: { scene: string; speed?: number; ink?: string; density?: "fine" | "normal" | "large"; still?: boolean; cursor?: boolean };
+  opacity?: number;
+  dim?: number;
+}
+
+export interface PageStats {
+  pageId: string;
+  title: string;
+  kind: "page" | "folder" | "database" | "row" | "custom";
+  icon: string;
+  parentId: string;
+  createdAt: string;
+  updatedAt: string;
+  /** 0 for top-level pages. */
+  depth: number;
+  childPages: number;
+  favorite: boolean;
+  /** The page is the one in focus. */
+  active: boolean;
+  /** Counted from the open editor (includes unsaved edits). */
+  open: boolean;
+  words: number;
+  characters: number;
+  charactersNoSpaces: number;
+  blocks: number;
+  paragraphs: number;
+  lines: number;
+  blockTypes: Record<string, number>;
+  headings: { level: number; text: string; blockId: string }[];
+  todos: { total: number; done: number; open: number };
+  links: { url: string; text: string }[];
+  pageLinks: { pageId: string; title: string }[];
+  databases: { id: string; title: string; blockId: string }[];
+  customBlocks: { kind: string; count: number }[];
+  images: number;
+  media: number;
+  files: number;
+  tables: number;
+  codeBlocks: number;
+  quotes: number;
+  readingMinutes: number;
+  speakingMinutes: number;
+  database?: { rows: number; properties: { id: string; name: string; type: string }[]; views: number; viewTypes: string[] };
+}
+
+export interface WorkspaceStats {
+  workspaceId: string | null;
+  workspaceName: string;
+  /** Every live item (pages, databases, rows, folders, custom). */
+  total: number;
+  pages: number;
+  databases: number;
+  rows: number;
+  folders: number;
+  custom: number;
+  topLevel: number;
+  favorites: number;
+  trashed: number;
+  maxDepth: number;
+  lastEdited: { pageId: string; title: string; updatedAt: string } | null;
+  /** With content: true — totals read from every page's text. */
+  content?: {
+    scanned: number;
+    words: number;
+    characters: number;
+    blocks: number;
+    todos: { total: number; done: number; open: number };
+    longest: { pageId: string; title: string; words: number }[];
+    readingMinutes: number;
+  };
+}
+
+/** What the window shows right now (app.state). */
+export interface AppState {
+  activePageId: string;
+  activeTitle: string;
+  focusedPaneId: string;
+  panes: {
+    id: string;
+    focused: boolean;
+    maximized: boolean;
+    activeTab: string;
+    tabs: { id: string; pageId: string; title: string; kind: "home" | "page" | "folder" | "database" | "row" | "custom"; active: boolean }[];
+  }[];
+  openTabs: number;
+  leftSidebar: { open: boolean; tab: string };
+  rightSidebar: { open: boolean; tab: string };
+  assistantOpen: boolean;
+  /** Open overlay ("palette", "settings", …) or "". */
+  overlay: string;
+  theme: "light" | "dark";
+  online: boolean;
+  window: { width: number; height: number };
+  workspaceId: string | null;
+  history: { canGoBack: boolean; canGoForward: boolean };
+}
+
 export interface PageInfo {
   id: string;
   title: string;
@@ -495,14 +597,39 @@ export interface SidebarInfo {
 }
 
 export interface StatusWidgetInfo {
+  /** Use this key with statusBar.setItem / statusBar.configure (built-ins: "builtin:<id>"). */
   key: string;
   id: string;
-  side: "left" | "right";
+  /** Where it shows now (after the layout). */
+  side: "left" | "center" | "right";
   order: number;
   builtin: boolean;
   text?: string;
   kind: "builtin" | "text" | "html";
   owner?: ContributionOwnerInfo;
+  /** Hidden by the layout (built-ins "local", "page" and "clock" start hidden). */
+  hidden?: boolean;
+  width?: number | string;
+}
+
+export interface StatusItemLayoutInfo {
+  hidden?: boolean;
+  side?: "left" | "center" | "right";
+  order?: number;
+  width?: number | string;
+  align?: "start" | "center" | "end";
+}
+
+export interface StatusBarLayoutInfo {
+  hidden?: boolean;
+  separator: "none" | "line" | "dot" | "slash" | "space";
+  gap?: number;
+  height?: number;
+  padding?: number;
+  fontSize?: number;
+  items: Record<string, StatusItemLayoutInfo>;
+  /** Every item with its effective placement. */
+  widgets: StatusWidgetInfo[];
 }
 
 export interface BlockTypeInfo {

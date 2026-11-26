@@ -402,7 +402,7 @@ export interface DatabaseSchema {
   titleName: string;
   properties: Property[];
   views: DatabaseView[];
-  /** Locked databases keep their rows as they are: no cell edits, new, moved or removed rows. Properties and views can still change. */
+  /** Locked databases keep their structure: no new properties, formula edits, or column moves/resizes. Rows and cells still change. */
   locked?: boolean;
 }
 

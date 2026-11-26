@@ -39,12 +39,14 @@ interface SourcePickerProps {
   onPick: (databaseId: string) => void;
   /** Adds a "New database" row on top. */
   onNew?: () => void;
+  /** Text of the `onNew` row. */
+  newLabel?: string;
   label?: string;
   footer?: ReactNode;
 }
 
 /** A searchable list of databases, used to pick a view's source. */
-export function SourcePicker({ current, onPick, onNew, label = "Select a source", footer }: SourcePickerProps) {
+export function SourcePicker({ current, onPick, onNew, newLabel = "New database", label = "Select a source", footer }: SourcePickerProps) {
   const sources = useDatabaseSources();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -90,7 +92,7 @@ export function SourcePicker({ current, onPick, onNew, label = "Select a source"
         {onNew ? (
           <button type="button" role="option" aria-selected={active === 0} className={`db-menu-item ${active === 0 ? "is-active" : ""}`} onMouseEnter={() => setActive(0)} onClick={() => pick(0)}>
             <Plus size={14} />
-            <span className="db-menu-item-text">New database</span>
+            <span className="db-menu-item-text">{newLabel}</span>
           </button>
         ) : null}
         {items.map((item, index) => {

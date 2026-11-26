@@ -8,7 +8,6 @@
  */
 import {
   BOARD_GROUP_TYPES,
-  parseSchema,
   DATE_RANGES,
   OPEN_MODES,
   RELATIVE_DATES,
@@ -651,6 +650,7 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
     const index = schema.properties.findIndex((item) => item.id === id);
     const from = schema.properties[index];
     let next: Property = structuredClone(from);
+    if (schema.locked && (p.formula !== undefined || (p.type && p.type !== from.type))) assertUnlocked(meta, schema, "its formulas and property types can't change");
     if (typeof p.name === "string" && p.name.trim()) {
       const name = p.name.trim().slice(0, 100);
       const clash = schema.properties.some((item) => item.id !== id && item.name.toLowerCase() === name.toLowerCase()) || name.toLowerCase() === schema.titleName.toLowerCase();
@@ -804,7 +804,6 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
       const row = requireMeta(rowId, "Row");
       const parent = row.parentId ? findMeta(row.parentId) : undefined;
       if (!parent || parent.kind !== "database") throw new Error(`"${displayTitle(rowId)}" is not a database row.`);
-      assertUnlocked(parent, parseSchema(parent.data));
       if (row.deletedAt) continue;
       await store().trashPage(rowId, { quiet: true });
       deleted += 1;

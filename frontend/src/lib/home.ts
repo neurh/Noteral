@@ -259,11 +259,19 @@ export interface HomePrefs {
   defaultView?: string;
   /** Background per view key (see homeViewKey). */
   backgrounds: Record<string, HomeBackgroundSettings>;
+  /**
+   * Per-page backgrounds keyed by page id. Owned and validated by
+   * lib/pageBackgroundModel.ts; kept here only so it persists with the
+   * workspace's UI settings.
+   */
+  pageBackgrounds?: Record<string, unknown>;
 }
 
 export const DEFAULT_HOME_BACKGROUND: HomeBackgroundSettings = { background: "paper" };
 const VIEW_KEY = /^[\w-]{1,40}$/;
 const MAX_PREF_BACKGROUNDS = 64;
+const PAGE_KEY = /^[\w.:-]{1,80}$/;
+const MAX_PAGE_BACKGROUND_ENTRIES = 500;
 
 /** The key a tab's background is stored under: its template, or its custom view id. */
 export function homeViewKey(settings: Pick<HomeTabSettings, "template" | "view">): string {
@@ -288,6 +296,11 @@ export function normalizeHomePrefs(value: unknown): HomePrefs {
     for (const [key, bg] of Object.entries(backgrounds).slice(0, MAX_PREF_BACKGROUNDS)) {
       if (VIEW_KEY.test(key) && asObject(bg)) out.backgrounds[key] = normalizeHomeBackground(bg);
     }
+  }
+  const pages = asObject(v.pageBackgrounds);
+  if (pages) {
+    const kept = Object.entries(pages).filter(([key, bg]) => PAGE_KEY.test(key) && asObject(bg)).slice(0, MAX_PAGE_BACKGROUND_ENTRIES);
+    if (kept.length) out.pageBackgrounds = Object.fromEntries(kept);
   }
   return out;
 }

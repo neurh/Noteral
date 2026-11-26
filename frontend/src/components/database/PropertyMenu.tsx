@@ -294,7 +294,7 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
             ) : null}
           </>
         ) : null}
-        {onInsert ? (
+        {onInsert && !db.locked ? (
           <>
             <div className="db-menu-sep" />
             <button type="button" className="db-menu-item" onClick={() => { close(); onInsert("left"); }}>
@@ -308,9 +308,11 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
         {!isTitle ? (
           <>
             <div className="db-menu-sep" />
-            <button type="button" className="db-menu-item" onClick={() => { duplicateProperty(db, property.id, view?.id); close(); }}>
-              <Copy size={14} /> Duplicate property
-            </button>
+            {db.locked ? null : (
+              <button type="button" className="db-menu-item" onClick={() => { duplicateProperty(db, property.id, view?.id); close(); }}>
+                <Copy size={14} /> Duplicate property
+              </button>
+            )}
             <button
               type="button"
               className="db-menu-item danger"

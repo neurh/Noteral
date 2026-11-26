@@ -30,6 +30,7 @@ import { useCustomizations } from "../lib/customizations";
 import { useAppStore } from "../store";
 import { CreatedLayers } from "./CreatedLayers";
 import { PluginOptions, usePluginOptionFields } from "./PluginOptions";
+import { pluginConfigure, usePluginConfigure } from "../lib/pluginConfigure";
 import { Modal } from "./Modal";
 
 type Tab = "installed" | "community" | "created" | "bundled";
@@ -519,6 +520,8 @@ function InstalledRow({ plugin, busy, reviewing, runtimeError, update, onToggle,
   const repo = manifest.repo || (plugin.source.startsWith("github:") ? plugin.source.slice(7) : "");
   const optionFields = usePluginOptionFields(manifest);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  usePluginConfigure();
+  const hasPage = plugin.enabled && pluginConfigure.hasPage(manifest.id);
   return (
     <article className={`plugin-row${plugin.enabled ? " enabled" : ""}${plugin.problem || runtimeError ? " has-problem" : ""}`}>
       <div className="plugin-row-main">
@@ -547,11 +550,11 @@ function InstalledRow({ plugin, busy, reviewing, runtimeError, update, onToggle,
         {optionsOpen && optionFields.length ? <PluginOptions manifest={manifest} /> : null}
       </div>
       <div className="plugin-row-side">
-        {optionFields.length ? (
+        {optionFields.length || hasPage ? (
           <button
             type="button"
             className={`icon-button plugin-options-toggle${optionsOpen ? " active" : ""}`}
-            onClick={() => setOptionsOpen((open) => !open)}
+            onClick={() => (hasPage ? pluginConfigure.open(manifest.id) : setOptionsOpen((open) => !open))}
             aria-expanded={optionsOpen}
             title={`${manifest.name} options`}
             aria-label={`${manifest.name} options`}

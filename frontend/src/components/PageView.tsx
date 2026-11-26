@@ -5,7 +5,6 @@ import {
   BasicTextStyleButton,
   FormattingToolbar,
   FormattingToolbarController,
-  SideMenuController,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   getFormattingToolbarItems,
@@ -34,11 +33,13 @@ import { RowProperties } from "./database/RowProperties";
 import { FolderView } from "./FolderView";
 import { pageLinkSpec } from "./PageLink";
 import { PageIcon, parsePageIcon } from "./PageIcon";
+import { PageBackdrop } from "./PageBackdrop";
+import { usePageBackground } from "../lib/pageBackground";
 import { PagePickerDialog } from "./PagePickerDialog";
 import { FindBar, type FindRequest } from "./FindBar";
 import { rankSlashItems } from "../lib/slashMenu";
 import { blockSelectionExtension } from "../lib/blockActions";
-import { NoteralSideMenu } from "./BlockHandleMenu";
+import { NoteralSideMenuController } from "./BlockHandleMenu";
 import { useBlockMarquee } from "./useBlockMarquee";
 
 const IconPickerDialog = lazy(() => import("./IconPickerDialog").then((module) => ({ default: module.IconPickerDialog })));
@@ -192,6 +193,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   const canRepositionCover = isPositionableCover(page.cover);
   const cover = coverStyle(withCoverPosition(page.cover, coverOffset.x, coverOffset.y));
   const icon = parsePageIcon(page.icon) ? page.icon : "";
+  const pageBackground = usePageBackground(page.id);
   const kind = page.kind;
   const nodeData = useAppStore((state) => (kind === "custom" ? state.pages.find((item) => item.id === page.id)?.data : undefined));
   const nodeType = useNodeType(nodeData);
@@ -702,7 +704,8 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
   }
 
   return (
-    <div className={`page-pane ${active ? "active" : ""}`} aria-hidden={!active}>
+    <div className={`page-pane ${active ? "active" : ""} ${pageBackground ? "has-page-bg" : ""}`} aria-hidden={!active}>
+      {pageBackground ? <PageBackdrop background={pageBackground} active={active} /> : null}
       {find && kind === "page" ? (
         <FindBar editor={editor} request={find} scrollRef={scrollRef} onClose={() => setFind(null)} />
       ) : null}
@@ -826,7 +829,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
               className="noteral-editor"
               onChange={onChange}
             >
-              <SideMenuController sideMenu={NoteralSideMenu} />
+              <NoteralSideMenuController />
               <FormattingToolbarController formattingToolbar={EditorFormattingToolbar} />
               <SuggestionMenuController
                 triggerCharacter="/"

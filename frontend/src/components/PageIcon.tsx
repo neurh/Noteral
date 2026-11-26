@@ -1,4 +1,5 @@
 import { createElement, type CSSProperties, type ReactNode } from "react";
+import { safeImageLink } from "../lib/covers";
 import { ICON_NODES } from "../lib/iconNodes";
 
 interface PageIconProps {
@@ -40,6 +41,10 @@ export function parsePageIcon(value: string | undefined): ParsedPageIcon | null 
     return name ? { kind: "lucide", name, color: match?.[2] } : null;
   }
   if (raw.startsWith("emoji:")) return { kind: "emoji", char: raw.slice(6) };
+  if (raw.startsWith("link:")) {
+    const src = safeImageLink(raw.slice(5));
+    return src ? { kind: "image", src } : null;
+  }
   const asset = raw.startsWith("upload:") ? raw.slice(7) : raw;
   if (asset.startsWith("/__assets/") && !/["\\\n\r]/.test(asset)) return { kind: "image", src: asset };
   if (raw.length <= 12 && !/[/:.]/.test(raw)) return { kind: "emoji", char: raw };
@@ -92,7 +97,7 @@ export function PageIcon({ value, size = 16, className = "", fallback = null }: 
 
   return (
     <span className={`page-icon page-icon-image ${className}`} aria-hidden="true">
-      <img src={parsed.src} alt="" width={size} height={size} style={{ width: size, height: size }} />
+      <img src={parsed.src} alt="" referrerPolicy="no-referrer" width={size} height={size} style={{ width: size, height: size }} />
     </span>
   );
 }
