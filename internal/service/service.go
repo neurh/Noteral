@@ -25,7 +25,7 @@ import (
 )
 
 // Version is the application version displayed in Settings/About.
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 // AppService is bound to the webview.
 type AppService struct {

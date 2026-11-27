@@ -551,7 +551,7 @@ export function SettingsDialog() {
                   <h4>Noteral</h4>
                   <p>Notes with a little more room to think.</p>
                 </div>
-                <span className="about-version">v{bootstrap?.version ?? "0.1.0"}</span>
+                <span className="about-version">v{bootstrap?.version ?? "0.1.1"}</span>
               </div>
 
               <dl className="about-facts">
