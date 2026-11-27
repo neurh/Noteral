@@ -31,6 +31,8 @@ export class ApiError extends Error {
 const LEGACY_EQUIVALENTS: Record<string, string[]> = {
   "workspaces.read": ["pages.read"],
   navigation: ["pages.read"],
+  // Local network access includes the internet.
+  network: ["network.local"],
 };
 
 export function hasPermission(granted: readonly string[] | undefined, permission: string | null): boolean {

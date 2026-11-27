@@ -18,6 +18,7 @@ import { customizations } from "../lib/customizations";
 import type { ContributionSet } from "../lib/contributions";
 import { devlog } from "../lib/devlog";
 import { pluginConfigure } from "../lib/pluginConfigure";
+import { pluginExtensions } from "../lib/pluginExtensions";
 import { popups } from "../lib/popups";
 import { loadOptions, onOptionsSaved, optionFields } from "../lib/pluginOptions";
 import { viewHub } from "../lib/viewFrame";
@@ -56,7 +57,7 @@ export interface PluginRuntimeState {
 type Protocol = 1 | 2;
 
 interface Pending {
-  resolve: () => void;
+  resolve: (value?: unknown) => void;
   reject: (error: Error) => void;
   timer: number;
 }
@@ -100,7 +101,7 @@ export interface TrialResult {
   /** Errors and console output from the plugin while it ran. */
   logs: { level: string; message: string }[];
   commands: string[];
-  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; menuItems: string[]; settings: string[]; panels: string[]; statusItems: string[] };
+  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; menuItems: string[]; settings: string[]; overlays: string[]; propertyTypes: string[]; panels: string[]; statusItems: string[] };
   /** App API calls the plugin made while loading. */
   calls: string[];
   /** Write calls that were not run during the test. */
@@ -110,7 +111,9 @@ export interface TrialResult {
 /** During a test run these change only the throwaway frame, so they are allowed. */
 const TRIAL_SAFE = /^(ui\.(setStatus|setPanel|addStyles)|sidebar\.(setTab|removeTab|list)|statusBar\.(setWidget|removeWidget|list)|blocks\.(registerType|unregisterType|listTypes)|nodes\.(registerType|unregisterType|listTypes)|views\.post)$/;
 
-const MESSAGE_LIMIT = 512 * 1024;
+/** Largest message either side may post (JSON length). Keep in sync with ViewFrame's MAX_MESSAGE. */
+export const MESSAGE_LIMIT = 4 * 1024 * 1024;
+const MESSAGE_LIMIT_LABEL = "4 MB";
 const COMMAND_TIMEOUT = 30_000;
 const START_TIMEOUT = 6_000;
 const MAX_DYNAMIC_COMMANDS = 50;
@@ -387,7 +390,7 @@ class PluginRuntimeManager {
     } catch (error) {
       return {
         ok: false, status: "failed", error: errorMessage(error), logs: [], commands: [], calls: [], skipped: [],
-        contributions: { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [], menuItems: [], settings: [], panels: [], statusItems: [] },
+        contributions: { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [], menuItems: [], settings: [], overlays: [], propertyTypes: [], panels: [], statusItems: [] },
       };
     }
     if (!frame) throw new ApiError("Could not start the test frame.", "failed");
@@ -409,6 +412,8 @@ class PluginRuntimeManager {
         nodeTypes: frame.contrib.nodeTypes.map((node) => node.type),
         menuItems: frame.contrib.menuItems.map((item) => `${item.menu}:${item.id}`),
         settings: frame.contrib.settings.map((field) => field.key),
+        overlays: (frame.contrib.overlays ?? []).map((overlay) => overlay.id),
+        propertyTypes: (frame.contrib.propertyTypes ?? []).map((def) => def.type),
         panels: [...frame.panels.keys()],
         statusItems: [...frame.statuses.keys()],
       },
@@ -525,7 +530,34 @@ class PluginRuntimeManager {
     if (!frame.trial) contributions.remove({ kind: "plugin", id: frame.manifest.id });
     popups.closeOwnedBy({ kind: "plugin", id: frame.manifest.id });
     if (!frame.trial) pluginConfigure.forget(frame.manifest.id);
+    if (!frame.trial) pluginExtensions.removeOwner(frame.manifest.id);
     this.rebuild();
+  }
+
+  /** True when the plugin's frame is running and ready. */
+  isRunning(pluginId: string): boolean {
+    return Boolean(this.frames.get(pluginId)?.ready);
+  }
+
+  /**
+   * Calls a handler the plugin registered on its side (suggesters, exposed APIs) and
+   * returns its result. Unlike commands, failures are thrown to the caller, not shown.
+   */
+  invoke(pluginId: string, handler: string, args: unknown, timeoutMs = 10_000): Promise<unknown> {
+    const frame = this.frames.get(pluginId);
+    if (!frame || !frame.ready) return Promise.reject(new ApiError(`Plugin "${pluginId}" is not running.`, "failed"));
+    if (frame.protocol === 1) return Promise.reject(new ApiError(`Plugin "${pluginId}" uses SDK 1.x, which has no callable handlers.`, "failed"));
+    const message = { type: "command", commandId: handler, requestId: "", context: args ?? null };
+    if (messageSize(message) > MESSAGE_LIMIT) return Promise.reject(new ApiError(`Message is larger than ${MESSAGE_LIMIT_LABEL}.`, "invalid_params"));
+    const requestId = `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        frame.pending.delete(requestId);
+        reject(new ApiError(`“${frame.manifest.name}” did not answer in time.`, "failed"));
+      }, Math.max(100, Math.min(timeoutMs, COMMAND_TIMEOUT)));
+      frame.pending.set(requestId, { resolve, reject, timer });
+      this.post(frame, { ...message, requestId });
+    });
   }
 
   // ── commands ─────────────────────────────────────────────────────────────
@@ -622,7 +654,7 @@ class PluginRuntimeManager {
         frame.pending.delete(requestId);
         reject(new Error(`“${frame.manifest.name}” did not finish the command in time.`));
       }, COMMAND_TIMEOUT);
-      frame.pending.set(requestId, { resolve, reject, timer });
+      frame.pending.set(requestId, { resolve: () => resolve(), reject, timer });
       this.post(frame, { type: "command", commandId, requestId, context: context ?? null });
     }).catch((error) => {
       notify(`${frame.manifest.name}: ${errorMessage(error)}`, "error");
@@ -691,7 +723,7 @@ class PluginRuntimeManager {
     const data = event.data;
     if (!isObject(data) || (data.__noteral !== 1 && data.__noteral !== 2)) return;
     if (messageSize(data) > MESSAGE_LIMIT) {
-      if (typeof data.requestId === "string") this.respond(frame, data.requestId, false, null, "Message is larger than 512 KB.");
+      if (typeof data.requestId === "string") this.respond(frame, data.requestId, false, null, `Message is larger than ${MESSAGE_LIMIT_LABEL}.`);
       return;
     }
     switch (data.type) {
@@ -724,7 +756,7 @@ class PluginRuntimeManager {
         if (!pending) return;
         frame.pending.delete(requestId);
         window.clearTimeout(pending.timer);
-        if (data.ok) pending.resolve();
+        if (data.ok) pending.resolve(data.result);
         else pending.reject(new Error(text(data.error, 400) || "The command failed."));
         return;
       }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -67,6 +68,31 @@ func (s *AppService) WebFetch(rawURL string, maxChars int) (web.Page, error) {
 	return s.web.Fetch(ctx, rawURL, maxChars)
 }
 
+// BrowserFrame serves web.FramePath, the pages shown in the in-app browser.
+// A package function rather than a method so it stays out of the bindings.
+func BrowserFrame(s *AppService) http.Handler {
+	return http.HandlerFunc(s.web.ServeFrame)
+}
+
+// BrowserLoad fetches a page for the in-app browser: its readable Markdown,
+// and whether the site allows being shown in a frame.
+func (s *AppService) BrowserLoad(rawURL string) (web.BrowsePage, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return s.web.Browse(ctx, rawURL)
+}
+
+// GetBrowserState returns the workspace's saved browser tabs, bookmarks and
+// history as a JSON object.
+func (s *AppService) GetBrowserState(workspaceID string) (string, error) {
+	return s.store.GetBrowserState(workspaceID)
+}
+
+// SaveBrowserState stores the workspace's browser tabs, bookmarks and history.
+func (s *AppService) SaveBrowserState(workspaceID, doc string) error {
+	return s.store.SaveBrowserState(workspaceID, doc)
+}
+
 // PluginHTTP performs an HTTP request on behalf of a plugin that holds the
 // "network" permission. The permission is re-checked here, not only in the UI.
 func (s *AppService) PluginHTTP(pluginID string, req web.Request) (web.Response, error) {
@@ -74,11 +100,19 @@ func (s *AppService) PluginHTTP(pluginID string, req web.Request) (web.Response,
 	if err != nil {
 		return web.Response{}, err
 	}
-	if !slices.Contains(rt.Manifest.Permissions, "network") {
+	local := slices.Contains(rt.Manifest.Permissions, "network.local")
+	if !local && !slices.Contains(rt.Manifest.Permissions, "network") {
 		return web.Response{}, fmt.Errorf("plugin %s does not have the network permission", pluginID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
+	if local {
+		s.localWebOnce.Do(func() {
+			s.localWeb = web.New()
+			s.localWeb.SetAllowPrivate(true)
+		})
+		return s.localWeb.Do(ctx, req)
+	}
 	return s.web.Do(ctx, req)
 }
 

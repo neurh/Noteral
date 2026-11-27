@@ -137,6 +137,12 @@ func (s *AppService) GetCommunityRelease(repo, expectedID string) (plugins.Relea
 	return s.plugins.FetchRelease(repo, expectedID)
 }
 
+// GetCommunityReadme reads a plugin repository's README for the store's
+// details page. Markdown is empty when the repository has none.
+func (s *AppService) GetCommunityReadme(repo string) (plugins.Readme, error) {
+	return s.plugins.FetchReadme(repo)
+}
+
 // InstallCommunityPlugin installs or updates a plugin from its latest release.
 func (s *AppService) InstallCommunityPlugin(repo, expectedID string, approved []string) (plugins.Info, error) {
 	return s.plugins.InstallFromGitHub(repo, expectedID, approved)
@@ -171,4 +177,40 @@ func (s *AppService) InstallGeneratedPlugin(manifest plugins.Manifest, code, sty
 
 func (s *AppService) GetPluginRuntime(id string) (plugins.Runtime, error) {
 	return s.plugins.Runtime(id)
+}
+
+// GetPluginStorage returns the raw JSON a plugin stored under key ("" if none).
+// scope is "" for global storage or a workspace id.
+func (s *AppService) GetPluginStorage(id, scope, key string) (string, error) {
+	return s.plugins.StorageGet(id, scope, key)
+}
+
+// SetPluginStorage stores raw JSON under key; "" or null deletes it.
+func (s *AppService) SetPluginStorage(id, scope, key, value string) error {
+	return s.plugins.StorageSet(id, scope, key, value)
+}
+
+// DeletePluginStorage removes one key.
+func (s *AppService) DeletePluginStorage(id, scope, key string) error {
+	return s.plugins.StorageDelete(id, scope, key)
+}
+
+// ListPluginStorage lists a plugin's keys in a scope that start with prefix.
+func (s *AppService) ListPluginStorage(id, scope, prefix string) ([]plugins.StorageEntry, error) {
+	return s.plugins.StorageList(id, scope, prefix)
+}
+
+// ClearPluginStorage removes the keys in a scope that start with prefix.
+func (s *AppService) ClearPluginStorage(id, scope, prefix string) (int, error) {
+	return s.plugins.StorageClear(id, scope, prefix)
+}
+
+// GetPluginStorageUsage totals a plugin's storage across scopes.
+func (s *AppService) GetPluginStorageUsage(id string) (plugins.StorageUsage, error) {
+	return s.plugins.StorageUsage(id)
+}
+
+// ReadPluginFile returns a file from a plugin's installed bundle as text or base64.
+func (s *AppService) ReadPluginFile(id, path, encoding string) (string, error) {
+	return s.plugins.ReadBundledFile(id, path, encoding)
 }

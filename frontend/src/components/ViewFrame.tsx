@@ -49,16 +49,23 @@ interface ViewFrameProps {
   onAction?: (name: string, payload: unknown) => void;
   /** The view called noteral.close(value) (modal and popover views). */
   onClose?: (value: unknown) => void;
+  /** The content's natural width in px (status widgets report it, so "auto" width can fit them). */
+  onContentWidth?: (width: number) => void;
   className?: string;
   title: string;
 }
 
-const MAX_MESSAGE = 512 * 1024;
+const MAX_MESSAGE = 4 * 1024 * 1024; // matches MESSAGE_LIMIT in plugins/runtime.ts
 
 /** Methods whose x/y/anchor are positions inside the calling view. */
-const POSITIONED = new Set(["ui.menu", "ui.popover"]);
+const POSITIONED = new Set(["ui.menu", "ui.popover", "ui.updatePopover"]);
 
 function translateToWindow(params: Record<string, unknown>, frame: DOMRect) {
+  // "self": next to the whole view (a status widget's frame, a sidebar card…).
+  if (params.anchor === "self") {
+    params.anchor = { x: frame.left, y: frame.top, width: frame.width, height: frame.height };
+    return;
+  }
   if (typeof params.x === "number") params.x = params.x + frame.left;
   if (typeof params.y === "number") params.y = params.y + frame.top;
   const anchor = params.anchor;
@@ -71,14 +78,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surface, initialHeight, minHeight = 0, maxHeight = 4000, onData, onAction, onClose, className, title }: ViewFrameProps) {
+export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surface, initialHeight, minHeight = 0, maxHeight = 4000, onData, onAction, onClose, onContentWidth, className, title }: ViewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight ?? (fill ? 0 : 80));
   const [error, setError] = useState("");
   const theme = useAppStore((state) => state.resolvedTheme);
   const doc = useCustomizations();
-  const latest = useRef({ props, permissions, owner, onData, onAction, onClose });
-  latest.current = { props, permissions, owner, onData, onAction, onClose };
+  const latest = useRef({ props, permissions, owner, onData, onAction, onClose, onContentWidth, viewKey });
+  latest.current = { props, permissions, owner, onData, onAction, onClose, onContentWidth, viewKey };
 
   // Rebuild the document only when the HTML changes; props travel by message.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -110,7 +117,7 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surf
         size = Infinity;
       }
       if (size > MAX_MESSAGE) {
-        if (typeof data.id === "number") post({ type: "response", id: data.id, ok: false, error: "Message is larger than 512 KB." });
+        if (typeof data.id === "number") post({ type: "response", id: data.id, ok: false, error: "Message is larger than 4 MB." });
         return;
       }
       const current = latest.current;
@@ -119,6 +126,7 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surf
           setError("");
           return;
         case "resize":
+          if (typeof data.width === "number" && Number.isFinite(data.width)) current.onContentWidth?.(Math.max(0, Math.round(data.width)));
           if (!fill && typeof data.height === "number") setHeight(Math.max(minHeight, Math.min(maxHeight, Math.round(data.height))));
           return;
         case "error": {
@@ -162,6 +170,7 @@ export function ViewFrame({ viewKey, html, owner, permissions, props, fill, surf
               pluginId: current.owner.kind === "plugin" ? current.owner.id : `${current.owner.kind}:${current.owner.id}`,
               pluginName: current.owner.name,
               permissions: current.permissions,
+              viewKey: current.viewKey,
             });
             post({ type: "response", id, ok: true, result });
           } catch (err) {

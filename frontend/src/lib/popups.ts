@@ -37,7 +37,37 @@ export interface PopupMenuItem {
   keepOpen?: boolean;
 }
 
-export type PopupPlacement = "bottom-start" | "bottom-end" | "top-start" | "top-end" | "right-start" | "left-start";
+export type PopupPlacement =
+  | "bottom-start"
+  | "bottom-end"
+  | "bottom-center"
+  | "top-start"
+  | "top-end"
+  | "top-center"
+  | "right-start"
+  | "right-end"
+  | "right-center"
+  | "left-start"
+  | "left-end"
+  | "left-center"
+  /** The middle of the window (ignores the anchor). */
+  | "center";
+
+export const POPUP_PLACEMENTS: readonly PopupPlacement[] = [
+  "bottom-start",
+  "bottom-end",
+  "bottom-center",
+  "top-start",
+  "top-end",
+  "top-center",
+  "right-start",
+  "right-end",
+  "right-center",
+  "left-start",
+  "left-end",
+  "left-center",
+  "center",
+];
 
 export interface MenuRequest {
   kind: "menu";
@@ -88,8 +118,24 @@ export interface PopoverRequest extends ViewOwner {
   y?: number;
   anchor?: PopupRect;
   placement?: PopupPlacement;
+  /** Gap between the anchor and the popover in px (default 4). */
+  offset?: number;
   width?: number;
   height?: number;
+  /** Cap for a popover that grows with its content (default 70% of the window). */
+  maxHeight?: number;
+  /** A name the opener picks, so it can update, toggle or close this popover later. */
+  name?: string;
+  /** No background, border, radius or shadow: the view paints everything. */
+  bare?: boolean;
+  /** Outside clicks don't close it (Escape still does, unless escape is false). */
+  persistent?: boolean;
+  /** Escape closes it (default true). */
+  escape?: boolean;
+  /** In-app: pointer-downs inside elements matching this selector don't close it (its toggle button). */
+  ignore?: string;
+  /** The popup this one was opened from (kept open while this one is). */
+  parent?: number;
 }
 
 export type PopupRequest = MenuRequest | ModalRequest | PopoverRequest;
@@ -124,11 +170,27 @@ export function lastPointerPosition(): { x: number; y: number } {
   return { x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 3) };
 }
 
+/** The popup ids `id` was opened from, nearest first. */
+function ancestors(id: number | undefined): Set<number> {
+  const out = new Set<number>();
+  while (id !== undefined && !out.has(id)) {
+    out.add(id);
+    const popup = open.find((item) => item.id === id);
+    id = popup?.request.kind === "popover" ? popup.request.parent : undefined;
+  }
+  return out;
+}
+
 function show<T>(request: PopupRequest, closeMenus = true): Promise<T | null> {
-  // A new menu replaces any menu already open (menus are transient); modals stack.
+  // A new menu replaces any menu already open (menus are transient) but leaves popovers alone,
+  // so a popover can open menus. A new popover closes menus and other popovers, except the ones
+  // it was opened from and persistent ones. Modals stack.
   if (closeMenus && request.kind !== "modal") {
-    for (const item of open.filter((popup) => popup.request.kind !== "modal")) item.resolve(null);
-    open = open.filter((popup) => popup.request.kind === "modal");
+    const keep = request.kind === "popover" ? ancestors(request.parent) : new Set<number>();
+    const closes = (popup: OpenPopup) =>
+      popup.request.kind === "menu" || (request.kind === "popover" && popup.request.kind === "popover" && !popup.request.persistent && !keep.has(popup.id));
+    for (const item of open.filter(closes)) item.resolve(null);
+    open = open.filter((popup) => !closes(popup));
   }
   if (open.length >= MAX_OPEN) return Promise.reject(new Error("Too many popups are open."));
   return new Promise<T | null>((resolve) => {
@@ -157,9 +219,29 @@ export const popups = {
   modal(request: Omit<ModalRequest, "kind">): Promise<unknown> {
     return show({ kind: "modal", ...request });
   },
-  popover(request: Omit<PopoverRequest, "kind">): Promise<unknown> {
-    const at = request.anchor || (request.x !== undefined && request.y !== undefined) ? {} : lastPointerPosition();
+  /** Open a popover. With a `name` already open for the same owner it is replaced, or closed when `toggle`. */
+  popover(request: Omit<PopoverRequest, "kind">, options: { toggle?: boolean } = {}): Promise<unknown> {
+    if (request.name) {
+      const existing = popups.findPopover(request.owner, request.name);
+      if (existing) {
+        popups.close(existing.id, null);
+        if (options.toggle) return Promise.resolve(null);
+      }
+    }
+    const at = request.anchor || (request.x !== undefined && request.y !== undefined) || request.placement === "center" ? {} : lastPointerPosition();
     return show({ kind: "popover", ...at, ...request });
+  },
+  /** The open popover an owner named `name`. */
+  findPopover(owner: Pick<PopupOwner, "kind" | "id">, name: string): OpenPopup | undefined {
+    return open.find((popup) => popup.request.kind === "popover" && popup.request.name === name && popup.request.owner.kind === owner.kind && popup.request.owner.id === owner.id);
+  },
+  /** Change an open popover in place (data reaches the view as props, without reloading). */
+  updatePopover(id: number, patch: Partial<Pick<PopoverRequest, "data" | "html" | "width" | "height" | "anchor" | "x" | "y" | "placement">>): boolean {
+    const popup = open.find((item) => item.id === id);
+    if (!popup || popup.request.kind !== "popover") return false;
+    open = open.map((item) => (item.id === id ? { ...item, request: { ...(item.request as PopoverRequest), ...patch } } : item));
+    emit();
+    return true;
   },
   /** Close one popup with a result. */
   close(id: number, value: unknown = null) {
@@ -169,9 +251,15 @@ export const popups = {
     popup.resolve(value ?? null);
     emit();
   },
-  /** Close every popup a plugin or layer opened (when it stops). */
-  closeOwnedBy(owner: Pick<PopupOwner, "kind" | "id">) {
-    const mine = open.filter((popup) => popup.request.kind !== "menu" && popup.request.owner.kind === owner.kind && popup.request.owner.id === owner.id);
+  /** Close every popup a plugin or layer opened (when it stops), or only the popover with `name`. */
+  closeOwnedBy(owner: Pick<PopupOwner, "kind" | "id">, name?: string) {
+    const mine = open.filter(
+      (popup) =>
+        popup.request.kind !== "menu" &&
+        popup.request.owner.kind === owner.kind &&
+        popup.request.owner.id === owner.id &&
+        (name === undefined || (popup.request.kind === "popover" && popup.request.name === name)),
+    );
     if (!mine.length) return;
     for (const popup of mine) popup.resolve(null);
     open = open.filter((popup) => !mine.includes(popup));
@@ -263,7 +351,7 @@ export function normalizeRect(value: unknown): PopupRect | undefined {
 /** Place a box of `size` at a point or next to a rect, flipped and clamped inside the window. */
 export function placePopup(
   size: { width: number; height: number },
-  at: { x?: number; y?: number; anchor?: PopupRect; placement?: PopupPlacement },
+  at: { x?: number; y?: number; anchor?: PopupRect; placement?: PopupPlacement; offset?: number },
   viewport = { width: window.innerWidth, height: window.innerHeight },
   margin = 8,
 ): { left: number; top: number } {
@@ -271,25 +359,30 @@ export function placePopup(
   let left: number;
   let top: number;
   const placement = at.placement ?? "bottom-start";
-  if (at.anchor) {
+  if (placement === "center") {
+    left = (viewport.width - width) / 2;
+    top = (viewport.height - height) / 2;
+  } else if (at.anchor) {
     const a = at.anchor;
-    if (placement === "right-start" || placement === "left-start") {
-      const rightFits = a.x + a.width + 2 + width <= viewport.width - margin;
-      const leftFits = a.x - width - 2 >= margin;
-      top = a.y - 5;
-      if (placement === "right-start") left = rightFits || !leftFits ? a.x + a.width + 2 : a.x - width - 2;
-      else left = leftFits || !rightFits ? a.x - width - 2 : a.x + a.width + 2;
+    if (placement.startsWith("right") || placement.startsWith("left")) {
+      const gap = at.offset ?? 2;
+      const rightFits = a.x + a.width + gap + width <= viewport.width - margin;
+      const leftFits = a.x - width - gap >= margin;
+      top = placement.endsWith("end") ? a.y + a.height - height + 5 : placement.endsWith("center") ? a.y + (a.height - height) / 2 : a.y - 5;
+      if (placement.startsWith("right")) left = rightFits || !leftFits ? a.x + a.width + gap : a.x - width - gap;
+      else left = leftFits || !rightFits ? a.x - width - gap : a.x + a.width + gap;
       if (!rightFits && !leftFits) {
         // Narrow windows: drop below the item, indented, so the parent item stays visible.
         left = a.x + 24;
         top = a.y + a.height + 2;
       }
     } else {
-      const below = a.y + a.height + 4;
-      const above = a.y - height - 4;
+      const gap = at.offset ?? 4;
+      const below = a.y + a.height + gap;
+      const above = a.y - height - gap;
       const wantsTop = placement.startsWith("top");
       top = wantsTop ? (above >= margin ? above : below) : below + height <= viewport.height - margin || above < margin ? below : above;
-      left = placement.endsWith("end") ? a.x + a.width - width : a.x;
+      left = placement.endsWith("end") ? a.x + a.width - width : placement.endsWith("center") ? a.x + (a.width - width) / 2 : a.x;
     }
   } else {
     left = at.x ?? 0;

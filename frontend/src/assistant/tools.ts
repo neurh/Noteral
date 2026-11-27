@@ -60,7 +60,7 @@ const CORE_CONTENT = [
   "pages.create", "pages.edit", "pages.write", "pages.append", "pages.rename", "editor.insertMarkdown", "editor.replaceBlocks",
   "databases.create", "databases.embed", "databases.addProperty", "databases.addRows", "databases.updateRows", "navigation.openPage",
 ];
-const CORE_APP = ["source.edit", "appearance.get", "appearance.setTokens", "appearance.addCss", "plugins.list", "plugins.getSource", "plugins.edit"];
+const CORE_APP = ["source.edit", "appearance.get", "appearance.setTokens", "appearance.addCss", "plugins.list", "plugins.getSource", "plugins.edit", "plugins.docs"];
 
 export const CORE_TOOLS: Record<AssistantMode, readonly string[]> = {
   ask: CORE_READ,
@@ -72,7 +72,7 @@ const GROUP_INFO: Record<string, string> = {
   app: "app info",
   editor: "block-level editing of the open page, undo/redo",
   pages: "tree: move, duplicate, icons, covers, favorites, trash, backlinks",
-  databases: "properties, formulas, rows, views (table/board/calendar/gallery/list/chart/custom), filters, sorts, grouping",
+  databases: "properties, formulas, rows, views (table/board/calendar/gallery/list/chart/custom), filters, sorts, grouping, custom property types (registerPropertyType: own cell look, editor, options)",
   workspaces: "switch/create workspaces",
   navigation: "open pages, back/forward",
   tabs: "open tabs",
@@ -83,18 +83,18 @@ const GROUP_INFO: Record<string, string> = {
   preferences: "editor/app preferences",
   appearance: "theme tokens, component styles, CSS, layers",
   commands: "list/run app commands",
-  ui: "notify, confirm, prompt, pick, status, panels",
+  ui: "notify, confirm, prompt, pick, status, panels, floating overlays above the app (setOverlay: HUDs, timers, sticky notes, full-window effects)",
   clipboard: "read/write clipboard",
   web: "web search and fetch",
   network: "HTTP requests",
   sidebar: "right-sidebar tabs (HTML/Markdown views), groups",
-  statusBar: "status bar widgets",
+  statusBar: "status bar widgets: text/icon/badge/progress/HTML, width auto/fill/%, a popup on click, live updateWidget",
   menus: "items in page/tree/block/tab/status menus",
   blocks: "custom block types (HTML) and inserting them",
   nodes: "custom page types (full-page HTML views)",
   home: "Home views, widgets (incl. HTML), backgrounds",
   views: "messages to HTML views",
-  plugins: "install, test, edit, logs, enable/disable plugins",
+  plugins: "install, test, edit, logs, enable/disable plugins; plugins.docs = plugin guide + full API reference",
   source: "read/patch the text of anything built",
 };
 
@@ -240,6 +240,7 @@ const VERBS: Record<string, [string, string]> = {
   "layout.setPanels": ["Changing the layout", "Changed the layout"],
   "plugins.create": ["Building a plugin", "Built a plugin"],
   "plugins.getSource": ["Reading plugin code", "Read plugin code"],
+  "plugins.docs": ["Reading the plugin docs", "Read the plugin docs"],
   "commands.execute": ["Running a command", "Ran a command"],
 };
 

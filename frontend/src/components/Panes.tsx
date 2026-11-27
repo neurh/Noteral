@@ -11,7 +11,7 @@ import {
   type PaneNode,
   type SplitNode,
 } from "../lib/panes";
-import { isHomeTab, useAppStore } from "../store";
+import { isVirtualTab, useAppStore } from "../store";
 import { EditorStack } from "./EditorStack";
 import { PageHeader } from "./PageHeader";
 import { TabStrip } from "./TabStrip";
@@ -126,7 +126,7 @@ function PaneView({ pane }: { pane: PaneNode }) {
   const [zone, setZone] = useState<PaneDropZone | null>(null);
   // Every pane with a page shows its own header, focused or not, so the page
   // chrome does not jump around when focus moves between panes.
-  const showHeader = Boolean(pane.activeTabId) && !isHomeTab(pane.activeTabId);
+  const showHeader = Boolean(pane.activeTabId) && !isVirtualTab(pane.activeTabId);
 
   const zoneFor = (event: ReactDragEvent): PaneDropZone => {
     const rect = bodyRef.current?.getBoundingClientRect();

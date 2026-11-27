@@ -10,6 +10,8 @@ import "./styles/home.css";
 import "./styles/home-custom.css";
 import "./styles/extensions.css";
 import "./styles/assistant.css";
+import "./styles/browser.css";
+import "./styles/editor-toolbars.css";
 import App from "./App";
 
 const root = document.getElementById("root");

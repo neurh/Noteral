@@ -1,3 +1,4 @@
+import { contributions } from "../../lib/contributions";
 import { renameRefs } from "../../lib/formula";
 import {
   BOARD_GROUP_TYPES,
@@ -28,12 +29,14 @@ export function findView(schema: DatabaseSchema, viewId: string): DatabaseView |
 export function addProperty(
   db: DatabaseApi,
   type: PropertyType,
-  options: { viewId?: string; beside?: string; side?: "left" | "right"; name?: string } = {},
+  options: { viewId?: string; beside?: string; side?: "left" | "right"; name?: string; customType?: string } = {},
 ): Property {
+  const custom = type === "custom" && options.customType ? contributions.current().propertyTypeMap.get(options.customType) : undefined;
   const property: Property = {
     id: uid("prop"),
-    name: uniquePropertyName(db.schema, options.name ?? typeName(type)),
+    name: uniquePropertyName(db.schema, options.name ?? custom?.title ?? typeName(type)),
     type,
+    ...(type === "custom" && options.customType ? { customType: options.customType } : {}),
     ...(hasOptions(type) ? { options: type === "status" ? defaultStatusOptions() : [] } : {}),
     ...(type === "number" ? { format: "number" as const } : {}),
   };
@@ -119,9 +122,9 @@ export function renameProperty(db: DatabaseApi, propertyId: string, name: string
 }
 
 /** Changes a property's type and converts every row's value. */
-export function changePropertyType(db: DatabaseApi, propertyId: string, type: PropertyType) {
+export function changePropertyType(db: DatabaseApi, propertyId: string, type: PropertyType, customType?: string) {
   const from = db.schema.properties.find((p) => p.id === propertyId);
-  if (!from || from.type === type) return;
+  if (!from || (from.type === type && (type !== "custom" || from.customType === customType))) return;
   const options = optionsForTypeChange(from, type, db.rows);
   const to: Property = {
     ...from,
@@ -132,6 +135,13 @@ export function changePropertyType(db: DatabaseApi, propertyId: string, type: Pr
   };
   if (!hasOptions(type)) delete to.options;
   if (type !== "number" && type !== "formula") delete to.display;
+  if (type === "custom" && customType) {
+    if (from.customType !== customType) delete to.config;
+    to.customType = customType;
+  } else {
+    delete to.customType;
+    delete to.config;
+  }
   db.updateSchema((schema) => {
     const index = schema.properties.findIndex((p) => p.id === propertyId);
     if (index >= 0) schema.properties[index] = to;

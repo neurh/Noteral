@@ -34,6 +34,9 @@ type AppService struct {
 	plugins *plugins.Manager
 	ai      *ai.Manager
 	web     *web.Client
+	// localWeb may dial loopback and private addresses; only for plugins holding "network.local".
+	localWeb     *web.Client
+	localWebOnce sync.Once
 	info    datadir.Info
 	app     *application.App
 	flush   chan struct{}

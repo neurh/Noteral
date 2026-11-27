@@ -1,5 +1,6 @@
-import { FileText, Layers, Puzzle, Settings } from "lucide-react";
-import { useAppStore, type LeftTab } from "../store";
+import { FileText, Globe, Layers, Puzzle, Settings } from "lucide-react";
+import { isWebTab, useAppStore, type LeftTab } from "../store";
+import { showBrowser } from "../browser/open";
 
 // Search lives in the top bar (and Ctrl+K), the library in Settings and the
 // command palette, so the rail keeps only the page tree up top and the
@@ -26,6 +27,7 @@ export function Rail() {
   const setLeftTab = useAppStore((state) => state.setLeftTab);
   const updateSettings = useAppStore((state) => state.updateSettings);
 
+  const browsing = useAppStore((state) => isWebTab(state.activeTabId));
   const treeVisible = leftOpen && leftTab === "tree";
   const toggleTree = () => {
     const action = nextTreeAction(leftOpen, leftTab);
@@ -51,6 +53,16 @@ export function Rail() {
           onClick={toggleTree}
         >
           <FileText size={19} strokeWidth={1.8} />
+        </button>
+        <button
+          type="button"
+          className={`rail-button ${browsing ? "current" : ""}`}
+          aria-label="Browser"
+          aria-pressed={browsing}
+          title="Browser (Ctrl+Shift+O)"
+          onClick={() => showBrowser()}
+        >
+          <Globe size={19} strokeWidth={1.8} />
         </button>
       </div>
       <div className="rail-bottom">

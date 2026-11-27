@@ -8,7 +8,8 @@ import { editorBridge } from "../lib/editorBridge";
 import { paneList } from "../lib/panes";
 import { getPageBackground, normalizePageBackground, setPageBackground } from "../lib/pageBackground";
 import { pageContentStats, parseBlocks } from "../lib/pageStats";
-import { isHomeTab } from "../store";
+import { isHomeTab, isWebTab } from "../store";
+import { useBrowserStore } from "../browser/store";
 import { activePageId, displayTitle, findMeta, kindOfMeta, requireMeta, store } from "./handlers";
 import type { CallContext } from "./handlers";
 import type { AppState, PageStats, WorkspaceStats } from "./types";
@@ -175,6 +176,7 @@ export const STATS_HANDLERS: Record<string, Handler> = {
       activeTab: pane.activeTabId,
       tabs: pane.tabs.map((tab) => {
         const home = isHomeTab(tab);
+        if (isWebTab(tab)) return { id: tab, pageId: "", title: useBrowserStore.getState().tab(tab).title, kind: "web" as const, active: tab === pane.activeTabId };
         const meta = home ? undefined : findMeta(tab);
         return { id: tab, pageId: home ? "" : tab, title: home ? "Home" : displayTitle(tab), kind: home ? ("home" as const) : meta ? kindOfMeta(meta) : ("page" as const), active: tab === pane.activeTabId };
       }),

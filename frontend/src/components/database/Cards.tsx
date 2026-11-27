@@ -156,7 +156,7 @@ export function RowCard({ db, view, row, hideProperty, editingTitle, onTitleDone
             {property.type === "checkbox" ? (
               <CheckboxToggle checked={!!cellValue(row, property)} name={property.name} showName onToggle={() => db.setValue(row.id, property.id, !cellValue(row, property))} />
             ) : (
-              <CellDisplay property={property} row={row} compact />
+              <CellDisplay property={property} row={row} compact db={db} />
             )}
           </div>
         ))}
@@ -249,7 +249,7 @@ function ListRow({ db, view, row, editingTitle, onTitleDone }: { db: DatabaseApi
             {property.type === "checkbox" ? (
               <CheckboxToggle checked={!!cellValue(row, property)} name={property.name} onToggle={() => db.setValue(row.id, property.id, !cellValue(row, property))} />
             ) : (
-              <CellDisplay property={property} row={row} compact />
+              <CellDisplay property={property} row={row} compact db={db} />
             )}
           </span>
         ))}

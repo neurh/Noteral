@@ -9,7 +9,7 @@ export type JsonSchema =
   | { type: "boolean"; description?: string; default?: boolean }
   | { type: "array"; description?: string; items: JsonSchema; maxItems?: number }
   | ObjectSchema
-  | { description?: string; anyOf: JsonSchema[] };
+  | { description?: string; anyOf: JsonSchema[]; /** Any JSON value, including null and nested arrays. */ json?: true };
 
 export interface ObjectSchema {
   type: "object";
@@ -28,6 +28,8 @@ export const s = {
   arr: (description: string, items: JsonSchema, maxItems?: number): JsonSchema => ({ type: "array", description, items, ...(maxItems ? { maxItems } : {}) }),
   map: (description: string, values?: JsonSchema): JsonSchema => ({ type: "object", description, properties: {}, additionalProperties: values ?? true }),
   any: (description: string): JsonSchema => ({ description, anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }, { type: "array", items: { type: "string" } }, { type: "object", properties: {}, additionalProperties: true }] }),
+  /** Any JSON value (null, arrays of anything, nested objects). */
+  json: (description: string): JsonSchema => ({ description, json: true, anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }, { type: "array", items: { type: "string" } }, { type: "object", properties: {}, additionalProperties: true }] }),
   obj: (properties: Record<string, JsonSchema>, required: string[] = [], description?: string): ObjectSchema => ({
     type: "object",
     ...(description ? { description } : {}),
@@ -48,6 +50,7 @@ function typeOf(value: unknown): string {
 /** Returns the first problem with `value`, or "" when it matches. Paths read like `params.blocks[2]`. */
 export function validate(schema: JsonSchema, value: unknown, path = "params"): string {
   if ("anyOf" in schema) {
+    if (schema.json) return value === undefined || typeof value === "function" || typeof value === "symbol" || typeof value === "bigint" ? `${path} must be JSON` : "";
     return schema.anyOf.some((option) => validate(option, value, path) === "") ? "" : `${path} has an unsupported type`;
   }
   switch (schema.type) {

@@ -23,8 +23,19 @@ import { DatePicker } from "./DatePicker";
 import { OptionPicker } from "./OptionPicker";
 import { OptionChip } from "./parts";
 import { Popover } from "./Popover";
+import { CustomCellDisplay, CustomViewEditor, customTypeOf } from "./CustomCell";
+
+/** For "custom" properties: the built-in editor its value type uses (none when the type has its own view). */
+function customValueEditor(property: Property): Property | null {
+  if (property.type !== "custom") return null;
+  const def = customTypeOf(property);
+  if (!def || def.editor) return null;
+  return { ...property, type: def.valueType };
+}
 
 export function isInlineEditable(property: Property): boolean {
+  const custom = customValueEditor(property);
+  if (custom) return custom.type === "text" || custom.type === "number";
   return ["text", "number", "url", "email", "phone"].includes(property.type) || property.id === TITLE_ID;
 }
 
@@ -72,7 +83,8 @@ function linkHref(property: Property, text: string): string {
 }
 
 /** Read-only rendering of a property value. */
-export function CellDisplay({ property, row, compact }: { property: Property; row: DatabaseRow; compact?: boolean }) {
+export function CellDisplay({ property, row, compact, db, onEdit }: { property: Property; row: DatabaseRow; compact?: boolean; db?: DatabaseApi; onEdit?: (anchor: HTMLElement) => void }) {
+  if (property.type === "custom") return <CustomCellDisplay property={property} row={row} compact={compact} db={db} onEdit={onEdit} />;
   const value = cellValue(row, property);
   // Number formulas can "show as" a bar / ring / rating / heat like number properties.
   if (property.type === "formula" && property.resultType === "number" && displayStyle(property.display) !== "number" && typeof value === "number") {
@@ -257,6 +269,14 @@ function TextEditor({ property, row, db, anchor, onClose, onNavigate }: CellEdit
 
 /** The editor for a single cell, chosen by property type. */
 export function CellEditor(props: CellEditorProps) {
+  if (props.property.type === "custom") {
+    const def = customTypeOf(props.property);
+    if (!def) return null;
+    if (def.editor) return <CustomViewEditor def={def} property={props.property} row={props.row} db={props.db} anchor={props.anchor} onClose={props.onClose} />;
+    const asValue = customValueEditor(props.property)!;
+    if (asValue.type === "checkbox") return <ToggleNow {...props} />;
+    return <CellEditor {...props} property={asValue} />;
+  }
   const { property, row, db, anchor, onClose } = props;
   if (isInlineEditable(property)) return <TextEditor {...props} />;
   if (property.type === "select" || property.type === "status" || property.type === "multiSelect") {
@@ -285,5 +305,15 @@ export function CellEditor(props: CellEditorProps) {
       </Popover>
     );
   }
+  return null;
+}
+
+/** Checkbox-valued custom cells flip on open (there's nothing to edit). */
+function ToggleNow({ property, row, db, onClose }: CellEditorProps) {
+  useEffect(() => {
+    db.setValue(row.id, property.id, !cellValue(row, property));
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return null;
 }

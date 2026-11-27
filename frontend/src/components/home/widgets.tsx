@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { nativeOpen } from "../../lib/nativeOpen";
 import { Browser } from "@wailsio/runtime";
 import {
   Activity,
@@ -905,9 +906,9 @@ export const BUTTON_ACTION_LABELS: Record<HomeButtonAction, string> = {
 
 export function openExternal(url: string) {
   try {
-    void Browser.OpenURL(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+    void Browser.OpenURL(url).catch(() => nativeOpen(url, "_blank", "noopener,noreferrer"));
   } catch {
-    window.open(url, "_blank", "noopener,noreferrer");
+    nativeOpen(url, "_blank", "noopener,noreferrer");
   }
 }
 

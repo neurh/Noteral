@@ -13,6 +13,10 @@ import { normalizeStatusWidth } from "./statusLayout";
 import type { StatusSide, StatusWidth } from "./statusLayout";
 import { useSyncExternalStore } from "react";
 import type { PanelAction } from "../sdk-host/types";
+import { setCustomValueTypeResolver } from "./database";
+import type { FormulaResultType } from "./database";
+import { POPUP_PLACEMENTS } from "./popups";
+import type { PopupPlacement } from "./popups";
 
 export type OwnerKind = "plugin" | "layer";
 
@@ -38,20 +42,120 @@ export interface SidebarTabDef {
   view: ViewDef;
 }
 
+/** A popover a status widget opens on click, anchored to the widget. */
+export interface StatusPopupDef {
+  html: string;
+  width?: number;
+  height?: number;
+  placement?: PopupPlacement;
+  /** No panel chrome (background, border, shadow): the view paints everything. */
+  bare?: boolean;
+  /** Keep it open on outside clicks (Escape or a second click on the widget closes it). */
+  persistent?: boolean;
+  data?: unknown;
+}
+
+export const STATUS_TONES = ["default", "muted", "accent", "success", "warning", "danger"] as const;
+export type StatusTone = (typeof STATUS_TONES)[number];
+
 export interface StatusWidgetDef {
   id: string;
   text?: string;
   tooltip?: string;
   icon?: string;
-  /** HTML widget, rendered in a small sandboxed frame (height 22px). */
+  /** HTML widget, rendered in a small sandboxed frame (the bar's height). */
   html?: string;
   /** Width: px (HTML widgets default to 120), "auto", "fill" (free space) or "NN%" of the bar. */
   width?: StatusWidth;
+  /** Bounds in px, applied on top of `width` (useful with "fill", "auto" and percentages). */
+  minWidth?: number;
+  maxWidth?: number;
   side: StatusSide;
   /** Lower comes first. */
   order: number;
-  /** A command id to run on click (see commands.list). */
+  /** A command id to run on click (see commands.list). Plugin commands get { source: "status", widget, anchor }. */
   command?: string;
+  /** Click opens this popover next to the widget (a second click closes it). */
+  popup?: StatusPopupDef;
+  /** Small pill after the text, e.g. an unread count. */
+  badge?: string;
+  /** Colour preset for text widgets. */
+  tone?: StatusTone;
+  /** CSS colours (hex, rgb(), hsl(), var(--token) or a name). */
+  color?: string;
+  background?: string;
+  /** 0–1: a thin progress bar along the widget's bottom edge. */
+  progress?: number;
+  /** JSON given to HTML widgets as noteral.props.data; changing it updates the view without reloading. */
+  data?: unknown;
+}
+
+/** Where an overlay sits in the window. "full" covers the whole window. */
+export const OVERLAY_POSITIONS = ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right", "full"] as const;
+export type OverlayPosition = (typeof OVERLAY_POSITIONS)[number];
+export type OverlaySize = number | `${number}%` | "auto";
+
+/**
+ * A floating HTML view above the whole app (it doesn't take space or move anything):
+ * timers, HUDs, sticky notes, focus vignettes, confetti, mini players.
+ */
+export interface OverlayDef {
+  id: string;
+  html: string;
+  title?: string;
+  position: OverlayPosition;
+  /** Distance from the window edge in px (default 16; 0 for "full"). */
+  x?: number;
+  y?: number;
+  /** px, "NN%" of the window, or "auto" (height only: grows with the content). */
+  width?: OverlaySize;
+  height?: OverlaySize;
+  /** false: clicks pass through to the app underneath (pure decoration). Default true. */
+  interactive?: boolean;
+  /** Show a drag grip so the user can move it (the position is remembered on this device). */
+  draggable?: boolean;
+  /** Panel chrome (background, border, radius, shadow). Default false: fully transparent. */
+  chrome?: boolean;
+  opacity?: number;
+  /** "app" (default): above the app, below menus and dialogs. "top": above everything. */
+  stack?: "app" | "top";
+  /** Stacking among overlays; higher is on top. */
+  order: number;
+  hidden?: boolean;
+  /** JSON given to the view as noteral.props.data; changes arrive without reloading. */
+  data?: unknown;
+}
+
+/**
+ * A database property type contributed by a plugin or layer. Properties of this type are
+ * stored as `{ type: "custom", customType, config }`; their cell values are any JSON (a
+ * primitive, or `{ value, text, ... }` where `value` sorts and filters and `text` searches).
+ */
+export interface PropertyTypeDef {
+  type: string;
+  title: string;
+  icon?: string;
+  description?: string;
+  /** How values sort, filter, group and calculate. */
+  valueType: FormulaResultType;
+  /**
+   * Cell HTML template: {{value}}, {{text}}, {{config.key}}, {{value.key}}, {{#if x}}…{{else}}…{{/if}},
+   * {{#each list}}…{{this}}…{{/each}}, {{#repeat n}}…{{/repeat}}. Values are escaped; markup is sanitized
+   * and rendered in a shadow root with `css`. Elements with data-value="json" set the cell value
+   * when clicked (stars, toggles, steppers) without opening the editor.
+   */
+  render?: string;
+  css?: string;
+  /** HTML view opened to edit a cell: props { value, config, property, row }; noteral.setData(v) saves, noteral.close() closes. */
+  editor?: string;
+  editorWidth?: number;
+  editorHeight?: number;
+  /** Per-property options, edited in the property menu and passed to templates as config. */
+  config?: SettingFieldDef[];
+  defaultValue?: unknown;
+  /** The owning plugin renders cells in its worker (SDK registerPropertyType({ render })). */
+  renderer?: boolean;
+  align?: "start" | "center" | "end";
 }
 
 export interface BlockTypeDef {
@@ -138,6 +242,8 @@ export interface ContributionSet {
   menuItems: MenuItemDef[];
   /** Options a plugin lets the user edit (plugins only). */
   settings: SettingFieldDef[];
+  overlays: OverlayDef[];
+  propertyTypes: PropertyTypeDef[];
 }
 
 export interface Source extends ContributionSet {
@@ -158,6 +264,8 @@ export type StatusWidgetContribution = StatusWidgetDef & Owned;
 export type BlockTypeContribution = BlockTypeDef & Owned;
 export type NodeTypeContribution = NodeTypeDef & Owned;
 export type MenuItemContribution = MenuItemDef & Owned;
+export type OverlayContribution = OverlayDef & Owned;
+export type PropertyTypeContribution = PropertyTypeDef & Owned;
 
 export interface ContributionSnapshot {
   sidebarTabs: SidebarTabContribution[];
@@ -165,8 +273,11 @@ export interface ContributionSnapshot {
   blockTypes: BlockTypeContribution[];
   nodeTypes: NodeTypeContribution[];
   menuItems: MenuItemContribution[];
+  overlays: OverlayContribution[];
+  propertyTypes: PropertyTypeContribution[];
   blockTypeMap: ReadonlyMap<string, BlockTypeContribution>;
   nodeTypeMap: ReadonlyMap<string, NodeTypeContribution>;
+  propertyTypeMap: ReadonlyMap<string, PropertyTypeContribution>;
 }
 
 export const LIMITS = {
@@ -176,6 +287,8 @@ export const LIMITS = {
   nodeTypes: 20,
   menuItems: 24,
   settings: 40,
+  overlays: 12,
+  propertyTypes: 20,
   html: 400_000,
   markdown: 40_000,
 } as const;
@@ -184,7 +297,7 @@ export const TYPE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 export const LOCAL_ID = /^[a-zA-Z0-9][\w.-]{0,63}$/;
 
 export function emptySet(): ContributionSet {
-  return { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [], menuItems: [], settings: [] };
+  return { sidebarTabs: [], statusWidgets: [], blockTypes: [], nodeTypes: [], menuItems: [], settings: [], overlays: [], propertyTypes: [] };
 }
 
 // ── normalization (stored data and SDK input both go through here) ──────────
@@ -251,9 +364,137 @@ export function normalizeStatusWidget(value: unknown): StatusWidgetDef | undefin
   if (html.trim()) widget.html = html;
   const width = normalizeStatusWidth(value.width);
   if (width !== undefined) widget.width = width;
+  const minWidth = px(value.minWidth, 0, 2000);
+  if (minWidth !== undefined) widget.minWidth = minWidth;
+  const maxWidth = px(value.maxWidth, 16, 4000);
+  if (maxWidth !== undefined) widget.maxWidth = maxWidth;
   const command = optStr(value.command, 160);
   if (command) widget.command = command;
+  const popup = normalizeStatusPopup(value.popup);
+  if (popup) widget.popup = popup;
+  const badge = value.badge === 0 || typeof value.badge === "number" ? String(value.badge) : optStr(value.badge, 24);
+  if (badge) widget.badge = badge;
+  const tone = STATUS_TONES.find((item) => item === value.tone);
+  if (tone && tone !== "default") widget.tone = tone;
+  const color = cssColor(value.color);
+  if (color) widget.color = color;
+  const background = cssColor(value.background);
+  if (background) widget.background = background;
+  const progress = num(value.progress);
+  if (progress !== undefined) widget.progress = Math.max(0, Math.min(1, progress));
+  if (value.data !== undefined && value.data !== null) widget.data = jsonClone(value.data);
   return widget;
+}
+
+
+function normalizeStatusPopup(value: unknown): StatusPopupDef | undefined {
+  if (typeof value === "string") value = { html: value };
+  if (!isObject(value)) return undefined;
+  const html = str(value.html, LIMITS.html);
+  if (!html.trim()) return undefined;
+  const popup: StatusPopupDef = { html };
+  const width = px(value.width, 120, 900);
+  if (width !== undefined) popup.width = width;
+  const height = px(value.height, 40, 900);
+  if (height !== undefined) popup.height = height;
+  const placement = POPUP_PLACEMENTS.find((item) => item === value.placement);
+  if (placement) popup.placement = placement;
+  if (value.bare === true) popup.bare = true;
+  if (value.persistent === true) popup.persistent = true;
+  if (value.data !== undefined && value.data !== null) popup.data = jsonClone(value.data);
+  return popup;
+}
+
+function px(value: unknown, min: number, max: number): number | undefined {
+  const n = num(value);
+  return n === undefined ? undefined : Math.max(min, Math.min(max, Math.round(n)));
+}
+
+const CSS_COLOR = /^(#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/+-]{1,60}\)|var\(--[a-z0-9-]{1,48}\)|color-mix\([a-z0-9\s,%#().-]{1,120}\)|[a-z]{3,24})$/i;
+
+/** A CSS colour value, or undefined if it isn't one of the safe forms. */
+export function cssColor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return CSS_COLOR.test(text) && !/url|expression/i.test(text) ? text : undefined;
+}
+
+function overlaySize(value: unknown, allowAuto: boolean): OverlaySize | undefined {
+  if (allowAuto && value === "auto") return "auto";
+  if (typeof value === "string") {
+    const match = /^\s*(\d{1,3}(?:\.\d+)?)\s*%\s*$/.exec(value);
+    if (match) return `${Math.max(1, Math.min(100, Number(match[1])))}%` as OverlaySize;
+    const pxMatch = /^\s*(\d{1,4})\s*(?:px)?\s*$/.exec(value);
+    if (pxMatch) value = Number(pxMatch[1]);
+  }
+  return px(value, 8, 8000);
+}
+
+export function normalizeOverlay(value: unknown): OverlayDef | undefined {
+  if (!isObject(value)) return undefined;
+  const id = str(value.id, 64);
+  const html = str(value.html, LIMITS.html);
+  if (!LOCAL_ID.test(id) || !html.trim()) return undefined;
+  const position = OVERLAY_POSITIONS.find((item) => item === value.position) ?? "bottom-right";
+  const overlay: OverlayDef = { id, html, position, order: typeof value.order === "number" && Number.isFinite(value.order) ? Math.round(value.order) : 0 };
+  const title = optStr(value.title, 80);
+  if (title) overlay.title = title;
+  const x = px(value.x, -4000, 4000);
+  if (x !== undefined) overlay.x = x;
+  const y = px(value.y, -4000, 4000);
+  if (y !== undefined) overlay.y = y;
+  const width = overlaySize(value.width, false);
+  if (width !== undefined) overlay.width = width;
+  const height = overlaySize(value.height, true);
+  if (height !== undefined) overlay.height = height;
+  if (value.interactive === false) overlay.interactive = false;
+  if (value.draggable === true) overlay.draggable = true;
+  if (value.chrome === true) overlay.chrome = true;
+  const opacity = num(value.opacity);
+  if (opacity !== undefined) overlay.opacity = Math.max(0.05, Math.min(1, opacity));
+  if (value.stack === "top") overlay.stack = "top";
+  if (value.hidden === true) overlay.hidden = true;
+  if (value.data !== undefined && value.data !== null) overlay.data = jsonClone(value.data);
+  return overlay;
+}
+
+const VALUE_TYPES: readonly FormulaResultType[] = ["text", "number", "checkbox", "date"];
+
+export function normalizePropertyType(value: unknown): PropertyTypeDef | undefined {
+  if (!isObject(value)) return undefined;
+  const type = str(value.type, 64);
+  if (!TYPE_ID.test(type)) return undefined;
+  const def: PropertyTypeDef = {
+    type,
+    title: optStr(value.title, 60) ?? type,
+    valueType: VALUE_TYPES.find((item) => item === value.valueType) ?? "text",
+  };
+  const icon = optStr(value.icon, 32);
+  if (icon) def.icon = icon;
+  const description = optStr(value.description, 200);
+  if (description) def.description = description;
+  const render = str(value.render, 40_000);
+  if (render.trim()) def.render = render;
+  const css = str(value.css, 40_000);
+  if (css.trim()) def.css = css;
+  const editor = str(value.editor, LIMITS.html);
+  if (editor.trim()) def.editor = editor;
+  const editorWidth = px(value.editorWidth, 120, 900);
+  if (editorWidth !== undefined) def.editorWidth = editorWidth;
+  const editorHeight = px(value.editorHeight, 40, 900);
+  if (editorHeight !== undefined) def.editorHeight = editorHeight;
+  if (Array.isArray(value.config)) {
+    const fields = uniqueBy(
+      value.config.map(normalizeSettingField).filter((field): field is SettingFieldDef => Boolean(field)),
+      (field) => field.key,
+      20,
+    );
+    if (fields.length) def.config = fields;
+  }
+  if (value.defaultValue !== undefined && value.defaultValue !== null) def.defaultValue = jsonClone(value.defaultValue);
+  if (value.renderer === true) def.renderer = true;
+  if (value.align === "start" || value.align === "center" || value.align === "end") def.align = value.align;
+  return def;
 }
 
 export function normalizeBlockType(value: unknown): BlockTypeDef | undefined {
@@ -391,6 +632,8 @@ export function normalizeSet(value: unknown): ContributionSet {
     nodeTypes: uniqueBy(list(v.nodeTypes, normalizeNodeType), (t) => t.type, LIMITS.nodeTypes),
     menuItems: uniqueBy(list(v.menuItems, normalizeMenuItem), (t) => t.id, LIMITS.menuItems),
     settings: uniqueBy(list(v.settings, normalizeSettingField), (t) => t.key, LIMITS.settings),
+    overlays: uniqueBy(list(v.overlays, normalizeOverlay), (t) => t.id, LIMITS.overlays),
+    propertyTypes: uniqueBy(list(v.propertyTypes, normalizePropertyType), (t) => t.type, LIMITS.propertyTypes),
   };
 }
 
@@ -426,6 +669,8 @@ function build(): ContributionSnapshot {
   const blockTypeMap = new Map<string, BlockTypeContribution>();
   const nodeTypeMap = new Map<string, NodeTypeContribution>();
   const menuItems: MenuItemContribution[] = [];
+  const overlays: OverlayContribution[] = [];
+  const propertyTypeMap = new Map<string, PropertyTypeContribution>();
   for (const [key, source] of sources) {
     const owned = { owner: source.owner, permissions: source.permissions };
     for (const tab of source.sidebarTabs) sidebarTabs.push({ ...tab, ...owned, key: `${key}:${tab.id}` });
@@ -434,16 +679,22 @@ function build(): ContributionSnapshot {
     for (const block of source.blockTypes) if (!blockTypeMap.has(block.type)) blockTypeMap.set(block.type, { ...block, ...owned, key: `${key}:${block.type}` });
     for (const item of source.menuItems ?? []) menuItems.push({ ...item, ...owned, key: `${key}:${item.id}` });
     for (const node of source.nodeTypes) if (!nodeTypeMap.has(node.type)) nodeTypeMap.set(node.type, { ...node, ...owned, key: `${key}:${node.type}` });
+    for (const overlay of source.overlays ?? []) overlays.push({ ...overlay, ...owned, key: `${key}:${overlay.id}` });
+    for (const def of source.propertyTypes ?? []) if (!propertyTypeMap.has(def.type)) propertyTypeMap.set(def.type, { ...def, ...owned, key: `${key}:${def.type}` });
   }
   statusWidgets.sort((a, b) => a.order - b.order);
+  overlays.sort((a, b) => a.order - b.order);
   return {
     sidebarTabs,
     statusWidgets,
     blockTypes: [...blockTypeMap.values()],
     nodeTypes: [...nodeTypeMap.values()],
     menuItems,
+    overlays,
+    propertyTypes: [...propertyTypeMap.values()],
     blockTypeMap,
     nodeTypeMap,
+    propertyTypeMap,
   };
 }
 
@@ -491,6 +742,9 @@ export const contributions = {
     return () => listeners.delete(listener);
   },
 };
+
+// Custom database property types sort and filter as the type they declare.
+setCustomValueTypeResolver((type) => contributions.current().propertyTypeMap.get(type)?.valueType);
 
 export function useContributions(): ContributionSnapshot {
   return useSyncExternalStore(contributions.subscribe, contributions.snapshot, contributions.snapshot);

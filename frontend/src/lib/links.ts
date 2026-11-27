@@ -1,9 +1,11 @@
 import { openExternal } from "../components/home/widgets";
 import { useAppStore } from "../store";
+import { newBrowserTab, shouldOpenInApp } from "../browser/open";
 
 /**
  * Opens a link clicked in rendered Markdown. `noteral://page/<id>` opens a
- * page in the app; web and mail links open in the system browser.
+ * page in the app; web and mail links open in the system browser, or in a
+ * browser tab when "Open links from pages here" is on (the default).
  */
 export function openMarkdownLink(href: string) {
   const page = /^noteral:\/\/page\/([\w-]+)/i.exec(href);
@@ -13,5 +15,6 @@ export function openMarkdownLink(href: string) {
     else state.notify("That page no longer exists.", "error");
     return;
   }
-  if (/^(https?:|mailto:)/i.test(href)) openExternal(href);
+  if (shouldOpenInApp(href)) newBrowserTab(href);
+  else if (/^(https?:|mailto:)/i.test(href)) openExternal(href);
 }

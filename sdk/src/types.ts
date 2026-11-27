@@ -150,7 +150,7 @@ export interface AppState {
     focused: boolean;
     maximized: boolean;
     activeTab: string;
-    tabs: { id: string; pageId: string; title: string; kind: "home" | "page" | "folder" | "database" | "row" | "custom"; active: boolean }[];
+    tabs: { id: string; pageId: string; title: string; kind: "home" | "page" | "web" | "folder" | "database" | "row" | "custom"; active: boolean }[];
   }[];
   openTabs: number;
   leftSidebar: { open: boolean; tab: string };
@@ -342,7 +342,7 @@ export interface WorkspaceInfo {
 export interface TabInfo {
   id: string;
   title: string;
-  kind: "page" | "home";
+  kind: "page" | "home" | "web";
   paneId: string;
   active: boolean;
 }
@@ -492,6 +492,19 @@ export interface PluginInfo {
   source: string;
   permissions: string[];
   problem?: string;
+}
+
+/** plugins.docs: the plugin guide, method reference and types, for writing plugins. */
+export interface PluginDocsResult {
+  /** Matching guide sections (topic), with their text. */
+  sections?: { title: string; text: string }[];
+  /** Method reference (method or namespace), including plugin-only methods. */
+  methods?: { name: string; summary: string; details?: string; permission: string | null; callers: string[]; params?: unknown; returns: string }[];
+  /** Type definitions (type, or the types a looked-up method returns). */
+  types?: Record<string, string>;
+  /** With no arguments: what can be looked up. */
+  index?: { sections: string[]; namespaces: Record<string, number>; events: string[]; permissions: string[] };
+  hint?: string;
 }
 
 export interface PluginSourceInfo {
@@ -751,7 +764,7 @@ export interface PluginTestResult {
   error?: string;
   logs: { level: string; message: string }[];
   commands: string[];
-  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; menuItems: string[]; settings: string[]; panels: string[]; statusItems: string[] };
+  contributions: { sidebarTabs: string[]; statusWidgets: string[]; blockTypes: string[]; nodeTypes: string[]; menuItems: string[]; settings: string[]; overlays: string[]; propertyTypes: string[]; panels: string[]; statusItems: string[] };
   /** App API methods the code called. */
   calls: string[];
   /** Write calls that were skipped during the test. */
@@ -775,4 +788,135 @@ export interface SourceEntry {
   fields: Record<string, number>;
   /** False for plugin-owned items: change them with plugins.edit. */
   editable: boolean;
+}
+
+/** One key in a plugin's private storage (storage.list). */
+export interface StorageEntryInfo {
+  key: string;
+  /** Size of the stored JSON in bytes. */
+  size: number;
+  /** ISO time of the last write. */
+  modified: string;
+}
+
+/** How much a plugin stores across all scopes (storage.usage). */
+export interface StorageUsageInfo {
+  keys: number;
+  bytes: number;
+  maxBytes: number;
+}
+
+/** A running plugin and the methods it exposes to other plugins (plugins.list). */
+export interface PluginApiInfo {
+  id: string;
+  name: string;
+  version: string;
+  /** Methods callable with plugins.call; empty when the plugin exposes none. */
+  methods: string[];
+}
+
+/** One row a suggester returns (Plugin.registerSuggester). */
+export interface SuggestItem {
+  /** Stable id, passed back to onSelect. */
+  id?: string;
+  title: string;
+  /** Second line, e.g. a path or a description. */
+  subtitle?: string;
+  /** Group heading in the menu. */
+  group?: string;
+  /** Text inserted in place of the trigger and query. Defaults to title. Ignored when onSelect handles it. */
+  insert?: string;
+  /** Turn the inserted text into a link: an https URL or noteral://page/<pageId>. */
+  link?: string;
+  /** Any JSON you want back in onSelect. */
+  data?: unknown;
+}
+
+/** Where a suggester was opened. */
+export interface SuggestContext {
+  /** What was typed after the trigger. */
+  query: string;
+  trigger: string;
+  pageId: string | null;
+  blockId: string | null;
+}
+
+/** What a custom property type's template, renderer function and editor view receive. */
+export interface PropertyCellContext {
+  /** The cell's value (for stored `{ value, ... }` objects, their `value`). */
+  value: unknown;
+  /** The stored value as is. */
+  raw: unknown;
+  /** Plain-text form of the value. */
+  text: string;
+  empty: boolean;
+  /** The property's options (the type's config fields, defaults filled in). */
+  config: Record<string, unknown>;
+  property: { id: string; name: string; type: string };
+  row: { id: string; title: string };
+  /** Shown in a card or list (less room). */
+  compact: boolean;
+}
+
+/** A config field of a custom property type, edited in the property's menu. */
+export interface PropertyConfigField {
+  key: string;
+  type: "toggle" | "text" | "textarea" | "number" | "slider" | "select" | "color";
+  label: string;
+  description?: string;
+  default?: unknown;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+  placeholder?: string;
+}
+
+/** this.registerPropertyType(...) in the SDK. */
+export interface PropertyTypeDefinition {
+  /** Stored in databases: keep it stable. */
+  type: string;
+  title?: string;
+  icon?: string;
+  description?: string;
+  /** How values sort, filter, group and calculate. Default "text". */
+  valueType?: "text" | "number" | "checkbox" | "date";
+  /** A cell template string, or a function (runs in the plugin) returning the cell's HTML. */
+  render?: string | ((context: PropertyCellContext) => string | Promise<string>);
+  css?: string;
+  /** HTML view to edit a value in a popover (props: PropertyCellContext). */
+  editor?: string;
+  editorWidth?: number;
+  editorHeight?: number;
+  config?: PropertyConfigField[];
+  defaultValue?: unknown;
+  align?: "start" | "center" | "end";
+}
+
+/** this.addOverlay(...) in the SDK / ui.setOverlay. */
+export interface OverlayDefinition {
+  id: string;
+  html: string;
+  title?: string;
+  position?: "top-left" | "top" | "top-right" | "left" | "center" | "right" | "bottom-left" | "bottom" | "bottom-right" | "full";
+  x?: number;
+  y?: number;
+  width?: number | string;
+  height?: number | string;
+  interactive?: boolean;
+  draggable?: boolean;
+  chrome?: boolean;
+  opacity?: number;
+  stack?: "app" | "top";
+  hidden?: boolean;
+  order?: number;
+  data?: unknown;
+}
+
+/** Payload of page:created, page:deleted (and the base of page:renamed / page:moved). */
+export interface PageEventInfo {
+  pageId: string;
+  title: string;
+  parentId: string | null;
+  kind: string;
 }

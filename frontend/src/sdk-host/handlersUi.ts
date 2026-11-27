@@ -24,12 +24,14 @@ import {
   normalizeBlockType,
   normalizeMenuItem,
   normalizeNodeType,
+  normalizeOverlay,
+  normalizePropertyType,
   normalizeSettingField,
   normalizeSidebarTab,
   normalizeStatusWidget,
   upsert,
 } from "../lib/contributions";
-import type { ContributionOwner, ContributionSet, NodeTypeDef } from "../lib/contributions";
+import type { ContributionOwner, ContributionSet, NodeTypeDef, OverlayContribution, PropertyTypeContribution } from "../lib/contributions";
 import {
   BUILTIN_SIDEBAR_TABS,
   COMPONENTS,
@@ -565,6 +567,29 @@ const STATUS_HANDLERS: Record<string, Handler> = {
       owner: ownerInfo(owner),
     } satisfies StatusWidgetInfo;
   },
+  /**
+   * Change some fields of a widget without resending it (live counters, timers, progress).
+   * null removes a field. HTML widgets get a changed `data` as props without reloading.
+   */
+  "statusBar.updateWidget": async (p, ctx) => {
+    const target = contributionTarget(ctx, p.layer);
+    let next: ReturnType<typeof normalizeStatusWidget>;
+    await editSet(target, ctx, (set) => {
+      const current = set.statusWidgets.find((widget) => widget.id === p.id);
+      if (!current) throw new Error(`No status widget "${p.id}" here. Create it with statusBar.setWidget first.`);
+      const merged: Record<string, unknown> = { ...current };
+      for (const [name, value] of Object.entries(p)) {
+        if (name === "id" || name === "layer") continue;
+        if (value === null) delete merged[name];
+        else merged[name] = value;
+      }
+      next = normalizeStatusWidget(merged);
+      if (!next || (!next.text && !next.html && !next.icon)) throw new Error("A status widget needs text, an icon or html.");
+      const def = next;
+      set.statusWidgets = set.statusWidgets.map((widget) => (widget.id === def.id ? def : widget));
+    });
+    return { key: keyOf(ownerOf(target), String(p.id)), updated: true };
+  },
   "statusBar.removeWidget": async (p, ctx) => {
     const target = contributionTarget(ctx, p.layer);
     let found = false;
@@ -785,7 +810,10 @@ const VIEW_HANDLERS: Record<string, Handler> = {
     const own = viewLayerId(ctx);
     const kind = own ? "layer" : "plugin";
     const id = own ?? ctx.pluginId;
-    const key = typeof p.view === "string" && p.view ? keyOf({ kind, id }, p.view) : undefined;
+    // Accept the full key from the view:message event as well as the plugin-local part.
+    const prefix = keyOf({ kind, id }, "");
+    const view = typeof p.view === "string" ? p.view : "";
+    const key = view ? (view.startsWith(prefix) ? view : keyOf({ kind, id }, view)) : undefined;
     return { delivered: viewHub.message(kind, id, String(p.name), p.payload, key) };
   },
 };
@@ -926,7 +954,115 @@ const PLUGIN_HANDLERS: Record<string, Handler> = {
   },
 };
 
+// ── floating overlays ─────────────────────────────────────────────────────
+
+function overlayInfo(overlay: OverlayContribution) {
+  return {
+    key: overlay.key,
+    id: overlay.id,
+    ...(overlay.title ? { title: overlay.title } : {}),
+    position: overlay.position,
+    stack: overlay.stack ?? "app",
+    interactive: overlay.interactive !== false,
+    ...(overlay.hidden ? { hidden: true } : {}),
+    owner: ownerInfo(overlay.owner),
+  };
+}
+
+/** Merge a patch into a stored def: null removes a field, id/layer are routing only. */
+function patched(current: object, patch: Params): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...(current as Record<string, unknown>) };
+  for (const [name, value] of Object.entries(patch)) {
+    if (name === "id" || name === "layer" || name === "type") continue;
+    if (value === null) delete merged[name];
+    else if (value !== undefined) merged[name] = value;
+  }
+  return merged;
+}
+
+const OVERLAY_HANDLERS: Record<string, Handler> = {
+  "ui.listOverlays": () => contributions.current().overlays.map(overlayInfo),
+  "ui.setOverlay": async (p, ctx) => {
+    const def = normalizeOverlay(p);
+    if (!def) throw new Error("An overlay needs an id (letters, digits, dots, dashes, underscores) and html.");
+    const target = contributionTarget(ctx, p.layer);
+    await editSet(target, ctx, (set) => {
+      set.overlays = upsert(set.overlays ?? [], def, (item) => item.id, LIMITS.overlays, "overlays");
+    });
+    return { key: keyOf(ownerOf(target), def.id), id: def.id };
+  },
+  "ui.updateOverlay": async (p, ctx) => {
+    const target = contributionTarget(ctx, p.layer);
+    await editSet(target, ctx, (set) => {
+      const list = set.overlays ?? [];
+      const current = list.find((item) => item.id === p.id);
+      if (!current) throw new Error(`No overlay "${p.id}" here. Create it with ui.setOverlay first.`);
+      const next = normalizeOverlay(patched(current, p));
+      if (!next) throw new Error("That change leaves the overlay without html.");
+      set.overlays = list.map((item) => (item.id === next.id ? next : item));
+    });
+    return { key: keyOf(ownerOf(target), String(p.id)), updated: true };
+  },
+  "ui.removeOverlay": async (p, ctx) => {
+    const target = contributionTarget(ctx, p.layer);
+    let found = false;
+    await editSet(target, ctx, (set) => {
+      const list = set.overlays ?? [];
+      found = list.some((item) => item.id === p.id);
+      set.overlays = list.filter((item) => item.id !== p.id);
+    });
+    if (!found) throw new Error(`No overlay "${p.id}" here. ui.listOverlays shows every overlay and its owner.`);
+  },
+};
+
+// ── database property types ───────────────────────────────────────────────
+
+function propertyTypeInfo(def: PropertyTypeContribution) {
+  return {
+    key: def.key,
+    type: def.type,
+    title: def.title,
+    valueType: def.valueType,
+    ...(def.icon ? { icon: def.icon } : {}),
+    ...(def.description ? { description: def.description } : {}),
+    editor: Boolean(def.editor),
+    config: (def.config ?? []).map((field) => field.key),
+    owner: ownerInfo(def.owner),
+  };
+}
+
+const PROPERTY_TYPE_HANDLERS: Record<string, Handler> = {
+  "databases.listPropertyTypes": () => contributions.current().propertyTypes.map(propertyTypeInfo),
+  "databases.registerPropertyType": async (p, ctx) => {
+    if (!p.render && !p.renderer) throw new Error("A property type needs a render template (or a renderer function from the SDK).");
+    const def = normalizePropertyType(p);
+    if (!def) throw new Error("Property type ids are lowercase letters, digits, dots, dashes and underscores (max 64).");
+    const taken = contributions.current().propertyTypeMap.get(def.type);
+    const target = contributionTarget(ctx, p.layer);
+    const owner = ownerOf(target);
+    if (taken && (taken.owner.kind !== owner.kind || taken.owner.id !== owner.id)) {
+      throw new Error(`The property type "${def.type}" belongs to ${taken.owner.name}. Pick another id.`);
+    }
+    await editSet(target, ctx, (set) => {
+      set.propertyTypes = upsert(set.propertyTypes ?? [], def, (item) => item.type, LIMITS.propertyTypes, "property types");
+    });
+    return propertyTypeInfo({ ...def, owner, permissions: [], key: keyOf(owner, def.type) } as PropertyTypeContribution);
+  },
+  "databases.unregisterPropertyType": async (p, ctx) => {
+    const target = contributionTarget(ctx, p.layer);
+    let found = false;
+    await editSet(target, ctx, (set) => {
+      const list = set.propertyTypes ?? [];
+      found = list.some((item) => item.type === p.type);
+      set.propertyTypes = list.filter((item) => item.type !== p.type);
+    });
+    if (!found) throw new Error(`No property type "${p.type}" here.`);
+  },
+};
+
 export const UI_HANDLERS: Record<string, Handler> = {
+  ...OVERLAY_HANDLERS,
+  ...PROPERTY_TYPE_HANDLERS,
   ...APPEARANCE_HANDLERS,
   ...ASK_HANDLERS,
   ...SIDEBAR_HANDLERS,

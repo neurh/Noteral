@@ -3,6 +3,7 @@ import {
   Check,
   Copy,
   FolderOpen,
+  Globe,
   HardDrive,
   Info,
   Keyboard,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
 import { defaultSettings, useAppStore } from "../store";
+import { BrowserSettings } from "../browser/BrowserSettings";
 import { Modal } from "./Modal";
 
 const themes = [
@@ -29,12 +31,22 @@ const themes = [
 const sections = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "editor", label: "Editor", icon: Type },
+  { id: "browser", label: "Browser", icon: Globe },
   { id: "data", label: "Data", icon: HardDrive },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "about", label: "About", icon: Info },
 ] as const;
 
-type SectionId = (typeof sections)[number]["id"];
+export type SectionId = (typeof sections)[number]["id"];
+
+let requestedSection: SectionId | null = null;
+
+/** Open Settings, optionally at a section. */
+export function openSettings(section?: SectionId) {
+  requestedSection = section ?? null;
+  window.dispatchEvent(new CustomEvent("noteral:settings-section"));
+  useAppStore.getState().setOverlay("settings");
+}
 
 const saveDelays = [
   { value: 300, label: "Fast" },
@@ -124,6 +136,17 @@ export function SettingsDialog() {
   useEffect(() => {
     setConfirmReset(false);
   }, [section]);
+
+  useEffect(() => {
+    const take = () => {
+      if (!requestedSection) return;
+      setSection(requestedSection);
+      requestedSection = null;
+    };
+    take();
+    window.addEventListener("noteral:settings-section", take);
+    return () => window.removeEventListener("noteral:settings-section", take);
+  }, [open]);
 
   async function copyDataDir() {
     if (!bootstrap?.dataDir) return;
@@ -310,6 +333,12 @@ export function SettingsDialog() {
                   </button>
                 </div>
               </section>
+            </SettingsPane>
+          ) : null}
+
+          {section === "browser" ? (
+            <SettingsPane title="Browser" description="Choose a search engine and a home page, and how sites open in browser tabs.">
+              <BrowserSettings />
             </SettingsPane>
           ) : null}
 

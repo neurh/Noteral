@@ -1,14 +1,12 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, insertOrUpdateBlockForSlashMenu, type Block, type BlockNoteEditor } from "@blocknote/core";
 import { en as englishDictionary } from "@blocknote/core/locales";
 import { TextSelection } from "prosemirror-state";
 import {
-  BasicTextStyleButton,
-  FormattingToolbar,
   FormattingToolbarController,
+  LinkToolbarController,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
-  getFormattingToolbarItems,
   useCreateBlockNote,
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -42,7 +40,10 @@ import { arrangeSlashItems, rankSlashItems } from "../lib/slashMenu";
 import { calloutBlockSpec } from "./CalloutBlock";
 import { blockSelectionExtension } from "../lib/blockActions";
 import { NoteralSideMenuController } from "./BlockHandleMenu";
+import { PluginSuggesters } from "./PluginSuggesters";
 import { useBlockMarquee } from "./useBlockMarquee";
+import { EditorFormattingToolbar, EditorLinkToolbar, formattingToolbarFloating, linkToolbarFloating } from "./EditorToolbars";
+import { openPageLink } from "../browser/open";
 
 const IconPickerDialog = lazy(() => import("./IconPickerDialog").then((module) => ({ default: module.IconPickerDialog })));
 const CoverPickerDialog = lazy(() => import("./CoverPickerDialog").then((module) => ({ default: module.CoverPickerDialog })));
@@ -64,23 +65,6 @@ const dictionary = {
     emptyDocument: "Start writing, or type '/' for commands",
   },
 };
-
-/**
- * BlockNote's toolbar, with inline code beside the other text styles and the
- * link button next to them rather than at the far end.
- */
-function EditorFormattingToolbar() {
-  const items = getFormattingToolbarItems();
-  const link = items.find((item) => item.key === "createLinkButton");
-  const ordered = items.flatMap((item) => {
-    if (item.key === "createLinkButton") return [];
-    if (item.key === "strikeStyleButton") {
-      return [item, <BasicTextStyleButton key="codeStyleButton" basicTextStyle="code" />, ...(link ? [link] : [])];
-    }
-    return [item];
-  });
-  return <FormattingToolbar>{ordered}</FormattingToolbar>;
-}
 
 /** True when the caret sits on the first visual line of the document's first block. */
 function caretAtDocumentTop(view: EditorView): boolean {
@@ -238,6 +222,9 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
       animations: false,
       dictionary,
       extensions: [blockSelectionExtension],
+      // Links are opened by handleEditorLinkClick (browser tab, modifiers,
+      // page links); returning false only stops BlockNote's own window.open.
+      links: { onClick: () => false },
       uploadFile: async (file: File) => {
         if (!workspace) throw new Error("No workspace is open");
         const data = await fileToBase64(file);
@@ -618,6 +605,39 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
     field.setSelectionRange(end, end);
   }
 
+  /**
+   * Links in the text open on click: web links in a browser tab here (Ctrl/⌘ or
+   * middle click: in the background; Shift: the system browser). Alt+click, or
+   * dragging across a link, places the caret / selects instead.
+   */
+  function editorLinkAt(event: ReactMouseEvent<HTMLDivElement>): string | null {
+    if (event.altKey || (event.button !== 0 && event.button !== 1)) return null;
+    const target = event.target instanceof Element ? event.target : null;
+    const href = target?.closest<HTMLAnchorElement>(".bn-inline-content a[href]")?.getAttribute("href") ?? "";
+    return href && !href.startsWith("#") ? href : null;
+  }
+
+  function handleEditorLinkClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const href = editorLinkAt(event);
+    if (!href) return;
+    const modified = event.ctrlKey || event.metaKey || event.shiftKey;
+    // A plain click that ends a drag across the link is selecting, not opening.
+    const selection = window.getSelection();
+    if (event.button === 0 && !modified && selection && !selection.isCollapsed) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openPageLink(href, { background: event.button === 1 || event.ctrlKey || event.metaKey, external: event.shiftKey });
+  }
+
+  // ProseMirror treats Ctrl+mousedown as "select the block" and Shift+mousedown
+  // as "extend the selection"; on a link those clicks mean open instead.
+  function handleEditorLinkMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!(event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1)) return;
+    if (!editorLinkAt(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
   function handleEditorKeyDownCapture(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== "ArrowUp" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
     if (!(event.target as HTMLElement).closest(".ProseMirror")) return;
@@ -921,19 +941,21 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
             {kind === "folder" ? <FolderView folderId={page.id} /> : null}
             {kind === "custom" ? <CustomNodeView pageId={page.id} /> : null}
             {kind === "page" ? (
-            <div className="page-body" onKeyDownCapture={handleEditorKeyDownCapture}>
+            <div className="page-body" onKeyDownCapture={handleEditorKeyDownCapture} onMouseDownCapture={handleEditorLinkMouseDown} onClickCapture={handleEditorLinkClick} onAuxClick={handleEditorLinkClick}>
             <BlockNoteView
               editor={editor}
               theme={theme}
               slashMenu={false}
               formattingToolbar={false}
+              linkToolbar={false}
               sideMenu={false}
               spellCheck={spellcheck}
               className="noteral-editor"
               onChange={onChange}
             >
               <NoteralSideMenuController />
-              <FormattingToolbarController formattingToolbar={EditorFormattingToolbar} />
+              <FormattingToolbarController formattingToolbar={EditorFormattingToolbar} floatingUIOptions={formattingToolbarFloating} />
+              <LinkToolbarController linkToolbar={EditorLinkToolbar} floatingUIOptions={linkToolbarFloating} />
               <SuggestionMenuController
                 triggerCharacter="/"
                 getItems={async (query: string) => {
@@ -952,6 +974,7 @@ export const PageView = memo(function PageView({ page, active }: PageViewProps) 
                   return rankSlashItems(arrangeSlashItems([...defaults, ...customItems, ...blockTypeItems, ...pluginItems]), query);
                 }}
               />
+              <PluginSuggesters editor={editor} pageId={page.id} />
             </BlockNoteView>
             <div className="page-below" aria-hidden="true" />
             </div>

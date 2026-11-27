@@ -138,6 +138,17 @@ export interface PanelContribution {
 }
 
 /**
+ * Readme is a community plugin's README for the store's details page.
+ * ImageBase and LinkBase resolve the relative paths READMEs usually use.
+ */
+export interface Readme {
+    "repo": string;
+    "markdown": string;
+    "imageBase": string;
+    "linkBase": string;
+}
+
+/**
  * RegistryResult is what the store UI renders.
  */
 export interface RegistryResult {
@@ -224,4 +235,22 @@ export interface Update {
     "latest": string;
     "newPermissions"?: string[] | null;
     "problem"?: string;
+}
+
+/**
+ * StorageEntry describes one stored key.
+ */
+export interface StorageEntry {
+    "key": string;
+    "size": number;
+    "modified": string;
+}
+
+/**
+ * StorageUsage reports how much a plugin stores.
+ */
+export interface StorageUsage {
+    "keys": number;
+    "bytes": number;
+    "maxBytes": number;
 }

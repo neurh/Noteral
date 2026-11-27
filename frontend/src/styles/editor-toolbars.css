@@ -1,0 +1,118 @@
+/* The page editor's floating toolbars: the selection toolbar and the link toolbar. */
+
+.noteral-editor .bn-toolbar {
+  align-items: center; gap: 1px; padding: 4px;
+  max-width: calc(100vw - 16px);
+  flex-wrap: wrap; row-gap: 2px; overflow: visible;
+  background: var(--bg-raised); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-family: var(--font-ui);
+  scrollbar-width: none;
+}
+.noteral-editor .bn-toolbar :is(.mantine-Button-root, .mantine-ActionIcon-root) {
+  height: 28px; min-width: 28px;
+  background: transparent; color: var(--text-soft);
+  border-radius: var(--radius-sm);
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.noteral-editor .bn-toolbar .mantine-Button-root { padding: 0 8px; font-size: 13px; font-weight: 520; }
+.noteral-editor .bn-toolbar :is(.mantine-Button-root, .mantine-ActionIcon-root) svg { width: 16px; height: 16px; }
+.noteral-editor .bn-toolbar :is(.mantine-Button-root, .mantine-ActionIcon-root):hover {
+  background: var(--bg-hover); color: var(--text);
+}
+.noteral-editor .bn-toolbar :is(.mantine-Button-root, .mantine-ActionIcon-root)[data-selected] {
+  background: var(--accent-soft); color: var(--accent-deep);
+}
+.noteral-editor .bn-toolbar :is(.mantine-Button-root, .mantine-ActionIcon-root)[data-disabled] {
+  background: transparent; color: var(--text-faint);
+}
+.noteral-editor .bn-toolbar .mantine-Button-section[data-position="left"] { margin-inline-end: 6px; }
+.noteral-editor .bn-toolbar .mantine-Button-section[data-position="right"] { margin-inline-start: 4px; color: var(--text-faint); }
+.noteral-editor .bn-toolbar .mantine-Button-section[data-position="right"] svg { width: 12px; height: 12px; }
+.noteral-editor .bn-formatting-toolbar > .mantine-Button-root:first-child { color: var(--text); }
+
+.editor-toolbar-sep { flex: none; width: 1px; height: 18px; margin: 0 4px; background: var(--border); }
+.editor-toolbar-sep:first-child, .editor-toolbar-sep:last-child, .editor-toolbar-sep + .editor-toolbar-sep { display: none; }
+
+.noteral-editor .bn-toolbar .editor-toolbar-menu { padding: 0 4px 0 6px; }
+.noteral-editor .bn-toolbar .editor-toolbar-menu .mantine-Button-label { gap: 2px; }
+.noteral-editor .bn-toolbar .editor-toolbar-menu svg.editor-toolbar-chevron { width: 11px; height: 11px; color: var(--text-faint); }
+.noteral-editor .bn-toolbar .editor-toolbar-ai { padding: 0 9px 0 7px; color: var(--accent-deep); font-weight: 560; }
+.noteral-editor .bn-toolbar .editor-toolbar-ai .mantine-Button-label { gap: 6px; }
+.noteral-editor .bn-toolbar .editor-toolbar-ai svg { width: 15px; height: 15px; }
+.noteral-editor .bn-toolbar .editor-toolbar-ai:hover { background: var(--accent-softer); color: var(--accent-deep); }
+.noteral-editor .editor-toolbar-dropdown { min-width: 200px; }
+
+/* Tooltips over toolbar buttons. */
+.noteral-editor .bn-tooltip {
+  padding: 5px 9px; border: 0; border-radius: var(--radius-sm);
+  background: var(--bg-inverse); color: var(--bg); box-shadow: var(--shadow-sm);
+  font-family: var(--font-ui);
+}
+.noteral-editor .bn-tooltip .mantine-Text-root { font-size: 12px; line-height: 1.35; font-weight: 520; }
+.noteral-editor .bn-tooltip .mantine-Text-root + .mantine-Text-root { font-size: 11px; font-weight: 450; opacity: 0.7; }
+
+/* BlockNote's "add link" form (the selection toolbar's link button). */
+.noteral-editor .bn-form-popover {
+  padding: 6px; background: var(--bg-raised);
+  border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+}
+.noteral-editor .bn-form-popover .mantine-TextInput-input {
+  height: 32px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--font-ui); font-size: 13px;
+}
+.noteral-editor .bn-form-popover .mantine-TextInput-input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: none; }
+.noteral-editor .bn-form-popover .mantine-TextInput-section { color: var(--text-muted); }
+
+/* Link toolbar. */
+.noteral-editor .link-toolbar { display: flex; align-items: center; gap: 2px; min-width: 0; max-width: min(460px, calc(100vw - 24px)); flex-wrap: nowrap; }
+.link-toolbar-target {
+  display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 320px;
+  height: 30px; padding: 0 10px 0 8px;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text);
+  font: 500 13px/1 var(--font-ui); cursor: pointer; text-align: left;
+}
+.link-toolbar-target:hover { background: var(--bg-hover); }
+.link-toolbar-target:hover .link-toolbar-primary { color: var(--accent-deep); }
+.link-toolbar-target:focus-visible, .link-toolbar-button:focus-visible { outline: none; box-shadow: var(--focus); }
+.link-toolbar-icon { flex: none; display: grid; place-items: center; width: 16px; height: 16px; color: var(--text-muted); }
+.link-toolbar-icon img { width: 14px; height: 14px; border-radius: 3px; }
+.link-toolbar-address { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
+.link-toolbar-primary { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.link-toolbar-secondary { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); font-weight: 430; }
+.link-toolbar-button {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-soft); cursor: pointer;
+}
+.link-toolbar-button:hover { background: var(--bg-hover); color: var(--text); }
+.link-toolbar-button.is-danger:hover { background: var(--danger-soft); color: var(--danger); }
+.link-toolbar-copied { color: var(--success); }
+
+.noteral-editor .link-toolbar.link-edit {
+  flex-direction: column; align-items: stretch; gap: 6px;
+  width: min(360px, calc(100vw - 24px)); padding: 8px;
+}
+.link-edit-field {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--text-muted);
+}
+.link-edit-field:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.link-edit-field input {
+  flex: 1; min-width: 0; padding: 0; border: 0; outline: none; background: transparent;
+  color: var(--text); font: 13px var(--font-ui);
+}
+.link-edit-field input:focus-visible { box-shadow: none; }
+.link-edit-field input::placeholder { color: var(--text-faint); }
+.link-edit-actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.link-edit-hint { flex: 1; min-width: 0; color: var(--text-muted, var(--text-faint)); font: 11.5px var(--font-ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.link-edit-button { height: 28px; }
+.link-edit-button:disabled { opacity: 0.5; cursor: default; }
+
+/* Links in the editor open on click. */
+.noteral-editor .bn-inline-content a[href] { cursor: pointer; }

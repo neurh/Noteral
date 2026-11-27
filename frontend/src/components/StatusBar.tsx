@@ -1,7 +1,7 @@
 import { canConfigure } from "./PluginConfigureDialog";
 import { pluginConfigure } from "../lib/pluginConfigure";
 import { CloudOff, LockKeyhole } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { runMenuItem, useMenuItems } from "./ContributedMenuItems";
 import { commandRegistry } from "../lib/commands";
@@ -9,44 +9,116 @@ import { BUILTIN_STATUS_WIDGETS, useContributions } from "../lib/contributions";
 import type { StatusWidgetContribution } from "../lib/contributions";
 import { customizations, useStatusBarLayout } from "../lib/customizations";
 import { popups } from "../lib/popups";
-import type { PopupMenuItem } from "../lib/popups";
+import type { PopupMenuItem, PopupPlacement, PopupRect } from "../lib/popups";
 import { STATUS_SEPARATORS, isStatusItemHidden, mergeStatusBar, normalizeStatusBar, resolveStatusSlots, statusWidthStyle } from "../lib/statusLayout";
 import type { StatusBarLayout, StatusItemLayout, StatusSeparator, StatusSide, StatusWidth } from "../lib/statusLayout";
-import { usePluginStatuses } from "../plugins/runtime";
+import { pluginRuntime, usePluginStatuses } from "../plugins/runtime";
 import { useAppStore } from "../store";
 import { PageIcon } from "./PageIcon";
 import { ViewFrame } from "./ViewFrame";
 
-type Slot = { key: string; title: string; side: StatusSide; order: number; width?: StatusWidth; node: ReactNode };
+type Slot = {
+  key: string;
+  title: string;
+  side: StatusSide;
+  order: number;
+  width?: StatusWidth;
+  minWidth?: number;
+  maxWidth?: number;
+  node: ReactNode | ((width: StatusWidth | undefined) => ReactNode);
+};
 
-/** Runs a widget's command: an app command id, or a command of the plugin that owns the widget. */
+/** The widget's slot rect, for popups and command contexts. */
+function slotRect(key: string): PopupRect | undefined {
+  const element = document.querySelector(`[data-status-key="${CSS.escape(key)}"]`);
+  if (!element) return undefined;
+  const r = element.getBoundingClientRect();
+  return { x: r.left, y: r.top, width: r.width, height: r.height };
+}
+
+function defaultPlacement(widget: StatusWidgetContribution): PopupPlacement {
+  return widget.side === "left" ? "top-start" : widget.side === "center" ? "top-center" : "top-end";
+}
+
+/** Toggle the widget's own popover (declared with `popup`). */
+export function toggleWidgetPopup(widget: StatusWidgetContribution) {
+  if (!widget.popup) return;
+  const anchor = slotRect(widget.key);
+  void popups.popover(
+    {
+      owner: widget.owner,
+      permissions: widget.permissions,
+      html: widget.popup.html,
+      data: widget.popup.data ?? null,
+      name: `status:${widget.id}`,
+      ...(anchor ? { anchor } : {}),
+      placement: widget.popup.placement ?? defaultPlacement(widget),
+      ...(widget.popup.width ? { width: widget.popup.width } : {}),
+      ...(widget.popup.height ? { height: widget.popup.height } : {}),
+      ...(widget.popup.bare ? { bare: true } : {}),
+      ...(widget.popup.persistent ? { persistent: true } : {}),
+      ignore: `[data-status-key="${widget.key.replace(/["\\]/g, "")}"]`,
+    },
+    { toggle: true },
+  );
+}
+
+/**
+ * Runs a widget's command: an app command id, or a command of the plugin that owns the widget.
+ * Plugin commands get `{ source: "status", widget, anchor }` so they can open a popover next to it.
+ */
 function runWidgetCommand(widget: StatusWidgetContribution) {
   if (!widget.command) return;
-  const command = commandRegistry.get(widget.command) ?? (widget.owner.kind === "plugin" ? commandRegistry.get(`plugin:${widget.owner.id}:${widget.command}`) : undefined);
+  const fail = (error: unknown) => useAppStore.getState().notify(error instanceof Error ? error.message : String(error), "error");
+  const own = widget.owner.kind === "plugin" ? commandRegistry.get(`plugin:${widget.owner.id}:${widget.command}`) : undefined;
+  if (own && widget.owner.kind === "plugin") {
+    const anchor = slotRect(widget.key);
+    void pluginRuntime.runMenuCommand(widget.owner.id, widget.command, { source: "status", widget: widget.id, ...(anchor ? { anchor } : {}) }).catch(fail);
+    return;
+  }
+  const command = commandRegistry.get(widget.command);
   if (!command) {
     useAppStore.getState().notify(`${widget.owner.name}: no command "${widget.command}".`, "error");
     return;
   }
-  void Promise.resolve(command.run()).catch((error: unknown) => {
-    useAppStore.getState().notify(error instanceof Error ? error.message : String(error), "error");
-  });
+  void Promise.resolve(command.run()).catch(fail);
 }
 
-function ContributedWidget({ widget }: { widget: StatusWidgetContribution }) {
+function widgetStyle(widget: StatusWidgetContribution): CSSProperties | undefined {
+  const style: Record<string, string> = {};
+  if (widget.color) style.color = widget.color;
+  if (widget.background) style.background = widget.background;
+  if (widget.progress !== undefined) style["--status-progress"] = `${Math.round(widget.progress * 1000) / 10}%`;
+  return Object.keys(style).length ? (style as CSSProperties) : undefined;
+}
+
+function ContributedWidget({ widget, autoWidth }: { widget: StatusWidgetContribution; autoWidth: boolean }) {
+  const [contentWidth, setContentWidth] = useState<number | null>(null);
+  const props = useMemo(() => ({ data: widget.data ?? null, widget: widget.id }), [widget.data, widget.id]);
   const title = widget.tooltip ? `${widget.tooltip} — ${widget.owner.name}` : widget.owner.name;
+  const tone = widget.tone ? ` tone-${widget.tone}` : "";
+  const progress = widget.progress !== undefined ? <span className="status-widget-progress" aria-hidden="true" /> : null;
   if (widget.html) {
+    const style: CSSProperties = { ...widgetStyle(widget) };
+    if (autoWidth) {
+      style.width = Math.max(16, Math.min(widget.maxWidth ?? 600, contentWidth ?? 24));
+      style.flex = "0 0 auto";
+    }
     return (
-      <span className="status-widget status-widget-html">
+      <span className={`status-widget status-widget-html${tone}${progress ? " has-progress" : ""}`} style={style}>
         <ViewFrame
           surface="status"
           viewKey={widget.key}
           html={widget.html}
           owner={widget.owner}
           permissions={widget.permissions}
+          props={props}
           fill
           className="status-widget-frame"
           title={title}
+          onContentWidth={autoWidth ? setContentWidth : undefined}
         />
+        {progress}
       </span>
     );
   }
@@ -54,17 +126,27 @@ function ContributedWidget({ widget }: { widget: StatusWidgetContribution }) {
     <>
       {widget.icon ? <PageIcon value={widget.icon} size={12} /> : null}
       {widget.text ? <span className="status-widget-text">{widget.text}</span> : null}
+      {widget.badge ? <span className="status-widget-badge">{widget.badge}</span> : null}
+      {progress}
     </>
   );
-  if (widget.command) {
+  const className = `status-widget${tone}${progress ? " has-progress" : ""}${widget.background ? " has-background" : ""}`;
+  if (widget.command || widget.popup) {
     return (
-      <button type="button" className="status-widget is-button" title={title} onClick={() => runWidgetCommand(widget)}>
+      <button
+        type="button"
+        className={`${className} is-button`}
+        title={title}
+        style={widgetStyle(widget)}
+        aria-haspopup={widget.popup ? "dialog" : undefined}
+        onClick={() => (widget.popup ? toggleWidgetPopup(widget) : runWidgetCommand(widget))}
+      >
         {body}
       </button>
     );
   }
   return (
-    <span className="status-widget" title={title}>
+    <span className={className} title={title} style={widgetStyle(widget)}>
       {body}
     </span>
   );
@@ -194,7 +276,9 @@ export function StatusBar() {
       side: widget.side,
       order: widget.order,
       width: widget.width ?? (widget.html ? 120 : undefined),
-      node: <ContributedWidget widget={widget} />,
+      minWidth: widget.minWidth,
+      maxWidth: widget.maxWidth,
+      node: (width) => <ContributedWidget widget={widget} autoWidth={Boolean(widget.html) && width === "auto"} />,
     });
   }
   const slots = resolveStatusSlots(
@@ -203,16 +287,21 @@ export function StatusBar() {
   );
   const separator = layout?.separator ?? "none";
 
+  const grows = (slot: { width?: StatusWidth }) => slot.width === "fill" || (typeof slot.width === "string" && slot.width.endsWith("%"));
+  const growing = new Set(slots.filter(grows).map((slot) => slot.side));
   const side = (which: StatusSide) =>
     slots
       .filter((slot) => slot.side === which)
       .map((slot, index) => {
         const style: CSSProperties = { ...widthStyle(slot.width) };
+        if (slot.minWidth !== undefined) style.minWidth = slot.minWidth;
+        if (slot.maxWidth !== undefined) style.maxWidth = slot.maxWidth;
         if (slot.align) style.justifyContent = slot.align === "start" ? "flex-start" : slot.align === "end" ? "flex-end" : "center";
+        const node = typeof slot.node === "function" ? slot.node(slot.width) : slot.node;
         return (
-          <span key={slot.key} className={`status-slot${slot.width === "fill" ? " is-fill" : ""}`} data-status-key={slot.key} style={style}>
+          <span key={slot.key} className={`status-slot${slot.width === "fill" ? " is-fill" : ""}${grows(slot) ? " is-grow" : ""}`} data-status-key={slot.key} style={style}>
             {index > 0 && separator !== "none" ? <span className={`status-sep status-sep-${separator}`} aria-hidden="true" /> : null}
-            {slot.node}
+            {node}
           </span>
         );
       });
@@ -297,16 +386,17 @@ export function StatusBar() {
   const center = side("center");
 
   return (
-    <footer className={`status-bar status-sep-mode-${separator}`} aria-label="Status" style={barStyle} onContextMenu={openMenu}>
-      <div className="status-left">{side("left")}</div>
-      {center.length ? <div className="status-center">{center}</div> : null}
-      <div className="status-right">{side("right")}</div>
+    <footer className={`status-bar status-sep-mode-${separator}${growing.size ? " has-grow" : ""}`} aria-label="Status" style={barStyle} onContextMenu={openMenu}>
+      <div className={`status-left${growing.has("left") ? " is-grow" : ""}`}>{side("left")}</div>
+      {center.length ? <div className={`status-center${growing.has("center") ? " is-grow" : ""}`}>{center}</div> : null}
+      <div className={`status-right${growing.has("right") ? " is-grow" : ""}`}>{side("right")}</div>
     </footer>
   );
 }
 
 /** Percentages are of the whole bar (the bar is a size container). */
 function widthStyle(width: StatusWidth | undefined): CSSProperties {
-  if (typeof width === "string" && width.endsWith("%")) return { width: `${parseFloat(width)}cqw`, flex: "0 0 auto", minWidth: 0 };
+  // Shrinkable, so "100%" next to other items takes what's left instead of overflowing.
+  if (typeof width === "string" && width.endsWith("%")) return { width: `${parseFloat(width)}cqw`, flex: `0 1 ${parseFloat(width)}cqw`, minWidth: 0 };
   return statusWidthStyle(width) as CSSProperties;
 }

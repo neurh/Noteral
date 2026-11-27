@@ -64,6 +64,7 @@ const TYPE_LABELS: Record<Property["type"], string> = {
   createdTime: "Created",
   lastEdited: "Edited",
   formula: "Formula",
+  custom: "Plugin type",
 };
 
 /** Wraps a name as a property reference ({Name} unless the name has a brace). */

@@ -11,10 +11,13 @@ export type {
     MenuContribution,
     PanelContribution,
     RegistryResult,
+    Readme,
     Release,
     Runtime,
     SettingContribution,
     SettingOption,
     StatusContribution,
+    StorageEntry,
+    StorageUsage,
     Update
 } from "./models.js";

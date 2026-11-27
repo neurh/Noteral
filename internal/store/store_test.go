@@ -660,3 +660,40 @@ func TestHomePrefsPersistAcrossTabSaves(t *testing.T) {
 		t.Fatalf("expected cleared prefs: %s", snap.HomePrefs)
 	}
 }
+
+func TestWebTabsAndBrowserState(t *testing.T) {
+	st, _ := openTestStore(t)
+	if err := st.SaveUITabs("ws_default", []string{"web:abc-1", "pg_welcome", "web:BAD", "web:"}, "web:abc-1", nil, "", nil, nil); err != nil {
+		t.Fatalf("save tabs: %v", err)
+	}
+	snap, err := st.Snapshot("ws_default")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snap.Tabs) != 2 || snap.Tabs[0] != "web:abc-1" || snap.Tabs[1] != "pg_welcome" {
+		t.Fatalf("unexpected tabs: %#v", snap.Tabs)
+	}
+	if snap.ActiveTabID != "web:abc-1" || snap.ActivePageID != "" {
+		t.Fatalf("a browser tab is not a page: active=%q page=%q", snap.ActiveTabID, snap.ActivePageID)
+	}
+	if _, ok := snap.HomeTabs["web:abc-1"]; ok {
+		t.Fatal("browser tabs must not get Home settings")
+	}
+
+	got, err := st.GetBrowserState("ws_default")
+	if err != nil || got != "{}" {
+		t.Fatalf("empty state = %q, %v", got, err)
+	}
+	if err := st.SaveBrowserState("ws_default", ` {"bookmarks":[{"url":"https://a.example"}]} `); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	got, _ = st.GetBrowserState("ws_default")
+	if got != `{"bookmarks":[{"url":"https://a.example"}]}` {
+		t.Fatalf("state = %q", got)
+	}
+	for _, bad := range []string{"", "[]", "{", strings.Repeat(" ", maxBrowserState+1)} {
+		if err := st.SaveBrowserState("ws_default", bad); err == nil {
+			t.Fatalf("state %.20q should be refused", bad)
+		}
+	}
+}

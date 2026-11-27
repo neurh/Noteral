@@ -16,6 +16,7 @@ import {
   List,
   Loader,
   Phone,
+  Puzzle,
   Rows3,
   SquareCheck,
   SquareKanban,
@@ -24,6 +25,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { contributions } from "../../lib/contributions";
 import { TITLE_ID, type OptionColor, type Property, type PropertyType, type SelectOption, type ViewType } from "../../lib/database";
 
 const typeIcons: Record<PropertyType, LucideIcon> = {
@@ -40,10 +42,15 @@ const typeIcons: Record<PropertyType, LucideIcon> = {
   createdTime: Clock,
   lastEdited: History,
   formula: Sigma,
+  custom: Puzzle,
 };
 
 export function PropertyIcon({ property, type, size = 14 }: { property?: Property; type?: PropertyType; size?: number }) {
   if (property?.id === TITLE_ID) return <Type size={size} className="db-prop-icon" aria-hidden />;
+  if (property?.type === "custom" && property.customType) {
+    const icon = contributions.current().propertyTypeMap.get(property.customType)?.icon;
+    if (icon) return <span className="db-prop-icon"><PageIcon value={icon} size={size} /></span>;
+  }
   const Icon = typeIcons[type ?? property?.type ?? "text"] ?? AlignLeft;
   return <Icon size={size} className="db-prop-icon" aria-hidden />;
 }

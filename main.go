@@ -18,6 +18,7 @@ import (
 	"noteral/internal/plugins"
 	"noteral/internal/service"
 	"noteral/internal/store"
+	"noteral/internal/web"
 )
 
 //go:embed all:frontend/dist
@@ -39,6 +40,7 @@ func main() {
 	assetManager := assets.New(info)
 	pluginManager := plugins.New(st, info)
 	svc := service.New(st, assetManager, pluginManager, info)
+	browserFrame := service.BrowserFrame(svc)
 
 	app := application.New(application.Options{
 		Name:        "Noteral",
@@ -54,6 +56,10 @@ func main() {
 						assetManager.ServeHTTP(w, r)
 						return
 					}
+					if r.URL.Path == web.FramePath || strings.HasPrefix(r.URL.Path, web.ResourcePath) {
+						browserFrame.ServeHTTP(w, r)
+						return
+					}
 					next.ServeHTTP(w, r)
 				})
 			},
@@ -66,6 +72,9 @@ func main() {
 		},
 	})
 	svc.SetApp(app)
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		application.InvokeSync(enableFrameCORS)
+	})
 
 	windowOptions := application.WebviewWindowOptions{
 		Name:             "main",

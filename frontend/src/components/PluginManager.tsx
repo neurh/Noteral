@@ -12,6 +12,7 @@ import {
   ExternalLink,
   FileArchive,
   Globe2,
+  FileText,
   LayoutPanelLeft,
   ListTree,
   LoaderCircle,
@@ -31,6 +32,7 @@ import {
 } from "lucide-react";
 import { api, errorMessage, list } from "../lib/api";
 import type { CatalogEntry, CommunityPlugin, Info, Manifest, PluginEnvironment, PluginUpdate, Release } from "../lib/api";
+import { dropLeadingTitle, prepareReadme } from "../lib/readme";
 import { dialogs } from "../lib/dialogs";
 import { relativeTime } from "../lib/format";
 import { Markdown } from "../lib/markdownView";
@@ -116,6 +118,66 @@ function plural(n: number, one: string, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+const COLLAPSED_KEY = "noteral.plugins.collapsedSections";
+
+function readCollapsed(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Sections fold the same way on every plugin's page, and stay folded across visits. */
+const collapsedSections = readCollapsed();
+
+interface FoldSectionProps {
+  id: string;
+  icon?: ReactNode;
+  title: ReactNode;
+  /** A short note beside the title, such as a count. */
+  note?: ReactNode;
+  /** Buttons on the right of the header; clicking them doesn't fold the section. */
+  actions?: ReactNode;
+  defaultCollapsed?: boolean;
+  children: ReactNode;
+}
+
+export function FoldSection({ id, icon, title, note, actions, defaultCollapsed = false, children }: FoldSectionProps) {
+  const [open, setOpen] = useState(() => (collapsedSections.has(id) ? false : collapsedSections.has(`+${id}`) ? true : !defaultCollapsed));
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    collapsedSections.delete(id);
+    collapsedSections.delete(`+${id}`);
+    if (next === defaultCollapsed) collapsedSections.add(next ? `+${id}` : id);
+    try {
+      window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedSections]));
+    } catch {
+      // Folding still works for this session.
+    }
+  };
+  const bodyId = `ps-section-${id}`;
+  return (
+    <section className={`ps-section ps-fold${open ? " is-open" : ""}`}>
+      <div className="ps-fold-head">
+        <h4 className="ps-fold-title">
+          <button type="button" className="ps-fold-toggle" aria-expanded={open} aria-controls={bodyId} onClick={toggle}>
+            <ChevronRight size={13} className="ps-fold-chevron" aria-hidden="true" />
+            {icon}
+            <span className="ps-fold-label">{title}</span>
+            {note ? <span className="ps-fold-note">{note}</span> : null}
+          </button>
+        </h4>
+        {actions ? <div className="ps-fold-actions">{actions}</div> : null}
+      </div>
+      {open ? <div className="ps-fold-body" id={bodyId}>{children}</div> : null}
+    </section>
+  );
+}
+
 export function PluginManager() {
   const open = useAppStore((state) => state.overlay === "plugins");
   const setOverlay = useAppStore((state) => state.setOverlay);
@@ -127,6 +189,11 @@ export function PluginManager() {
   const [section, setSection] = useState<Section>("installed");
   const [filter, setFilter] = useState<InstalledFilter>("all");
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [communityId, setCommunityId] = useState<string | null>(null);
+  // The plugin page opened from an installed plugin: where Back returns, and
+  // a stand-in entry for plugins that aren't listed in the registry.
+  const [pageFrom, setPageFrom] = useState<string | null>(null);
+  const [pageEntry, setPageEntry] = useState<CommunityPlugin | null>(null);
   const { layers } = useCustomizations();
   const [query, setQuery] = useState("");
   const [env, setEnv] = useState<PluginEnvironment | null>(null);
@@ -146,6 +213,8 @@ export function PluginManager() {
     if (!open) return;
     setReview(null);
     setDetailId(null);
+    setCommunityId(null);
+    setPageFrom(null);
     setQuery("");
     void loadPlugins();
     void api.getPluginEnvironment().then(setEnv).catch(() => undefined);
@@ -276,6 +345,7 @@ export function PluginManager() {
       setUpdates((items) => items?.filter((item) => item.id !== info.manifest.id) ?? null);
       await refreshAll();
       setSection("installed");
+      setCommunityId(null);
       setDetailId(info.manifest.id);
       const verb = current.installedVersion ? "Updated" : "Installed";
       notify(`${verb} ${info.manifest.name} ${info.manifest.version}${info.enabled ? "" : " — turn it on to start it"}`, "success");
@@ -297,6 +367,8 @@ export function PluginManager() {
   const go = (next: Section) => {
     setSection(next);
     setDetailId(null);
+    setCommunityId(null);
+    setPageFrom(null);
     setReview(null);
     setQuery("");
   };
@@ -314,7 +386,43 @@ export function PluginManager() {
   const visibleBundled = catalog.filter((item) => !item.remote && matches(query, item.manifest.name, item.manifest.description));
   const updateCount = updateFor.size;
   const detail = detailId ? plugins.find((item) => item.manifest.id === detailId) : undefined;
+  const communityEntry = communityId
+    ? registry?.plugins.find((item) => item.id === communityId) ?? (pageEntry?.id === communityId ? pageEntry : undefined)
+    : undefined;
+  const community = detail ? undefined : communityEntry;
   const meta = SECTIONS[section];
+
+  const openPluginPage = (plugin: Info) => {
+    const { manifest } = plugin;
+    const listed = registry?.plugins.find((item) => item.id === manifest.id);
+    setPageEntry(
+      listed ?? {
+        id: manifest.id,
+        name: manifest.name,
+        author: manifest.author ?? "",
+        description: manifest.description ?? "",
+        repo: repoOf(plugin),
+        tags: [],
+        installed: true,
+        installedVersion: manifest.version,
+        enabled: plugin.enabled,
+        installedFromRegistry: false,
+      },
+    );
+    setPageFrom(manifest.id);
+    setCommunityId(manifest.id);
+    setDetailId(null);
+  };
+  const goBack = () => {
+    if (review) setReview(null);
+    else if (detail) setDetailId(null);
+    else if (pageFrom) {
+      setCommunityId(null);
+      setDetailId(pageFrom);
+      setPageFrom(null);
+    } else setCommunityId(null);
+  };
+  const pageFromPlugin = pageFrom ? plugins.find((item) => item.manifest.id === pageFrom) : undefined;
 
   const row = (plugin: Info) => (
     <PluginRow
@@ -343,6 +451,21 @@ export function PluginManager() {
         onUninstall={() => void uninstall(detail)}
         onRestart={() => void pluginRuntime.restart(detail.manifest.id)}
         onUpdate={(update) => void reviewCommunity(update.repo, update.id)}
+        onOpenPage={repoOf(detail) ? () => openPluginPage(detail) : undefined}
+      />
+    );
+  } else if (community) {
+    body = (
+      <CommunityDetail
+        entry={community}
+        update={updateFor.get(community.id)}
+        reviewing={busy === `review:${community.id}`}
+        installed={plugins.find((item) => item.manifest.id === community.id)}
+        onInstall={() => void reviewCommunity(community.repo, community.id)}
+        onManage={() => {
+          setPageFrom(null);
+          setDetailId(community.id);
+        }}
       />
     );
   } else if (section === "installed") {
@@ -436,14 +559,16 @@ export function PluginManager() {
               const reviewing = busy === `review:${entry.id}`;
               return (
                 <article key={entry.id} className="ps-card">
-                  <div className="ps-card-head">
-                    <PluginGlyph enabled />
-                    <div className="ps-card-title">
-                      <h4>{entry.name}</h4>
-                      <span>by {entry.author || "unknown"}</span>
-                    </div>
-                  </div>
-                  <p className="ps-card-description">{entry.description || "No description provided."}</p>
+                  <button type="button" className="ps-card-hit" onClick={() => setCommunityId(entry.id)} aria-label={`${entry.name} details`}>
+                    <span className="ps-card-head">
+                      <PluginGlyph enabled />
+                      <span className="ps-card-title">
+                        <h4>{entry.name}</h4>
+                        <span>by {entry.author || "unknown"}</span>
+                      </span>
+                    </span>
+                    <span className="ps-card-description">{entry.description || "No description provided."}</span>
+                  </button>
                   {entry.tags?.length ? (
                     <div className="ps-tags">{entry.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}</div>
                   ) : null}
@@ -538,7 +663,7 @@ export function PluginManager() {
     );
   }
 
-  const inList = !review && !detail;
+  const inList = !review && !detail && !community;
   const createdCount = layers.length + plugins.filter((item) => item.source === "assistant").length;
 
   return (
@@ -567,7 +692,7 @@ export function PluginManager() {
           </div>
         </nav>
 
-        <section className="ps-main" aria-label={review ? "Review plugin" : detail ? detail.manifest.name : meta.title}>
+        <section className="ps-main" aria-label={review ? "Review plugin" : detail ? detail.manifest.name : community ? community.name : meta.title}>
           <header className="ps-head">
             {inList ? (
               <div className="ps-head-copy">
@@ -576,8 +701,8 @@ export function PluginManager() {
               </div>
             ) : (
               <div className="ps-head-copy">
-                <button type="button" className="text-button ps-back" onClick={() => (review ? setReview(null) : setDetailId(null))}>
-                  <ArrowLeft size={13} /> {review && detail ? detail.manifest.name : meta.title}
+                <button type="button" className="text-button ps-back" onClick={goBack}>
+                  <ArrowLeft size={13} /> {review ? (detail ? detail.manifest.name : communityEntry ? communityEntry.name : meta.title) : detail && communityEntry ? communityEntry.name : !detail && pageFromPlugin ? pageFromPlugin.manifest.name : meta.title}
                 </button>
               </div>
             )}
@@ -708,9 +833,11 @@ interface PluginDetailProps {
   onUninstall: () => void;
   onRestart: () => void;
   onUpdate: (update: PluginUpdate) => void;
+  /** Opens the plugin's page (README, releases) inside the manager. */
+  onOpenPage?: () => void;
 }
 
-function PluginDetail({ plugin, busy, reviewing, runtimeError, update, onToggle, onUninstall, onRestart, onUpdate }: PluginDetailProps) {
+function PluginDetail({ plugin, busy, reviewing, runtimeError, update, onToggle, onUninstall, onRestart, onUpdate, onOpenPage }: PluginDetailProps) {
   const { manifest } = plugin;
   const source = sourceLabel(plugin.source);
   const repo = repoOf(plugin);
@@ -747,9 +874,9 @@ function PluginDetail({ plugin, busy, reviewing, runtimeError, update, onToggle,
             <SlidersHorizontal size={13} /> Open settings
           </button>
         ) : null}
-        {repo ? (
-          <button type="button" className="secondary-button ps-small" onClick={() => openMarkdownLink(`https://github.com/${repo}`)}>
-            <ExternalLink size={13} /> Repository
+        {repo && onOpenPage ? (
+          <button type="button" className="secondary-button ps-small" onClick={onOpenPage} title="Its README, releases and permissions">
+            <BookOpen size={13} /> Plugin page
           </button>
         ) : null}
         <span className="ps-actions-gap" />
@@ -768,46 +895,71 @@ function PluginDetail({ plugin, busy, reviewing, runtimeError, update, onToggle,
 
       <p className="ps-detail-description">{manifest.description || "No description provided."}</p>
 
-      {optionFields.length && !hasPage ? (
-        <section className="ps-section">
-          <h4><Settings2 size={13} /> Settings</h4>
-          <PluginOptions manifest={manifest} />
-        </section>
+      {optionFields.length || hasPage ? (
+        <FoldSection
+          id="settings"
+          icon={<Settings2 size={13} />}
+          title="Settings"
+          note={optionFields.length ? plural(optionFields.length, "option") : undefined}
+          actions={hasPage ? (
+            <button type="button" className="text-button ps-small" onClick={() => pluginConfigure.open(manifest.id)}>
+              <SlidersHorizontal size={12} /> Full settings page
+            </button>
+          ) : undefined}
+        >
+          {optionFields.length ? (
+            <PluginOptions manifest={manifest} />
+          ) : (
+            <p className="plugin-review-copy">
+              {manifest.name} keeps its settings on its own page.{" "}
+              <button type="button" className="text-button" onClick={() => pluginConfigure.open(manifest.id)}>Open it</button>
+            </p>
+          )}
+        </FoldSection>
       ) : null}
 
       {contributes.length ? (
-        <section className="ps-section">
-          <h4><Puzzle size={13} /> What it adds</h4>
-          <ul className="ps-adds">
-            {contributes.map((group) => (
-              <li key={group.label}>
-                <span className="ps-adds-icon">{group.icon}</span>
-                <div>
-                  <strong>{plural(group.items.length, group.label, group.many)}</strong>
-                  <span>{group.items.slice(0, 6).join(" · ")}{group.items.length > 6 ? ` · +${group.items.length - 6} more` : ""}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <FoldSection id="adds" icon={<Puzzle size={13} />} title="What it adds" note={plural(contributes.reduce((n, group) => n + group.items.length, 0), "item")}>
+          <ContributionList groups={contributes} limit={6} />
+        </FoldSection>
       ) : null}
 
-      <section className="ps-section">
-        <h4><ShieldCheck size={13} /> {(manifest.permissions ?? []).length ? "What it can access" : "It asks for no permissions"}</h4>
+      <FoldSection
+        id="permissions"
+        icon={<ShieldCheck size={13} />}
+        title={(manifest.permissions ?? []).length ? "What it can access" : "It asks for no permissions"}
+        note={(manifest.permissions ?? []).length ? String(permissionsOf(manifest).length) : undefined}
+      >
         <PermissionList manifest={manifest} />
-      </section>
+      </FoldSection>
 
-      <section className="ps-section">
-        <h4>Details</h4>
+      <FoldSection id="details" title="Details" defaultCollapsed>
         <dl className="ps-facts">
           <dt>ID</dt><dd><code>{manifest.id}</code></dd>
           <dt>Installed</dt><dd>{relativeTime(plugin.installedAt)}</dd>
           <dt>SDK</dt><dd>{manifest.sdkVersion}</dd>
           {manifest.minAppVersion ? (<><dt>Needs</dt><dd>Noteral {manifest.minAppVersion} or later</dd></>) : null}
+          {repo ? (<><dt>Repository</dt><dd><button type="button" className="plugin-repo-link" onClick={() => openMarkdownLink(`https://github.com/${repo}`)}><Globe2 size={12} /> {repo} <ExternalLink size={11} /></button></dd></>) : null}
           {manifest.authorUrl ? (<><dt>Author</dt><dd><button type="button" className="plugin-repo-link" onClick={() => openMarkdownLink(manifest.authorUrl!)}>{manifest.authorUrl}</button></dd></>) : null}
         </dl>
-      </section>
+      </FoldSection>
     </div>
+  );
+}
+
+function ContributionList({ groups, limit }: { groups: ReturnType<typeof contributionGroups>; limit: number }) {
+  return (
+    <ul className="ps-adds">
+      {groups.map((group) => (
+        <li key={group.label}>
+          <span className="ps-adds-icon">{group.icon}</span>
+          <div>
+            <strong>{plural(group.items.length, group.label, group.many)}</strong>
+            <span>{group.items.slice(0, limit).join(" · ")}{group.items.length > limit ? ` · +${group.items.length - limit} more` : ""}</span>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -842,6 +994,150 @@ function PermissionList({ manifest, added }: { manifest: Manifest; added?: Set<s
         );
       })}
     </ul>
+  );
+}
+
+interface CommunityInfo {
+  readme?: { markdown: string; imageBase: string; linkBase: string };
+  readmeError?: string;
+  release?: Release;
+  releaseError?: string;
+}
+
+/** README and latest release per repo, kept for the session so going back and forth is instant. */
+const communityCache = new Map<string, Promise<CommunityInfo>>();
+
+function loadCommunityInfo(repo: string, id: string): Promise<CommunityInfo> {
+  const key = `${repo}#${id}`;
+  let pending = communityCache.get(key);
+  if (!pending) {
+    pending = Promise.all([
+      api.getCommunityReadme(repo).then((readme) => ({ readme }), (err) => ({ readmeError: errorMessage(err) })),
+      api.getCommunityRelease(repo, id).then((release) => ({ release }), (err) => ({ releaseError: errorMessage(err) })),
+    ]).then(([a, b]) => {
+      const info: CommunityInfo = { ...a, ...b };
+      // Don't keep failures: the next visit tries again.
+      if (info.readmeError || info.releaseError) communityCache.delete(key);
+      return info;
+    });
+    communityCache.set(key, pending);
+  }
+  return pending;
+}
+
+interface CommunityDetailProps {
+  entry: CommunityPlugin;
+  update?: PluginUpdate;
+  installed?: Info;
+  reviewing: boolean;
+  onInstall: () => void;
+  onManage: () => void;
+}
+
+/** A community plugin before you install it: what it is (its README), what it can reach, where it comes from. */
+function CommunityDetail({ entry, update, installed, reviewing, onInstall, onManage }: CommunityDetailProps) {
+  const [info, setInfo] = useState<CommunityInfo | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setInfo(null);
+    void loadCommunityInfo(entry.repo, entry.id).then((value) => live && setInfo(value));
+    return () => {
+      live = false;
+    };
+  }, [entry.repo, entry.id]);
+
+  const release = info?.release;
+  const manifest = release?.manifest;
+  const readme = useMemo(() => {
+    if (!info?.readme?.markdown) return "";
+    return dropLeadingTitle(prepareReadme(info.readme.markdown, info.readme), entry.name);
+  }, [info, entry.name]);
+  const repoUrl = `https://github.com/${entry.repo}`;
+  const contributes = manifest ? contributionGroups(manifest) : [];
+  const blocked = release ? release.problem || (release.compatible ? "" : "This release is not compatible with your version of Noteral.") : "";
+
+  return (
+    <div className="ps-detail ps-community">
+      <header className="ps-detail-head">
+        <PluginGlyph enabled size="lg" />
+        <div className="ps-detail-title">
+          <h3>{entry.name}</h3>
+          <p>
+            {manifest ? `v${manifest.version} · ` : ""}by {entry.author || "unknown"}
+            {release?.publishedAt ? ` · released ${relativeTime(release.publishedAt)}` : ""}
+          </p>
+        </div>
+      </header>
+
+      <div className="ps-actions">
+        {installed && !update ? (
+          <>
+            <span className="plugin-installed-tag">v{installed.manifest.version} installed</span>
+            <button type="button" className="secondary-button ps-small" onClick={onManage}><Settings2 size={13} /> Manage</button>
+          </>
+        ) : (
+          <button type="button" className="primary-button ps-small" disabled={reviewing || Boolean(blocked)} onClick={onInstall}>
+            {reviewing ? <LoaderCircle size={13} className="spin" /> : update ? <ArrowUpCircle size={13} /> : <PackagePlus size={13} />}
+            {update ? `Update to ${update.latest}` : "Install"}
+          </button>
+        )}
+        <button type="button" className="secondary-button ps-small" onClick={() => openMarkdownLink(repoUrl)}><ExternalLink size={13} /> Repository</button>
+        {release?.htmlUrl ? (
+          <button type="button" className="secondary-button ps-small" onClick={() => openMarkdownLink(release.htmlUrl)}><ExternalLink size={13} /> Release</button>
+        ) : null}
+        <span className="ps-actions-gap" />
+        {manifest ? <RiskSummary manifest={manifest} /> : null}
+      </div>
+
+      {entry.description ? <p className="ps-detail-description">{entry.description}</p> : null}
+      {blocked ? <div className="plugin-problem"><AlertTriangle size={13} /> {blocked}</div> : null}
+      {entry.tags?.length ? <div className="ps-tags">{entry.tags.map((tag) => <span key={tag}>{tag}</span>)}</div> : null}
+
+      <FoldSection id="readme" icon={<FileText size={13} />} title="Readme">
+        {!info ? (
+          <div className="plugin-loading"><LoaderCircle size={15} className="spin" /> Loading the README from GitHub…</div>
+        ) : readme ? (
+          <div className="ps-readme">
+            <Markdown source={readme} images onLink={openMarkdownLink} />
+          </div>
+        ) : (
+          <p className="plugin-tab-note">
+            {info.readmeError ? `Couldn’t load the README: ${info.readmeError}` : "This repository has no README."}{" "}
+            <button type="button" className="text-button" onClick={() => openMarkdownLink(repoUrl)}>Open on GitHub</button>
+          </p>
+        )}
+      </FoldSection>
+
+      {manifest ? (
+        <FoldSection
+          id="permissions"
+          icon={<ShieldCheck size={13} />}
+          title={permissionsOf(manifest).length ? "Permissions it asks for" : "It asks for no permissions"}
+          note={permissionsOf(manifest).length ? String(permissionsOf(manifest).length) : undefined}
+        >
+          <PermissionList manifest={manifest} />
+        </FoldSection>
+      ) : null}
+
+      {contributes.length ? (
+        <FoldSection id="adds" icon={<Puzzle size={13} />} title="What it adds" note={plural(contributes.reduce((n, group) => n + group.items.length, 0), "item")}>
+          <ContributionList groups={contributes} limit={6} />
+        </FoldSection>
+      ) : null}
+
+      <FoldSection id="details" title="Details" defaultCollapsed>
+        <dl className="ps-facts">
+          <dt>Repository</dt>
+          <dd><button type="button" className="plugin-repo-link" onClick={() => openMarkdownLink(repoUrl)}><Globe2 size={12} /> {entry.repo} <ExternalLink size={11} /></button></dd>
+          <dt>Plugin id</dt>
+          <dd><code>{entry.id}</code></dd>
+          {manifest?.minAppVersion ? (<><dt>Needs Noteral</dt><dd>{manifest.minAppVersion} or newer</dd></>) : null}
+          {release?.tag ? (<><dt>Latest release</dt><dd>{release.tag}{release.publishedAt ? ` · ${relativeTime(release.publishedAt)}` : ""}</dd></>) : null}
+          {info?.releaseError ? (<><dt>Release</dt><dd>{info.releaseError}</dd></>) : null}
+        </dl>
+      </FoldSection>
+    </div>
   );
 }
 

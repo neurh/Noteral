@@ -434,7 +434,7 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
                         </button>
                       </>
                     ) : (
-                      <CellDisplay property={property} row={row} />
+                      <CellDisplay property={property} row={row} db={db} onEdit={(anchor) => onCellClick(row, property, cells.current.get(key) ?? anchor)} />
                     )}
                   </div>
                 );
@@ -522,10 +522,10 @@ export function TableView({ db, view, rows, onAddRow, editTitleFor, clearEditTit
         >
           <TypeList
             title="Select type"
-            onPick={(type: PropertyType) => {
+            onPick={(type: PropertyType, customType?: string) => {
               const beside = insertAt?.beside === TITLE_ID ? schema.properties[0]?.id : insertAt?.beside;
               const side = insertAt?.beside === TITLE_ID ? "left" : insertAt?.side;
-              const property = addProperty(db, type, { viewId: view.id, beside, side });
+              const property = addProperty(db, type, { viewId: view.id, beside, side, customType });
               setAddAnchor(null);
               setInsertAt(null);
               setPendingMenu(property.id);

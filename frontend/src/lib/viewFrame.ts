@@ -14,7 +14,9 @@
  *   noteral.resize()                 // re-measure height (automatic via ResizeObserver)
  *
  * The frame is sandboxed with `allow-scripts` only (opaque origin, no parent access) and a
- * CSP that blocks all network access, so every outside effect goes through the App API.
+ * CSP that blocks scripts, fetch and XHR to the network, so every outside effect goes through the
+ * App API. Images and media may still load from https URLs, so a view can reach remote servers
+ * that way; treat what you put in an img/media URL as visible to that server.
  */
 import { TOKEN_NAMES } from "./customizations";
 
@@ -104,11 +106,12 @@ else if(m.type==="event"){fire(subs[m.event]||[],m.data);}
 else if(m.type==="message"){fire(H.message,{name:m.name,payload:m.payload});}
 });
 function apply(tokens,theme){var r=document.documentElement;for(var k in tokens){r.style.setProperty("--"+k,tokens[k]);}r.dataset.theme=theme;r.style.colorScheme=theme;}
-var last=-1;function measure(force){if(boot.fill)return;var b=document.body;if(!b)return;var cs=getComputedStyle(b);var h=Math.ceil(Math.max(b.scrollHeight,b.getBoundingClientRect().height)+(parseFloat(cs.marginTop)||0)+(parseFloat(cs.marginBottom)||0));if(force||Math.abs(h-last)>1){last=h;send({type:"resize",height:h});}}
+var last=-1,lastW=-1;function measureWidth(force){var b=document.body;if(!b)return;var r=document.createRange();r.selectNodeContents(b);var box=r.getBoundingClientRect();var cs=getComputedStyle(b);var w=Math.ceil(box.width?box.right-b.getBoundingClientRect().left+(parseFloat(cs.paddingRight)||0):0);if(force||Math.abs(w-lastW)>1){lastW=w;send({type:"resize",width:w});}}
+function measure(force){if(boot.surface==="status"){measureWidth(force);return;}if(boot.fill)return;var b=document.body;if(!b)return;var cs=getComputedStyle(b);var h=Math.ceil(Math.max(b.scrollHeight,b.getBoundingClientRect().height)+(parseFloat(cs.marginTop)||0)+(parseFloat(cs.marginBottom)||0));if(force||Math.abs(h-last)>1){last=h;send({type:"resize",height:h});}}
 window.addEventListener("error",function(e){report(e.error||e.message)});
 window.addEventListener("unhandledrejection",function(e){report(e.reason)});
 document.addEventListener("click",function(e){var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var href=a.getAttribute("href");if(!href||href.charAt(0)==="#")return;e.preventDefault();N.open(href);},true);
-document.addEventListener("DOMContentLoaded",function(){try{new ResizeObserver(function(){measure(false)}).observe(document.body)}catch(e){}measure(true);send({type:"ready"});});
+document.addEventListener("DOMContentLoaded",function(){try{new ResizeObserver(function(){measure(false)}).observe(document.body)}catch(e){}if(boot.surface==="status"){try{new MutationObserver(function(){measure(false)}).observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true})}catch(e){}if(document.fonts&&document.fonts.ready)document.fonts.ready.then(function(){measure(true)});}measure(true);send({type:"ready"});});
 })();`;
 }
 
@@ -132,7 +135,7 @@ export function currentTheme(): "light" | "dark" {
 }
 
 /** Where a view is mounted. Views read it as `noteral.surface` and `html[data-surface]`. */
-export type ViewSurface = "page" | "block" | "sidebar" | "status" | "home" | "panel" | "database" | "modal" | "popover";
+export type ViewSurface = "page" | "block" | "sidebar" | "status" | "home" | "panel" | "database" | "modal" | "popover" | "overlay";
 
 export interface ViewDocOptions {
   html: string;

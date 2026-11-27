@@ -413,3 +413,41 @@ func readFileLimited(dir, id, name string) ([]byte, error) {
 	defer f.Close()
 	return io.ReadAll(io.LimitReader(f, 1<<20))
 }
+
+const maxReadmeBytes = 512 << 10
+
+// Readme is a community plugin's README for the store's details page.
+// ImageBase and LinkBase resolve the relative paths READMEs usually use.
+type Readme struct {
+	Repo      string `json:"repo"`
+	Markdown  string `json:"markdown"`
+	ImageBase string `json:"imageBase"`
+	LinkBase  string `json:"linkBase"`
+}
+
+// FetchReadme downloads the README of a plugin repository's default branch.
+// It tries the plain file first (no API rate limit), then the GitHub API,
+// which also finds readme.md, README and other spellings.
+func (m *Manager) FetchReadme(repo string) (Readme, error) {
+	repo = strings.TrimSpace(repo)
+	if !repoRe.MatchString(repo) {
+		return Readme{}, fmt.Errorf("%q is not a GitHub repository (owner/name)", repo)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	base := strings.TrimRight(m.githubBase, "/")
+	out := Readme{Repo: repo, ImageBase: fmt.Sprintf("%s/%s/raw/HEAD/", base, repo), LinkBase: fmt.Sprintf("%s/%s/blob/HEAD/", base, repo)}
+	data, _, err := m.get(ctx, fmt.Sprintf("%s/%s/raw/HEAD/README.md", base, repo), maxReadmeBytes, "")
+	if err != nil {
+		var status int
+		data, status, err = m.get(ctx, fmt.Sprintf("%s/repos/%s/readme", strings.TrimRight(m.githubAPI, "/"), repo), maxReadmeBytes, "application/vnd.github.raw")
+		if status == http.StatusNotFound {
+			return out, nil
+		}
+		if err != nil {
+			return Readme{}, err
+		}
+	}
+	out.Markdown = strings.ToValidUTF8(string(data), "")
+	return out, nil
+}

@@ -154,6 +154,8 @@ interface AppState {
   selectPage: (pageId: string, options?: { recordHistory?: boolean; replace?: boolean }) => Promise<void>;
   selectTab: (tabId: string) => void;
   openHomeTab: (settings?: Partial<HomeTabSettings>, paneId?: string) => void;
+  /** Open an empty browser tab and return its id (the browser store fills it in). */
+  openWebTab: (paneId?: string) => string;
   updateHomeTab: (tabId: string, patch: Partial<HomeTabSettings>) => void;
   /** Adds a custom view (a copy of `layout`, or the default) and returns its id. */
   createHomeView: (layout?: HomeCustomLayout, name?: string) => string;
@@ -236,17 +238,35 @@ export function isHomeTab(tabId: string): boolean {
   return tabId.startsWith(HOME_TAB_PREFIX);
 }
 
+export const WEB_TAB_PREFIX = "web:";
+let webTabSequence = 0;
+
+/** A browser tab (see src/browser). */
+export function isWebTab(tabId: string): boolean {
+  return tabId.startsWith(WEB_TAB_PREFIX);
+}
+
+/** A tab that shows something other than a page: Home or the browser. */
+export function isVirtualTab(tabId: string): boolean {
+  return isHomeTab(tabId) || isWebTab(tabId);
+}
+
+export function createWebTabId(): string {
+  webTabSequence += 1;
+  return `${WEB_TAB_PREFIX}${Date.now().toString(36)}-${webTabSequence.toString(36)}`;
+}
+
 function createHomeTabId(): string {
   homeTabSequence += 1;
   return `${HOME_TAB_PREFIX}${Date.now().toString(36)}-${homeTabSequence.toString(36)}`;
 }
 
 function pageIdForTab(tabId: string): string {
-  return tabId && !isHomeTab(tabId) ? tabId : "";
+  return tabId && !isVirtualTab(tabId) ? tabId : "";
 }
 
 function pageTabs(tabs: string[]): string[] {
-  return tabs.filter((tabId) => !isHomeTab(tabId));
+  return tabs.filter((tabId) => !isVirtualTab(tabId));
 }
 
 function withoutHomeTab(settings: Record<string, HomeTabSettings>, tabId: string): Record<string, HomeTabSettings> {
@@ -334,7 +354,7 @@ function normalizeSnapshot(snapshot: WorkspaceSnapshot): { pages: PageMeta[]; ta
   const seen = new Set<string>();
   let tabs = list(snapshot.tabs).filter((id) => {
     if (seen.has(id)) return false;
-    if (!isHomeTab(id) && !known.has(id)) return false;
+    if (!isVirtualTab(id) && !known.has(id)) return false;
     seen.add(id);
     return true;
   });
@@ -780,7 +800,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const state = get();
     const pane = paneOfTab(state.layout, tabId);
     if (!pane) return;
-    if (!isHomeTab(tabId)) {
+    if (!isVirtualTab(tabId)) {
       void get().selectPage(tabId);
       return;
     }
@@ -810,6 +830,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
     scheduleTabs(get);
+  },
+
+  openWebTab: (paneId) => {
+    const tabId = createWebTabId();
+    set((state) => {
+      const layout = addTabToPane(state.layout, paneId ?? state.focusedPaneId, tabId);
+      const pane = paneOfTab(layout, tabId);
+      return {
+        ...layoutPatch(state, layout, pane?.id),
+        outline: [],
+        backlinks: [],
+        liveWordCount: 0,
+        liveBlockCount: 0,
+      };
+    });
+    scheduleTabs(get);
+    return tabId;
   },
 
   updateHomeTab: (tabId, patch) => {
@@ -1029,7 +1066,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const initialPane = paneOfTab(get().layout, tabId);
     if (!initialPane) return;
     const closingHome = isHomeTab(tabId);
-    if (!closingHome) {
+    if (!isVirtualTab(tabId)) {
       clearTimersFor(tabId);
       const ok = await get().saveNow(tabId);
       if (!ok) return;

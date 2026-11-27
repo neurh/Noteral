@@ -43,6 +43,13 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	// owner/name/raw/HEAD/README.md
+	if len(parts) == 5 && parts[2] == "raw" && parts[3] == "HEAD" {
+		if body, ok := f.assets[parts[0]+"/"+parts[1]]["readme:"+parts[4]]; ok {
+			fmt.Fprint(w, body)
+			return
+		}
+	}
 	// owner/name/releases/latest/download/asset
 	if len(parts) == 6 && parts[2] == "releases" && parts[4] == "download" {
 		if body, ok := f.assets[parts[0]+"/"+parts[1]][parts[5]]; ok {
@@ -198,5 +205,29 @@ func TestInstallGeneratedPlugin(t *testing.T) {
 	cat := Manifest{ID: "com.noteral.meeting-notes", Name: "Hijack", Version: "9.0.0"}
 	if _, err := manager.InstallGenerated(cat, "1", "", []string{}, ""); err == nil {
 		t.Fatal("generated code overwrote a catalog plugin")
+	}
+}
+
+func TestCommunityReadme(t *testing.T) {
+	manager, _ := testManager(t)
+	gh := &fakeGitHub{assets: map[string]map[string]string{}}
+	srv := httptest.NewServer(gh)
+	defer srv.Close()
+	manager.githubBase, manager.githubAPI = srv.URL, srv.URL
+
+	gh.set("ada/noteral-hello", "readme:README.md", "# Hello\n\n![shot](docs/shot.png)")
+	readme, err := manager.FetchReadme("ada/noteral-hello")
+	if err != nil || !strings.HasPrefix(readme.Markdown, "# Hello") {
+		t.Fatalf("readme: %+v %v", readme, err)
+	}
+	if readme.ImageBase != srv.URL+"/ada/noteral-hello/raw/HEAD/" || readme.LinkBase != srv.URL+"/ada/noteral-hello/blob/HEAD/" {
+		t.Fatalf("bases: %+v", readme)
+	}
+	// No README anywhere (the fake API answers 404): empty, not an error.
+	if empty, err := manager.FetchReadme("ada/none"); err != nil || empty.Markdown != "" {
+		t.Fatalf("missing readme: %+v %v", empty, err)
+	}
+	if _, err := manager.FetchReadme("../etc"); err == nil {
+		t.Fatal("bad repo names must be rejected")
 	}
 }

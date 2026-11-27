@@ -25,6 +25,7 @@ export type Permission =
   | "ui.notify"
   | "ui.panel"
   | "ui.modal"
+  | "ui.overlay"
   | "ui.styles"
   | "settings.read"
   | "settings.write"
@@ -38,6 +39,7 @@ export type Permission =
   | "commands.execute"
   | "clipboard"
   | "network"
+  | "network.local"
   | "blocks"
   | "nodes"
   | "home"
@@ -98,6 +100,7 @@ export const PERMISSIONS: PermissionSpec[] = [
   { id: "ui.notify", title: "Notifications", description: "Show toast notifications.", risk: "low" },
   { id: "ui.panel", title: "Sidebar tabs", description: "Add tabs to the right sidebar.", risk: "low" },
   { id: "ui.modal", title: "Dialogs", description: "Ask you to confirm, type an answer or pick from a list.", risk: "low" },
+  { id: "ui.overlay", title: "Floating overlays", description: "Float its own views above the app (timers, HUDs, sticky notes, effects). They can cover what's underneath.", risk: "medium" },
   { id: "ui.styles", title: "Plugin styles", description: "Add CSS to the app (for the plugin's own look).", risk: "medium" },
   { id: "settings.read", title: "Read its settings", description: "Read the plugin's own saved settings.", risk: "low" },
   { id: "settings.write", title: "Save its settings", description: "Save the plugin's own settings.", risk: "low" },
@@ -111,6 +114,7 @@ export const PERMISSIONS: PermissionSpec[] = [
   { id: "commands.execute", title: "Run commands", description: "Run any command from the command palette.", risk: "high" },
   { id: "clipboard", title: "Clipboard", description: "Read and write the clipboard.", risk: "medium" },
   { id: "network", title: "Internet access", description: "Make web requests, search the web and fetch pages.", risk: "high" },
+  { id: "network.local", title: "Local network access", description: "Everything Internet access allows, plus servers on this computer and your local network (for example a local AI model).", risk: "high" },
   { id: "blocks", title: "Custom blocks", description: "Add new kinds of blocks to the editor (rendered in a sandbox).", risk: "low" },
   { id: "nodes", title: "Custom page types", description: "Add new kinds of items to the page tree (rendered in a sandbox).", risk: "low" },
   { id: "home", title: "Home", description: "Create, change and remove Home views and widgets.", risk: "medium" },
@@ -135,7 +139,12 @@ const textEdits = s.arr(
 const blockIds = s.arr("Block ids, from editor.getBlocks.", s.str("Block id"), 500);
 const pageKind = s.str("Item kind.", { enum: ["page", "folder"] });
 const propertyRef = s.str("Property name or id (\"title\" or the title column's name for the title).", { maxLength: 100 });
-const PROPERTY_TYPES = ["text", "number", "select", "multiSelect", "status", "date", "checkbox", "url", "email", "phone", "createdTime", "lastEdited", "formula"];
+const PROPERTY_TYPES = ["text", "number", "select", "multiSelect", "status", "date", "checkbox", "url", "email", "phone", "createdTime", "lastEdited", "formula", "custom"];
+/** Plugin-defined property types (type "custom"). */
+const customFields = {
+  customType: s.str("For type custom: a registered property type id (databases.listPropertyTypes), e.g. \"rating\".", { maxLength: 64 }),
+  config: s.json("For type custom: per-property options the type defines (its config fields), merged into the current ones; null for a key removes it."),
+};
 const VIEW_TYPES = ["table", "board", "gallery", "list", "calendar", "chart", "custom"];
 const FILTER_OPS = ["contains", "notContains", "is", "isNot", "startsWith", "endsWith", "isEmpty", "isNotEmpty", "eq", "neq", "gt", "lt", "gte", "lte", "before", "after", "onOrBefore", "onOrAfter", "within"];
 const NUMBER_FORMATS = ["number", "commas", "percent", "dollar", "euro", "pound", "yen"];
@@ -271,6 +280,7 @@ const newProperties = s.arr(
       type: s.str("Property type.", { enum: PROPERTY_TYPES }),
       options: s.arr("Options for select / multiSelect / status.", s.str("Option name."), 50),
       ...formulaFields,
+        ...customFields,
     },
     ["name", "type"],
   ),
@@ -297,18 +307,38 @@ const settingField = s.obj(
   },
   ["key", "type"],
 );
-const popupAnchor = s.obj(
+const popupRect = s.obj(
   { x: s.num("Left."), y: s.num("Top."), width: s.num("Width."), height: s.num("Height.") },
   ["x", "y"],
   "Rect to open next to (window coordinates, or frame coordinates from a view — noteral.menu/popover fill it from an element).",
 );
-const popupPlacement = s.str("Where to open relative to the anchor.", { enum: ["bottom-start", "bottom-end", "top-start", "top-end", "right-start", "left-start"] });
+const popupAnchor: JsonSchema = {
+  description:
+    'What to open next to: a rect { x, y, width?, height? } (window coordinates, or frame coordinates from a view — noteral.menu/popover fill it from an element), or a name: "self" (the calling view\'s frame), "status:<widget id>" (your status widget), "block:<block id>", "selection" or "pointer".',
+  anyOf: [popupRect, { type: "string", maxLength: 200 }],
+};
+const popupPlacement = s.str("Where to open relative to the anchor (\"center\" = middle of the window).", {
+  enum: ["bottom-start", "bottom-end", "bottom-center", "top-start", "top-end", "top-center", "right-start", "right-end", "right-center", "left-start", "left-end", "left-center", "center"],
+});
 const menuEntry = s.any(
   'A menu item { id, label, icon?, hint?, description?, checked?, danger?, disabled?, children? }, a header { type: "header", label }, or a separator ("-" or { type: "separator" }).',
 );
 const statusWidth: JsonSchema = {
   description: 'Width: px (16-1200), "auto" (fit content), "fill" (take the free space) or "NN%" of the bar. HTML widgets default to 120px.',
   anyOf: [{ type: "integer", minimum: 16, maximum: 1200 }, { type: "string", maxLength: 8 }],
+};
+const statusWidgetLook = {
+  minWidth: s.int("Minimum width in px.", { minimum: 0, maximum: 2000 }),
+  maxWidth: s.int("Maximum width in px.", { minimum: 16, maximum: 4000 }),
+  popup: s.any(
+    'Popover opened by a click, anchored to the widget: { html, width?, height?, placement?, bare?, persistent?, data? } (or just the html string). Default placement opens upwards, aligned to the widget\'s side.',
+  ),
+  badge: s.any("Small pill after the text: a count or short label (max 24 chars)."),
+  tone: s.str("Colour preset.", { enum: ["default", "muted", "accent", "success", "warning", "danger"] }),
+  color: s.str("Text colour: hex, rgb()/hsl(), var(--token) or a CSS colour name.", { maxLength: 60 }),
+  background: s.str("Background colour (same forms as color).", { maxLength: 60 }),
+  progress: s.num("0–1: a thin progress bar along the widget's bottom edge.", { minimum: 0, maximum: 1 }),
+  data: s.any("JSON for HTML widgets as noteral.props.data (changes arrive without reloading)."),
 };
 const layerParam = s.str(
   "Customization layer to write to. Assistant: defaults to this chat's layer (so the user can switch it off). Plugins: defaults to the plugin's own layer. \"base\" writes the base look.",
@@ -336,6 +366,8 @@ const widgetPatch = {
   css: s.str("Extra CSS for this widget's card (`&` = the card).", { maxLength: 20_000 }),
   data: s.any("Free-form data for html widgets (noteral.props.data)."),
 };
+
+const SCOPE = s.str("\"workspace\" (default): data for the open workspace only. \"global\": shared by every workspace.", { enum: ["workspace", "global"] });
 
 export const METHODS: MethodSpec[] = [
   // ── app ────────────────────────────────────────────────────────────────
@@ -843,6 +875,7 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
         type: s.str("Property type.", { enum: PROPERTY_TYPES }),
         options: s.arr("Options for select / multiSelect / status.", s.str("Option name."), 50),
         ...formulaFields,
+        ...customFields,
       },
       ["databaseId", "name", "type"],
     ),
@@ -979,6 +1012,7 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
         name: s.str("New name.", { maxLength: 100 }),
         type: s.str("New type.", { enum: PROPERTY_TYPES }),
         ...formulaFields,
+        ...customFields,
         options: s.arr(
           "Options (select / multi-select / status).",
           s.obj({ name: s.str("Option name.", { maxLength: 100 }), color: s.str("Color name.", { enum: ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"] }), group: s.str("Status group.", { enum: ["todo", "inProgress", "complete"] }) }, ["name"]),
@@ -1410,15 +1444,52 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
         y: s.num("Open at this y."),
         anchor: popupAnchor,
         placement: popupPlacement,
+        offset: s.int("Gap to the anchor in px (default 4).", { minimum: -40, maximum: 80 }),
         width: s.int("Width in px (default 300).", { minimum: 120, maximum: 900 }),
         height: s.int("Fixed height in px; omit to grow with the content.", { minimum: 40, maximum: 900 }),
+        maxHeight: s.int("Cap for a growing popover (default 70% of the window).", { minimum: 40, maximum: 2000 }),
+        name: s.str("Your name for it: opening the same name again replaces it, and ui.updatePopover / ui.closePopups can target it.", { maxLength: 64 }),
+        toggle: s.bool("With a name: close it instead if it is already open (a status widget's click)."),
+        bare: s.bool("No background, border, radius or shadow — your HTML paints the whole panel (transparent popovers, custom shapes)."),
+        persistent: s.bool("Outside clicks don't close it (Escape, noteral.close or a toggle do)."),
+        escape: s.bool("Escape closes it (default true)."),
       },
       ["html"],
     ),
     returns: "unknown",
-    example: 'button.onclick = () => noteral.popover({ html: "<p>Details…</p>", width: 260 }, button);',
+    details:
+      "A popover opened from inside another popover keeps its parent open. Opening one closes your other non-persistent popovers. Plugin code without a view can anchor to \"status:<widget id>\" or the `anchor` a status command receives.",
+    example: 'button.onclick = () => noteral.popover({ html: "<p>Details…</p>", width: 260, name: "details", toggle: true }, button);',
   },
-  { name: "ui.closePopups", summary: "Close every modal and popover you opened.", permission: "ui.modal", tier: "read", callers: ["plugin"], params: EMPTY, returns: "void" },
+  {
+    name: "ui.updatePopover",
+    summary: "Change an open popover by name: new data (sent to the view as props, no reload), html, size or position. Returns false when it isn't open.",
+    permission: "ui.modal",
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj(
+      {
+        name: s.str("The name it was opened with.", { maxLength: 64 }),
+        data: s.any("New noteral.props.data."),
+        html: htmlView,
+        anchor: popupAnchor,
+        placement: popupPlacement,
+        width: s.int("Width in px.", { minimum: 120, maximum: 900 }),
+        height: s.int("Height in px.", { minimum: 40, maximum: 900 }),
+      },
+      ["name"],
+    ),
+    returns: "boolean",
+  },
+  {
+    name: "ui.closePopups",
+    summary: "Close every modal and popover you opened, or only the popover with `name`.",
+    permission: "ui.modal",
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj({ name: s.str("Only this named popover.", { maxLength: 64 }) }),
+    returns: "void",
+  },
   {
     name: "ui.setStatus",
     summary: "Show text in the status bar (declare the item in manifest.contributes.statusItems or by id).",
@@ -1481,7 +1552,7 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
   {
     name: "network.request",
     summary: "Make an HTTP request (any method, headers and body) through the app.",
-    details: "Requests to localhost and private networks are blocked. Bodies are text; binary responses come back base64 encoded.",
+    details: "Requests to localhost and private networks are blocked unless the plugin holds network.local (e.g. to talk to Ollama or a home server). Send binary bodies base64 encoded with bodyEncoding \"base64\"; binary responses come back base64 encoded (encoding \"base64\"). Responses over 3 MB are truncated.",
     permission: "network",
     tier: "read",
     callers: ["plugin"],
@@ -1490,7 +1561,9 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
         url: s.str("http(s) URL.", { maxLength: 4000, minLength: 1 }),
         method: s.str("HTTP method.", { enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"], default: "GET" }),
         headers: s.map("Request headers.", { type: "string" }),
-        body: s.str("Request body.", { maxLength: 2_000_000 }),
+        body: s.str("Request body (text, or base64 with bodyEncoding \"base64\").", { maxLength: 4_000_000 }),
+        bodyEncoding: s.str("How body is encoded.", { enum: ["text", "base64"], default: "text" }),
+        timeoutMs: s.int("Milliseconds before giving up.", { minimum: 1000, maximum: 30000, default: 30000 }),
       },
       ["url"],
     ),
@@ -1571,8 +1644,9 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
   { name: "statusBar.list", summary: "List status bar widgets (built-in and custom).", permission: null, tier: "read", params: EMPTY, returns: "StatusWidgetInfo[]" },
   {
     name: "statusBar.setWidget",
-    summary: "Add or update a status bar widget: text with an icon and click command, or a small HTML view.",
-    details: "HTML widgets render in a 22px-high sandboxed frame (`width` px wide) and can call the App API with the owner's permissions.",
+    summary: "Add or replace a status bar widget: text with an icon, badge, colours and progress, or a small HTML view; a click runs a command or opens a popup next to it.",
+    details:
+      'HTML widgets render in a 22px-high sandboxed frame and can call the App API with the owner\'s permissions; width "auto" fits their content, "fill" or "100%" takes all the free space of the bar (the other side shrinks to its content). `popup` opens your HTML in a popover anchored to the widget (a second click closes it). Plugin commands run from a widget get { source: "status", widget, anchor } as their argument. Use statusBar.updateWidget for live values.',
     permission: "ui.status",
     tier: "app",
     params: s.obj(
@@ -1586,12 +1660,144 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
         side: s.str("Side.", { enum: ["left", "center", "right"], default: "right" }),
         order: s.int("Order (lower first).", { minimum: -100, maximum: 100, default: 0 }),
         command: s.str("Command id to run on click (see commands.list).", { maxLength: 200 }),
+        ...statusWidgetLook,
         layer: layerParam,
       },
       ["id"],
     ),
     returns: "StatusWidgetInfo",
   },
+  {
+    name: "statusBar.updateWidget",
+    summary: "Change some fields of one of your status widgets (text, badge, progress, data, popup…) without resending it; null removes a field.",
+    details: "Cheap enough for live values (timers, counters, sync progress). HTML widgets receive a changed `data` as noteral.props.data without reloading.",
+    permission: "ui.status",
+    tier: "app",
+    params: s.obj(
+      {
+        id: s.str("Widget id.", { maxLength: 64, minLength: 1 }),
+        text: s.str("Text.", { maxLength: 160 }),
+        tooltip: s.str("Tooltip.", { maxLength: 300 }),
+        icon: iconParam,
+        html: htmlView,
+        width: statusWidth,
+        side: s.str("Side.", { enum: ["left", "center", "right"] }),
+        order: s.int("Order (lower first).", { minimum: -100, maximum: 100 }),
+        command: s.str("Command id to run on click.", { maxLength: 200 }),
+        ...statusWidgetLook,
+        layer: layerParam,
+      },
+      ["id"],
+    ),
+    returns: "unknown",
+  },
+  {
+    name: "ui.listOverlays",
+    summary: "List floating overlays (yours and others'), with owner, position and stack.",
+    permission: "ui.overlay",
+    tier: "app",
+    params: s.obj({}),
+    returns: "unknown",
+  },
+  {
+    name: "ui.setOverlay",
+    summary: "Create or replace a floating overlay: your HTML view pinned above the app (a HUD, timer, mini player, sticky note, toast area or full-screen effect).",
+    details:
+      "Overlays sit in a layer over every pane and don't move the layout. position picks a corner/edge/center or \"full\" (covers the window); x/y offset from it. interactive:false lets clicks pass through (pure decoration/visual effects). draggable adds a grip the user drags (remembered; double-click the grip resets). chrome adds the app's card border and shadow. stack \"top\" puts it above menus and dialogs too (use sparingly). The view gets props.data and the overlay's own id; ui.updateOverlay changes fields without reloading the view.",
+    permission: "ui.overlay",
+    tier: "app",
+    params: s.obj(
+      {
+        id: s.str("Overlay id (letters, digits, dots, dashes, underscores).", { maxLength: 64, minLength: 1 }),
+        html: htmlView,
+        title: s.str("Name shown on the drag grip and to screen readers.", { maxLength: 80 }),
+        position: s.str("Where it's pinned.", { enum: ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right", "full"], default: "bottom-right" }),
+        x: s.int("Horizontal offset in px from the position (positive moves inward).", { minimum: -4000, maximum: 4000 }),
+        y: s.int("Vertical offset in px from the position (positive moves inward).", { minimum: -4000, maximum: 4000 }),
+        width: { description: "Width: px (8-8000) or \"NN%\" of the window. Default 280 (full: 100%).", anyOf: [{ type: "integer", minimum: 8, maximum: 8000 }, { type: "string", maxLength: 8 }] },
+        height: { description: "Height: px, \"NN%\" of the window, or \"auto\" (default: fits the content).", anyOf: [{ type: "integer", minimum: 8, maximum: 8000 }, { type: "string", maxLength: 8 }] },
+        interactive: s.bool("false: clicks pass through to the app underneath.", { default: true }),
+        draggable: s.bool("Show a grip so the user can move it.", { default: false }),
+        chrome: s.bool("Card border, background and shadow around the view.", { default: false }),
+        opacity: s.num("Opacity 0.05-1.", { minimum: 0.05, maximum: 1 }),
+        stack: s.str("app (default): above the app, below menus/popovers/dialogs. top: above everything.", { enum: ["app", "top"] }),
+        hidden: s.bool("Keep it registered but hidden.", { default: false }),
+        order: s.int("Stacking order among overlays (higher on top).", { minimum: -100, maximum: 100 }),
+        data: s.json("Passed to the view as noteral.props.data."),
+        layer: layerParam,
+      },
+      ["id", "html"],
+    ),
+    returns: "unknown",
+  },
+  {
+    name: "ui.updateOverlay",
+    summary: "Change some fields of one of your overlays (data, position, hidden, opacity…); null removes a field. A changed data reaches the view as props without reloading.",
+    permission: "ui.overlay",
+    tier: "app",
+    params: s.obj(
+      {
+        id: s.str("Overlay id.", { maxLength: 64, minLength: 1 }),
+        html: htmlView,
+        title: s.str("Title.", { maxLength: 80 }),
+        position: s.str("Position.", { enum: ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right", "full"] }),
+        x: s.int("X offset.", { minimum: -4000, maximum: 4000 }),
+        y: s.int("Y offset.", { minimum: -4000, maximum: 4000 }),
+        width: { description: "Width (px or NN%).", anyOf: [{ type: "integer", minimum: 8, maximum: 8000 }, { type: "string", maxLength: 8 }] },
+        height: { description: "Height (px, NN% or auto).", anyOf: [{ type: "integer", minimum: 8, maximum: 8000 }, { type: "string", maxLength: 8 }] },
+        interactive: s.bool("Clickable."),
+        draggable: s.bool("Draggable."),
+        chrome: s.bool("Card chrome."),
+        opacity: s.num("Opacity.", { minimum: 0.05, maximum: 1 }),
+        stack: s.str("Stack.", { enum: ["app", "top"] }),
+        hidden: s.bool("Hidden."),
+        order: s.int("Order.", { minimum: -100, maximum: 100 }),
+        data: s.json("New props.data."),
+        layer: layerParam,
+      },
+      ["id"],
+    ),
+    returns: "unknown",
+  },
+  { name: "ui.removeOverlay", summary: "Remove one of your floating overlays.", permission: "ui.overlay", tier: "app", params: s.obj({ id: s.str("Overlay id."), layer: layerParam }, ["id"]), returns: "void" },
+  {
+    name: "databases.listPropertyTypes",
+    summary: "List the custom database property types plugins and layers registered (use one with type \"custom\" + customType).",
+    permission: "databases.read",
+    tier: "app",
+    params: s.obj({}),
+    returns: "unknown",
+  },
+  {
+    name: "databases.registerPropertyType",
+    summary: "Register a new database property type with its own cell look, editor and per-property options (ratings, progress, tags, colors, money, links…).",
+    details:
+      "valueType (text, number, checkbox, date) decides how values sort, filter, group and calculate. render is a cell template: {{value}}, {{text}}, {{config.key}}, {{row.title}}, filters {{value | percent}} (upper, lower, fixed:n, round:n, number, date, default:x, truncate:n, times:n, divide:n, plus:n, minus:n, min:n, max:n, clamp01, join:\", \", length, json), blocks {{#if value >= 3}}…{{else}}…{{/if}}, {{#unless empty}}, {{#each value}}{{this}}{{/each}}, {{#repeat config.max}}{{@number}}{{/repeat}}. Output is escaped and sanitized (no script, no remote loads) and shown in a shadow root styled by css (theme variables like var(--accent) work). In a cell, clicking an element with data-value=\"json\" sets the value (add data-toggle to clear it when it's already set); data-edit opens the editor. editor is an HTML view in a popover: props { value, raw, config, property, row }; noteral.setData(v) saves, noteral.close(v?) saves (if given) and closes. Without editor, the value type's built-in editor is used. config fields (like plugin settings: toggle, text, number, slider, select, color…) appear in the property's menu. SDK plugins can render cells in their worker instead (registerPropertyType({ render: (ctx) => html })).",
+    permission: "databases.read",
+    tier: "app",
+    params: s.obj(
+      {
+        type: s.str("Type id stored in databases — keep it stable (lowercase letters, digits, dots, dashes, underscores).", { maxLength: 64, minLength: 1 }),
+        title: s.str("Name in the type picker.", { maxLength: 60 }),
+        icon: iconParam,
+        description: s.str("Shown in the type picker.", { maxLength: 200 }),
+        valueType: s.str("How values behave.", { enum: ["text", "number", "checkbox", "date"], default: "text" }),
+        render: s.str("Cell template (see details).", { maxLength: 40_000 }),
+        css: s.str("CSS for cells (scoped to the cell's shadow root).", { maxLength: 40_000 }),
+        editor: htmlView,
+        editorWidth: s.int("Editor popover width in px.", { minimum: 120, maximum: 900 }),
+        editorHeight: s.int("Editor's initial height in px.", { minimum: 40, maximum: 900 }),
+        config: s.arr("Per-property options: { key, type (toggle, text, textarea, number, slider, select, color), label, description?, default?, options?, min?, max?, step? }.", s.json("Field"), 20),
+        defaultValue: s.json("Value shown for rows that have none."),
+        align: s.str("Cell alignment.", { enum: ["start", "center", "end"] }),
+        renderer: s.bool("The plugin renders cells itself (set by the SDK when render is a function).", { default: false }),
+        layer: layerParam,
+      },
+      ["type"],
+    ),
+    returns: "unknown",
+  },
+  { name: "databases.unregisterPropertyType", summary: "Remove a property type you registered (existing values are kept and show as plain text).", permission: "databases.read", tier: "app", params: s.obj({ type: s.str("Type id."), layer: layerParam }, ["type"]), returns: "void" },
   { name: "statusBar.removeWidget", summary: "Remove a status bar widget.", permission: "ui.status", tier: "app", params: s.obj({ id: s.str("Widget id."), layer: layerParam }, ["id"]), returns: "void" },
   {
     name: "statusBar.getLayout",
@@ -1872,8 +2078,107 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
     returns: "{ target: string; field: string; replaced: number; length: number; owner?: string }",
   },
 
+  // ── storage (plugin-private data) ──────────────────────────────────────
+  {
+    name: "storage.get",
+    summary: "Read a value from the plugin's private storage. Returns null when the key is missing.",
+    details: "Private to the plugin, kept on disk under the app's data folder and removed when the plugin is uninstalled. Values are any JSON up to 8 MB each, 64 MB and 5000 keys per plugin. Keys: letters, digits and . _ : / @ + - (no \"..\"), up to 200 characters. Workspace scope (default) keeps one copy per workspace, like a vault's .obsidian/plugins/<id>/data.json.",
+    permission: null,
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj({ key: s.str("Storage key.", { maxLength: 200, minLength: 1 }), scope: SCOPE }, ["key"]),
+    returns: "unknown",
+    example: 'const cache = (await app.storage.get({ key: "index" })) ?? {};',
+  },
+  {
+    name: "storage.set",
+    summary: "Write a JSON value to the plugin's private storage. null deletes the key.",
+    permission: null,
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj({ key: s.str("Storage key.", { maxLength: 200, minLength: 1 }), value: s.json("Any JSON value; null deletes."), scope: SCOPE }, ["key"]),
+    returns: "void",
+    example: 'await app.storage.set({ key: "index", value: { built: Date.now(), pages } });',
+  },
+  { name: "storage.delete", summary: "Remove a key from the plugin's private storage.", permission: null, tier: "read", callers: ["plugin"], params: s.obj({ key: s.str("Storage key.", { maxLength: 200, minLength: 1 }), scope: SCOPE }, ["key"]), returns: "void" },
+  { name: "storage.list", summary: "List the plugin's storage keys, optionally under a prefix.", permission: null, tier: "read", callers: ["plugin"], params: s.obj({ prefix: s.str("Only keys starting with this.", { maxLength: 200 }), scope: SCOPE }), returns: "StorageEntryInfo[]" },
+  { name: "storage.clear", summary: "Delete every key (or every key under a prefix) in one scope. Returns how many were removed.", permission: null, tier: "read", callers: ["plugin"], params: s.obj({ prefix: s.str("Only keys starting with this.", { maxLength: 200 }), scope: SCOPE }), returns: "number" },
+  { name: "storage.usage", summary: "How many keys and bytes the plugin stores across all scopes, and its quota.", permission: null, tier: "read", callers: ["plugin"], params: EMPTY, returns: "StorageUsageInfo" },
+
+  // ── runtime (the plugin's own bundle) ──────────────────────────────────
+  {
+    name: "runtime.readFile",
+    summary: "Read a file shipped in the plugin's bundle (templates, JSON data, wasm, fonts…).",
+    details: "Paths are relative to the bundle root, e.g. \"data/emoji.json\". Up to 8 MB per file. Use encoding \"base64\" for binary files. Dotfiles and settings.json are not readable.",
+    permission: null,
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj({ path: s.str("Path inside the bundle.", { maxLength: 400, minLength: 1 }), encoding: s.str("Result encoding.", { enum: ["text", "base64"], default: "text" }) }, ["path"]),
+    returns: "string",
+    example: 'const words = JSON.parse(await app.runtime.readFile({ path: "data/words.json" }));',
+  },
+
+  // ── editor extensions ──────────────────────────────────────────────────
+  {
+    name: "editor.registerSuggester",
+    summary: "Open a menu of your items when the user types a trigger character in a page (like @ mentions or [[ links).",
+    details: "Use Plugin.registerSuggester(options, getItems, onSelect?) rather than calling this directly: it wires the handlers for you. The trigger is one character other than \"/\" (the slash menu) and \":\" (the emoji picker) — the slash menu is shared; add slash items with addCommand category \"Plugins\"). Up to 8 suggesters per plugin. getItems must answer within 3 seconds.",
+    permission: "editor.read",
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj({
+      id: s.str("Suggester id, unique within the plugin.", { maxLength: 64, minLength: 1 }),
+      trigger: s.str("One character, e.g. \"@\".", { maxLength: 2, minLength: 1 }),
+      minChars: s.int("Characters to type after the trigger before asking you.", { minimum: 0, maximum: 10, default: 0 }),
+      maxItems: s.int("Most items shown.", { minimum: 1, maximum: 50, default: 12 }),
+      onSelect: s.bool("Call your onSelect handler instead of inserting the item's text."),
+    }, ["id", "trigger"]),
+    returns: "void",
+  },
+  { name: "editor.unregisterSuggester", summary: "Remove one of the plugin's suggesters.", permission: "editor.read", tier: "read", callers: ["plugin"], params: s.obj({ id: s.str("Suggester id.", { maxLength: 64, minLength: 1 }) }, ["id"]), returns: "void" },
+
+  // ── plugins talking to plugins ─────────────────────────────────────────
+  {
+    name: "plugins.expose",
+    summary: "Publish methods other plugins can call with plugins.call.",
+    details: "Use Plugin.exposeApi({ name: handler, … }) rather than calling this directly. A handler runs inside your plugin with your permissions, so only expose what is safe for any plugin to call; the caller's id is passed as the second argument. Up to 100 methods.",
+    permission: null,
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj({ methods: s.arr("Method names.", s.str("Method name.", { maxLength: 64 }), 100) }, ["methods"]),
+    returns: "void",
+  },
+  { name: "plugins.running", summary: "List running plugins and the methods each one exposes.", permission: null, tier: "read", callers: ["plugin"], params: EMPTY, returns: "PluginApiInfo[]" },
+  {
+    name: "plugins.call",
+    summary: "Call a method another running plugin exposed.",
+    details: "Rejects when the plugin is not installed, not running or does not expose the method. Default timeout 10 seconds, at most 30.",
+    permission: null,
+    tier: "read",
+    callers: ["plugin"],
+    params: s.obj({ plugin: s.str("Plugin id, e.g. com.example.dataview.", { maxLength: 120, minLength: 1 }), method: s.str("Exposed method name.", { maxLength: 64, minLength: 1 }), args: s.json("Any JSON passed to the method."), timeoutMs: s.int("Milliseconds to wait.", { minimum: 100, maximum: 30000, default: 10000 }) }, ["plugin", "method"]),
+    returns: "unknown",
+    example: 'const tasks = await app.plugins.call({ plugin: "com.example.tasks", method: "query", args: { done: false } });',
+  },
+
   // ── plugins (assistant only) ───────────────────────────────────────────
   { name: "plugins.list", summary: "List installed plugins.", permission: null, tier: "read", callers: ["assistant"], params: EMPTY, returns: "PluginInfo[]" },
+  {
+    name: "plugins.docs",
+    summary: "Look up the plugin guide, the full API reference (including plugin-only methods such as storage, suggesters, popovers and plugins.expose) and type definitions.",
+    details:
+      "Use it while writing or fixing a plugin instead of guessing. No arguments: an index of guide sections, namespaces, events and permissions. topic: guide sections matching words (e.g. \"overlays\", \"property types\", \"storage\", \"view runtime\", \"manifest contributes\"). method: one method (\"statusBar.setWidget\") or a whole namespace (\"storage\") with parameters. type: a type definition (\"PropertyTypeDefinition\").",
+    permission: null,
+    tier: "read",
+    callers: ["assistant"],
+    params: s.obj({
+      topic: s.str("Words to find in the guide.", { maxLength: 200 }),
+      method: s.str("A method name or a namespace.", { maxLength: 100 }),
+      type: s.str("A type name.", { maxLength: 100 }),
+      full: s.bool("For a namespace, include every method's parameters.", { default: false }),
+    }),
+    returns: "PluginDocsResult",
+  },
   {
     name: "plugins.getSource",
     summary: "Read an installed plugin's manifest, code and styles.",
@@ -1909,7 +2214,7 @@ await app.editor.moveBlocks({ blockIds: [cursorBlockId], direction: "up" });`,
     name: "plugins.create",
     summary: "Install (or update) a plugin written by the assistant. The user reviews the code and permissions first.",
     details:
-      "code is plain JavaScript run in a sandbox. It must call Noteral.register(class extends Noteral.Plugin { async onload() {…} onunload() {…} }). Use this.app.<namespace>.<method>(params) for every App API method (e.g. this.app.sidebar.setTab, this.app.statusBar.setWidget, this.app.blocks.registerType, this.app.nodes.registerType, this.app.home.addWidget), this.addCommand({ id, title, run }), this.setStatus(itemId, text), this.setPanel(panelId, { title, markdown, actions }), this.onPanelAction(panelId, fn), this.onViewMessage(fn), this.registerEvent(eventName, fn), this.addStyles(css), this.loadData() / this.saveData(patch). The plugin is test-run first (see plugins.test) and, after installing, its start-up is checked: the result's `health` reports errors so you can fix and reinstall.",
+      "code is plain JavaScript run in a sandbox. It must call Noteral.register(class extends Noteral.Plugin { async onload() {…} onunload() {…} }). Use this.app.<namespace>.<method>(params) for every App API method (e.g. this.app.sidebar.setTab, this.app.statusBar.setWidget, this.app.blocks.registerType, this.app.nodes.registerType, this.app.home.addWidget), this.addCommand({ id, title, run }), this.setStatus(itemId, text), this.setPanel(panelId, { title, markdown, actions }), this.onPanelAction(panelId, fn), this.onViewMessage(fn), this.registerEvent(eventName, fn), this.addStyles(css), this.loadData() / this.saveData(patch), this.storage.get/set/list/delete, this.readFile(path), this.registerSuggester(def, getItems, onSelect), this.registerPropertyType(def), this.addOverlay(def), this.exposeApi(methods) / this.callPlugin(id, method, args) and this.register(cleanup). Look up details with plugins.docs. The plugin is test-run first (see plugins.test) and, after installing, its start-up is checked: the result's `health` reports errors so you can fix and reinstall.",
     permission: null,
     tier: "app",
     callers: ["assistant"],
@@ -1992,9 +2297,14 @@ export const EVENTS: EventSpec[] = [
   { name: "workspace:opened", summary: "A workspace was opened.", permission: null, payload: "WorkspaceInfo" },
   { name: "selection:changed", summary: "The cursor or selection moved in the open page (debounced).", permission: "editor.read", payload: "EditorSelection & { pageId: string }" },
   { name: "layout:changed", summary: "Panes, tabs, sidebars or their tabs changed (debounced).", permission: "layout", payload: "LayoutInfo" },
-  { name: "pages:changed", summary: "Pages were created, renamed, moved or trashed.", permission: "pages.read", payload: "{ count: number }" },
+  { name: "pages:changed", summary: "Pages were created, renamed, moved or trashed (one summary per batch; see page:created and friends for details).", permission: "pages.read", payload: "{ count: number; created: string[]; renamed: string[]; moved: string[]; deleted: string[] }" },
   { name: "panel:action", summary: "A button in one of the plugin's panels or Markdown tabs was pressed.", permission: "ui.panel", payload: "{ panelId: string; actionId: string }" },
   { name: "settings:changed", summary: "The user changed the plugin's options.", permission: "settings.read", payload: "{ options: Record<string, unknown>; changed: string[] }" },
+  { name: "page:created", summary: "A page, folder, database or custom node was created.", permission: "pages.read", payload: "PageEventInfo" },
+  { name: "page:renamed", summary: "A page's title changed.", permission: "pages.read", payload: "PageEventInfo & { previousTitle: string }" },
+  { name: "page:moved", summary: "A page moved to another parent.", permission: "pages.read", payload: "PageEventInfo & { previousParentId: string | null }" },
+  { name: "page:deleted", summary: "A page was moved to the trash.", permission: "pages.read", payload: "PageEventInfo" },
+  { name: "page:saved", summary: "A page's content was saved (any page, not only the open one; debounced per page).", permission: "pages.read", payload: "{ pageId: string; title: string }" },
   { name: "view:message", summary: "One of the plugin's HTML views called noteral.post(name, payload).", permission: null, payload: "{ view: string; name: string; payload: unknown }" },
 ];
 

@@ -14,6 +14,8 @@ export type LinkHandler = (href: string) => void;
 interface Options {
   onLink?: LinkHandler;
   keyPrefix: string;
+  /** Show `![alt](https://…)` as images instead of links (the browser's reader). */
+  images?: boolean;
 }
 
 // ── inline ────────────────────────────────────────────────────────────────
@@ -62,7 +64,9 @@ export function renderInline(text: string, options: Options): ReactNode[] {
     else if (match[5] !== undefined) out.push(<del key={key}>{renderInline(match[5], nested)}</del>);
     else if (match[6] !== undefined) out.push(<em key={key}>{renderInline(match[6], nested)}</em>);
     else if (match[7] !== undefined) out.push(<em key={key}>{renderInline(match[7], nested)}</em>);
-    else if (match[9] !== undefined) out.push(renderLink(match[8] ? renderInline(match[8], nested) : match[9], match[9], key, options));
+    else if (match[9] !== undefined && options.images && match[0].startsWith("!") && /^https?:/i.test(match[9])) {
+      out.push(<img key={key} src={match[9]} alt={match[8] ?? ""} loading="lazy" decoding="async" referrerPolicy="no-referrer" />);
+    } else if (match[9] !== undefined) out.push(renderLink(match[8] ? renderInline(match[8], nested) : match[9], match[9], key, options));
     else if (match[10] !== undefined) out.push(renderLink(match[10], match[10], key, options));
     last = pattern.lastIndex;
   }
@@ -314,8 +318,9 @@ export interface MarkdownProps {
   source: string;
   className?: string;
   onLink?: LinkHandler;
+  images?: boolean;
 }
 
-export const Markdown = memo(function Markdown({ source, className, onLink }: MarkdownProps) {
-  return <div className={`md${className ? ` ${className}` : ""}`}>{renderBlocks(parseBlocks(source), { onLink, keyPrefix: "" })}</div>;
+export const Markdown = memo(function Markdown({ source, className, onLink, images }: MarkdownProps) {
+  return <div className={`md${className ? ` ${className}` : ""}`}>{renderBlocks(parseBlocks(source), { onLink, keyPrefix: "", images })}</div>;
 });

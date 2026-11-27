@@ -380,20 +380,35 @@ function ModalView({ popup, request, top }: { popup: OpenPopup; request: ModalRe
 
 // ── popover view ─────────────────────────────────────────────────────────────
 
+/** Whether a pointer-down target sits in a popup opened after `id` (a menu or popover it opened). */
+function inLaterPopup(target: Element | null, id: number): boolean {
+  const host = target?.closest?.("[data-popup]");
+  const other = host ? Number(host.getAttribute("data-popup")) : NaN;
+  return Number.isFinite(other) && other > id;
+}
+
 function PopoverView({ popup, request }: { popup: OpenPopup; request: PopoverRequest }) {
   const panel = useRef<HTMLDivElement>(null);
   const width = clampSize(request.width, 120, 900) ?? 300;
   const height = clampSize(request.height, 40, 900);
-  const style = usePlacement(panel, request, [request.x, request.y, request.anchor?.x, request.anchor?.y]);
+  const maxHeight = clampSize(request.maxHeight, 40, 2000) ?? Math.round(window.innerHeight * 0.7);
+  const style = usePlacement(panel, request, [request.x, request.y, request.anchor?.x, request.anchor?.y, request.anchor?.width, request.placement, request.offset, width, height]);
   const props = useMemo(() => ({ data: request.data ?? null }), [request.data]);
   useEffect(() => {
     const onPointer = (event: PointerEvent) => {
+      if (request.persistent) return;
       const target = event.target as Element | null;
       if (target?.closest?.(`[data-popup="${popup.id}"]`)) return;
+      if (inLaterPopup(target, popup.id)) return;
+      if (request.ignore && target?.closest?.(request.ignore)) return;
       popups.close(popup.id, null);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || request.escape === false) return;
+      // Only the newest popup takes Escape.
+      const all = popups.current();
+      const last = all[all.length - 1];
+      if (last && last.id !== popup.id) return;
       event.preventDefault();
       event.stopPropagation();
       popups.close(popup.id, null);
@@ -404,9 +419,17 @@ function PopoverView({ popup, request }: { popup: OpenPopup; request: PopoverReq
       window.removeEventListener("pointerdown", onPointer, true);
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [popup.id]);
+  }, [popup.id, request.persistent, request.escape, request.ignore]);
   return createPortal(
-    <div ref={panel} data-popup={popup.id} className="popup-popover" role="dialog" aria-label={request.owner.name} style={{ ...style, width, height }}>
+    <div
+      ref={panel}
+      data-popup={popup.id}
+      data-popup-name={request.name}
+      className={`popup-popover${request.bare ? " is-bare" : ""}`}
+      role="dialog"
+      aria-label={request.owner.name}
+      style={{ ...style, width, height, ...(height ? {} : { maxHeight }) }}
+    >
       <ViewFrame
         viewKey={`popup:${popup.id}`}
         html={request.html}
@@ -416,7 +439,7 @@ function PopoverView({ popup, request }: { popup: OpenPopup; request: PopoverReq
         surface="popover"
         fill={Boolean(height)}
         initialHeight={height ?? 60}
-        maxHeight={Math.round(window.innerHeight * 0.7)}
+        maxHeight={maxHeight}
         title={request.owner.name}
         onClose={(value) => popups.close(popup.id, value)}
         onData={(data) => popups.close(popup.id, data)}

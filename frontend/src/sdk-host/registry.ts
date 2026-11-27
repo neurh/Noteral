@@ -10,13 +10,15 @@ import { HOME_HANDLERS } from "./handlersHome";
 import { SOURCE_HANDLERS } from "./handlersSource";
 import { UI_HANDLERS } from "./handlersUi";
 import { STATS_HANDLERS } from "./handlersStats";
+import { PLUGIN_HANDLERS } from "./handlersPlugin";
+import { DOCS_HANDLERS } from "./handlersDocs";
 
 export type HandlerFn = (params: Record<string, unknown>, ctx: CallContext) => unknown;
 
 let merged: Record<string, HandlerFn> | undefined;
 
 export function allHandlers(): Record<string, HandlerFn> {
-  merged ??= { ...HANDLERS, ...DATABASE_HANDLERS, ...HOME_HANDLERS, ...UI_HANDLERS, ...SOURCE_HANDLERS, ...STATS_HANDLERS } as Record<string, HandlerFn>;
+  merged ??= { ...HANDLERS, ...DATABASE_HANDLERS, ...HOME_HANDLERS, ...UI_HANDLERS, ...SOURCE_HANDLERS, ...STATS_HANDLERS, ...PLUGIN_HANDLERS, ...DOCS_HANDLERS } as Record<string, HandlerFn>;
   return merged;
 }
 

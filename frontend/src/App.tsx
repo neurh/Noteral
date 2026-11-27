@@ -4,7 +4,7 @@ import { AlertTriangle, LoaderCircle, RotateCcw } from "lucide-react";
 import { api, errorMessage } from "./lib/api";
 import { commandRegistry, type AppCommand } from "./lib/commands";
 import { applyTheme, resolveTheme } from "./lib/theme";
-import { useAppStore } from "./store";
+import { isWebTab, useAppStore } from "./store";
 import { useAppStore as store } from "./store";
 import { PluginHost } from "./plugins/PluginHost";
 import { TopBar } from "./components/TopBar";
@@ -19,12 +19,15 @@ import { WorkspaceDialog } from "./components/WorkspaceDialog";
 import { LibraryDialog } from "./components/LibraryDialog";
 import { PluginManager } from "./components/PluginManager";
 import { HostDialogs } from "./components/HostDialogs";
+import { OverlayLayer } from "./components/OverlayLayer";
 import { HostPopups } from "./components/HostPopups";
 import { PluginConfigureDialog } from "./components/PluginConfigureDialog";
 import { RowPeekHost } from "./components/database/RowPeek";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { editorBridge } from "./lib/editorBridge";
 import { toggleAssistant } from "./assistant/open";
+import { startBrowser, useBrowserStore } from "./browser/store";
+import { newBrowserTab, routeWindowOpen, showBrowser } from "./browser/open";
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -90,6 +93,23 @@ function makeCommands(): AppCommand[] {
       keywords: "create home",
       shortcut: "Ctrl/⌘ T",
       run: () => store.getState().openHomeTab(),
+    },
+    {
+      id: "app.browser",
+      title: "Open browser",
+      category: "Browser",
+      description: "Show the in-app browser, or open it if no browser tab is open",
+      keywords: "web internet site url globe",
+      run: () => showBrowser(),
+    },
+    {
+      id: "app.browser-new-tab",
+      title: "New browser tab",
+      category: "Browser",
+      description: "Search the web or open a site in a new tab",
+      keywords: "web internet site url globe",
+      shortcut: "Ctrl/⌘ ⇧ O",
+      run: () => void newBrowserTab(),
     },
     {
       id: "app.close-tab",
@@ -295,6 +315,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    startBrowser();
+    routeWindowOpen();
+  }, []);
+
+  useEffect(() => {
     document.title = activeTitle && activeTitle !== "Noteral" ? `${activeTitle} — Noteral` : "Noteral";
   }, [activeTitle]);
 
@@ -307,7 +332,11 @@ export default function App() {
         // Option+Arrow moves by word on macOS; keep that while writing.
         if (isEditable(event.target)) return;
         event.preventDefault();
-        if (event.key === "ArrowLeft") state.goBack();
+        if (isWebTab(state.activeTabId)) {
+          const browser = useBrowserStore.getState();
+          if (event.key === "ArrowLeft") browser.back(state.activeTabId);
+          else browser.forward(state.activeTabId);
+        } else if (event.key === "ArrowLeft") state.goBack();
         else state.goForward();
         return;
       }
@@ -351,9 +380,16 @@ export default function App() {
         if (isEditable(event.target) && !event.shiftKey) return;
         event.preventDefault();
         state.updateSettings(event.shiftKey ? { rightOpen: !state.settings.rightOpen } : { leftOpen: !state.settings.leftOpen });
+      } else if (key === "o" && event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        newBrowserTab();
       } else if (key === "[" || key === "]") {
         event.preventDefault();
-        if (key === "[") state.goBack();
+        if (isWebTab(state.activeTabId)) {
+          const browser = useBrowserStore.getState();
+          if (key === "[") browser.back(state.activeTabId);
+          else browser.forward(state.activeTabId);
+        } else if (key === "[") state.goBack();
         else state.goForward();
       } else if (key === "\\" || key === "|") {
         event.preventDefault();
@@ -464,6 +500,7 @@ export default function App() {
       <LibraryDialog />
       <PluginManager />
       <HostDialogs />
+      <OverlayLayer />
       <HostPopups />
       <PluginConfigureDialog />
       <RowPeekHost />

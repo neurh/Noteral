@@ -377,7 +377,14 @@ function syncContributions() {
   const keep = new Set<string>();
   for (const layer of state.layers) {
     if (!layerIsLive(layer)) continue;
-    const empty = !layer.sidebarTabs.length && !layer.statusWidgets.length && !layer.blockTypes.length && !layer.nodeTypes.length && !layer.menuItems.length;
+    const empty =
+      !layer.sidebarTabs.length &&
+      !layer.statusWidgets.length &&
+      !layer.blockTypes.length &&
+      !layer.nodeTypes.length &&
+      !layer.menuItems.length &&
+      !layer.overlays?.length &&
+      !layer.propertyTypes?.length;
     if (empty) continue;
     keep.add(layer.id);
     contributions.set({
@@ -388,6 +395,8 @@ function syncContributions() {
       blockTypes: layer.blockTypes,
       nodeTypes: layer.nodeTypes,
       menuItems: layer.menuItems,
+      overlays: layer.overlays ?? [],
+      propertyTypes: layer.propertyTypes ?? [],
       settings: [],
     });
   }

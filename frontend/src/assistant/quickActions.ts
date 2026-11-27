@@ -9,6 +9,7 @@ import { useAppStore } from "../store";
 import { useComposer } from "./Composer";
 import { toggleAssistant } from "./open";
 import { useAssistant } from "./store";
+import type { Mention } from "./mentions";
 import type { AssistantMode } from "./types";
 
 function focusComposer(caretAtEnd = true) {
@@ -27,19 +28,20 @@ function needMode(mode: AssistantMode) {
 }
 
 /** Open the assistant and send a prompt right away. */
-export function sendToAssistant(prompt: string, mode: AssistantMode = "ask") {
+export function sendToAssistant(prompt: string, mode: AssistantMode = "ask", mentions: Mention[] = []) {
   toggleAssistant(true);
   void (async () => {
     await useAssistant.getState().init();
     needMode(mode);
-    await useAssistant.getState().send(prompt);
+    await useAssistant.getState().send(prompt, mentions);
   })().catch((error: unknown) => useAppStore.getState().notify(error instanceof Error ? error.message : String(error), "error"));
 }
 
 /** Open the assistant with the composer prefilled, for the user to finish. */
-export function draftInAssistant(text: string, mode?: AssistantMode) {
+export function draftInAssistant(text: string, mode?: AssistantMode, mentions: Mention[] = []) {
   toggleAssistant(true);
   if (mode) needMode(mode);
+  if (mentions.length) useComposer.getState().addMentions(mentions);
   useComposer.getState().setDraft(text);
   focusComposer();
 }

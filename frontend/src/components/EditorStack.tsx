@@ -1,6 +1,7 @@
 import { LoaderCircle } from "lucide-react";
 import { type PaneNode } from "../lib/panes";
-import { isHomeTab, useAppStore } from "../store";
+import { isHomeTab, isWebTab, useAppStore } from "../store";
+import { BrowserView } from "../browser/BrowserView";
 import { HomeView } from "./HomeView";
 import { PageView } from "./PageView";
 
@@ -21,6 +22,10 @@ export function EditorStack({ pane }: EditorStackProps) {
       {pane.tabs.map((tabId) => {
         if (isHomeTab(tabId)) {
           return pane.activeTabId === tabId ? <HomeView key={tabId} tabId={tabId} /> : null;
+        }
+        if (isWebTab(tabId)) {
+          // Browser tabs stay mounted so a live page keeps its state between switches.
+          return <BrowserView key={tabId} tabId={tabId} active={pane.activeTabId === tabId} />;
         }
         const page = documents[tabId];
         if (!page) {

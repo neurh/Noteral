@@ -10,11 +10,16 @@ import {
   Gauge,
   ListFilter,
   Plus,
+  Puzzle,
   Sigma,
   Trash2,
   WrapText,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useContributions } from "../../lib/contributions";
+import { PageIcon } from "../PageIcon";
+import { OptionField } from "../PluginOptions";
+import { customConfig } from "./CustomCell";
 import {
   NUMBER_FORMATS,
   PROPERTY_TYPES,
@@ -44,11 +49,13 @@ import {
 } from "./ops";
 import type { DatabaseApi } from "./useDatabase";
 
-/** The list of property types, used when adding or changing a property. */
-export function TypeList({ current, onPick, title = "Type" }: { current?: PropertyType; onPick: (type: PropertyType) => void; title?: string }) {
+/** The list of property types (built-in, then plugin and layer types), used when adding or changing a property. */
+export function TypeList({ current, currentCustom, onPick, title = "Type" }: { current?: PropertyType; currentCustom?: string; onPick: (type: PropertyType, customType?: string) => void; title?: string }) {
   const [query, setQuery] = useState("");
+  const { propertyTypes } = useContributions();
   const needle = query.trim().toLowerCase();
   const types = PROPERTY_TYPES.filter((item) => item.name.toLowerCase().includes(needle));
+  const custom = propertyTypes.filter((item) => `${item.title} ${item.type} ${item.description ?? ""} ${item.owner.name}`.toLowerCase().includes(needle));
   return (
     <div className="db-menu">
       <div className="db-menu-pad">
@@ -60,7 +67,9 @@ export function TypeList({ current, onPick, title = "Type" }: { current?: Proper
           aria-label="Search property types"
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && types[0]) onPick(types[0].type);
+            if (event.key !== "Enter") return;
+            if (types[0]) onPick(types[0].type);
+            else if (custom[0]) onPick("custom", custom[0].type);
           }}
         />
       </div>
@@ -73,8 +82,51 @@ export function TypeList({ current, onPick, title = "Type" }: { current?: Proper
             {current === item.type ? <Check size={14} className="db-menu-check" /> : null}
           </button>
         ))}
-        {!types.length ? <div className="db-menu-empty">No matching types</div> : null}
+        {custom.length ? <div className="db-menu-label">From plugins</div> : null}
+        {custom.map((item) => (
+          <button key={item.key} type="button" className="db-menu-item" title={item.description ? `${item.description} — ${item.owner.name}` : item.owner.name} onClick={() => onPick("custom", item.type)}>
+            <span className="db-prop-icon">{item.icon ? <PageIcon value={item.icon} size={14} fallback={<Puzzle size={14} />} /> : <Puzzle size={14} />}</span>
+            {item.title}
+            <span className="db-menu-value">{item.owner.name}</span>
+            {current === "custom" && currentCustom === item.type ? <Check size={14} className="db-menu-check" /> : null}
+          </button>
+        ))}
+        {!types.length && !custom.length ? <div className="db-menu-empty">No matching types</div> : null}
       </div>
+    </div>
+  );
+}
+
+/** A custom property's per-property options (the type's config fields). */
+function CustomConfigSection({ db, property }: { db: DatabaseApi; property: Property }) {
+  const { propertyTypeMap } = useContributions();
+  const def = property.customType ? propertyTypeMap.get(property.customType) : undefined;
+  const timers = useRef(new Map<string, number>());
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  useEffect(() => () => { for (const timer of timers.current.values()) window.clearTimeout(timer); }, []);
+  if (!def?.config?.length) return null;
+  const config = { ...customConfig(def, property), ...draft };
+  return (
+    <div className="db-custom-config">
+      <div className="db-menu-label">{def.title} options</div>
+      {def.config.map((field) => (
+        <OptionField
+          key={field.key}
+          id={`db-cfg-${property.id}-${field.key}`}
+          field={field}
+          value={config[field.key]}
+          onChange={(f, value, delay = 0) => {
+            setDraft((current) => ({ ...current, [f.key]: value }));
+            window.clearTimeout(timers.current.get(f.key));
+            timers.current.set(f.key, window.setTimeout(() => {
+              db.updateSchema((schema) => {
+                const target = schema.properties.find((item) => item.id === property.id);
+                if (target) target.config = { ...(target.config ?? {}), [f.key]: value };
+              });
+            }, delay));
+          }}
+        />
+      ))}
     </div>
   );
 }
@@ -246,6 +298,7 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
             <OptionsSection db={db} property={property} />
           </>
         ) : null}
+        {property.type === "custom" ? <CustomConfigSection db={db} property={property} /> : null}
         {view ? (
           <>
             <div className="db-menu-sep" />
@@ -330,9 +383,10 @@ export function PropertyMenu({ db, property, anchor, onClose, view, onInsert, on
         <Popover anchor={sub.anchor} onClose={() => setSub(null)} placement="right-start" width={240} label="Property type">
           <TypeList
             current={property.type}
-            onPick={(type) => {
+            currentCustom={property.customType}
+            onPick={(type, customType) => {
               setSub(null);
-              changePropertyType(db, property.id, type);
+              changePropertyType(db, property.id, type, customType);
               if (type === "formula") setEditFormula(true);
             }}
           />

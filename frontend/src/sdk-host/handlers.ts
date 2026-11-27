@@ -20,7 +20,9 @@ import {
 } from "../lib/customizations";
 import type { Customizations } from "../lib/customizations";
 import type { ContributionSet } from "../lib/contributions";
+import { contributions } from "../lib/contributions";
 import {
+  asValueProperty,
   OPTION_COLORS,
   TITLE_ID,
   defaultStatusOptions,
@@ -49,7 +51,8 @@ import { paneList } from "../lib/panes";
 import { applyEdits } from "./textEdits";
 import type { TextEdit } from "./textEdits";
 import type { LayoutNode } from "../lib/panes";
-import { isHomeTab, useAppStore } from "../store";
+import { isHomeTab, isVirtualTab, isWebTab, useAppStore } from "../store";
+import { useBrowserStore } from "../browser/store";
 import type { Caller } from "./spec";
 import type {
   ActivePage,
@@ -74,7 +77,7 @@ import type {
   WorkspaceInfo,
 } from "./types";
 
-export const SDK_VERSION = "2.1.0";
+export const SDK_VERSION = "2.3.0";
 
 /** Things only a running plugin frame can do (status items, panels, styles). */
 export interface PluginSurface {
@@ -96,6 +99,8 @@ export interface CallContext {
   surface?: PluginSurface;
   /** Runtime frame key ("<pluginId>" or "trial:<pluginId>"). */
   frameKey?: string;
+  /** The HTML view that made the call ("popup:<id>" for popovers and modals, a widget key…). */
+  viewKey?: string;
   /**
    * Where assistant changes go: each chat writes into its own customization layer so the
    * user can switch it off, inspect it or remove it from Plugins → Created.
@@ -180,7 +185,7 @@ function pageInfoById(pageId: string): PageInfo {
 
 export function activePageId(): string {
   const state = store();
-  return state.activePageId && !isHomeTab(state.activePageId) ? state.activePageId : "";
+  return state.activePageId && !isVirtualTab(state.activePageId) ? state.activePageId : "";
 }
 
 function focusedPaneId(): string {
@@ -512,6 +517,10 @@ export interface PropertyExtras {
   dateFormat?: string;
   /** Number "Show as": { style, color?, max?, showNumber? }, a style name, or null to clear. */
   display?: unknown;
+  /** For type "custom": the registered type (databases.listPropertyTypes). */
+  customType?: string;
+  /** For type "custom": per-property options merged into the current ones (null removes a key). */
+  config?: Record<string, unknown> | null;
 }
 
 /**
@@ -586,6 +595,31 @@ export function applyPropertyExtras(schema: DatabaseSchema, property: Property, 
     if (display) property.display = display;
     else delete property.display;
   }
+  if (property.type === "custom") {
+    if (extras.customType !== undefined && extras.customType !== property.customType) {
+      if (!contributions.current().propertyTypeMap.has(extras.customType)) {
+        const known = contributions.current().propertyTypes.map((item) => `"${item.type}"`).join(", ") || "none — a plugin registers them with databases.registerPropertyType";
+        throw new Error(`No property type "${extras.customType}" is registered. Types: ${known}.`);
+      }
+      property.customType = extras.customType;
+      delete property.config;
+    }
+    if (!property.customType) throw new Error(`Custom property "${property.name}" needs customType (see databases.listPropertyTypes).`);
+    if (extras.config === null) delete property.config;
+    else if (extras.config !== undefined) {
+      if (typeof extras.config !== "object" || Array.isArray(extras.config)) throw new Error("config must be an object.");
+      const merged: Record<string, unknown> = { ...(property.config ?? {}) };
+      for (const [key, value] of Object.entries(extras.config)) {
+        if (value === null) delete merged[key];
+        else merged[key] = structuredClone(value);
+      }
+      if (JSON.stringify(merged).length > 20_000) throw new Error("config is larger than 20 KB.");
+      if (Object.keys(merged).length) property.config = merged;
+      else delete property.config;
+    }
+  } else if (extras.customType !== undefined || (extras.config !== undefined && extras.config !== null)) {
+    throw new Error(`customType and config need type "custom" ("${property.name}" is ${property.type}).`);
+  }
   if (property.type === "formula") {
     if (extras.formula !== undefined) property.formula = checkFormula(schema, extras.formula, property);
     else if (!property.formula) throw new Error(`Formula property "${property.name}" needs a formula, e.g. {Price} * {Quantity}.`);
@@ -658,6 +692,16 @@ export function convertValue(property: Property, value: unknown): { value: unkno
         if (!ids.includes(id)) ids.push(id);
       }
       return { value: ids.length ? ids : undefined, schemaChanged: changed };
+    }
+    case "custom": {
+      // { value, ...extra } keeps extra structure next to the sortable value; plain values
+      // go through the type's value type (number, checkbox, date) when they fit it.
+      const typed = asValueProperty(property);
+      const structured = value !== null && typeof value === "object";
+      if (!structured && typed.type !== "text") return convertValue({ ...typed, type: typed.type }, value);
+      const stored = structured ? structuredClone(value) : value;
+      if (JSON.stringify(stored).length > 50_000) throw new Error(`"${property.name}" value is larger than 50 KB.`);
+      return { value: stored, schemaChanged: false };
     }
     default:
       return { value: typeof value === "string" ? value : JSON.stringify(value), schemaChanged: false };
@@ -1194,8 +1238,8 @@ export const HANDLERS: Record<string, Handler> = {
     paneList(store().layout).flatMap((pane) =>
       pane.tabs.map((tabId) => ({
         id: tabId,
-        title: isHomeTab(tabId) ? "Home" : displayTitle(tabId),
-        kind: isHomeTab(tabId) ? ("home" as const) : ("page" as const),
+        title: isHomeTab(tabId) ? "Home" : isWebTab(tabId) ? useBrowserStore.getState().tab(tabId).title : displayTitle(tabId),
+        kind: isHomeTab(tabId) ? ("home" as const) : isWebTab(tabId) ? ("web" as const) : ("page" as const),
         paneId: pane.id,
         active: pane.activeTabId === tabId,
       })),
@@ -1377,7 +1421,8 @@ export const HANDLERS: Record<string, Handler> = {
       url: p.url,
       headers: p.headers ?? {},
       body: p.body ?? "",
-      timeoutMs: 30_000,
+      bodyEncoding: p.bodyEncoding === "base64" ? "base64" : "",
+      timeoutMs: typeof p.timeoutMs === "number" ? p.timeoutMs : 30_000,
     });
     const headers: Record<string, string> = {};
     let encoding: HttpResponse["encoding"] = "text";

@@ -22,22 +22,30 @@ const CREATOR_GUIDE = `
 - Call appearance.listTokens and appearance.listComponents before styling so you use real token and component names. Prefer tokens (colors, fonts, radii) over raw CSS; use styleComponent for one component; addCss only when neither fits. Keep contrast readable in both light and dark themes — set both when you change colors.
 - Changes apply instantly and are saved. appearance.reset undoes them.
 
+## Building interface directly (no plugin needed)
+- Status bar: statusBar.setWidget takes text/icon/badge/tone/progress or full html, width (px, "auto", "fill" = the free space, "40%"), minWidth/maxWidth, and popup { html, width, placement } that opens next to it on click. statusBar.updateWidget merges changes (live counters, progress).
+- Floating overlays: ui.setOverlay { id, html, position (corners, edges, center, full), x, y, width, draggable, chrome, interactive:false for click-through, stack "top" above dialogs } for HUDs, timers, sticky notes and effects. They float above the app without moving the layout.
+- Database property types: databases.registerPropertyType { type, title, icon, valueType, config fields, render template, css, editor html }. Then use it with databases.addProperty { type: "custom", customType }. Templates use {{value}}, {{config.x}}, {{#if value >= 3}}…{{else}}…{{/if}}, {{#each}}, {{#repeat config.max}}{{@number}}{{/repeat}} and filters (percent, fixed:1, date, default:"—"). An element with data-value="<json>" sets the value when clicked (add data-toggle to clear it). data-edit opens the editor.
+- HTML views (widgets, tabs, blocks, popups, overlays) get window.noteral: props, setData, onProps, post, on(event), open, popover(opts, anchor), menu, modal, close(value), and app.<ns>.<method> calls.
+
 ## Writing plugins (plugins.create)
+- Before you write one, look things up with plugins.docs instead of guessing: a topic ("storage", "suggesters", "overlays", "property types", "view runtime", "manifest contributes"), a method or a whole namespace (it includes plugin-only methods you have no tools for), or a type. Look up any method you're not sure about.
 - code is plain JavaScript in a sandbox. Shape:
   Noteral.register(class extends Noteral.Plugin {
     async onload() {
       this.addCommand({ id: "do-thing", title: "Do the thing", run: async () => { /* … */ } });
-      this.registerEvent("document:changed", async () => this.setStatus("words", "…"));
+      this.registerEvent("page:saved", async (e) => { /* … */ });
       await this.setPanel("summary", { title: "Summary", markdown: "…", actions: [{ id: "refresh", label: "Refresh" }] });
       this.onPanelAction("summary", async (actionId) => { /* … */ });
     }
     onunload() {}
   });
-- Call every App API method as await this.app.<namespace>.<method>(params), e.g. this.app.editor.getMarkdown({}), this.app.pages.create({ title, markdown }), this.app.ui.notify({ message }). this.loadData() / this.saveData(patch) persist settings (settings.read / settings.write).
-- Events: document:changed, page:opened, theme:changed, workspace:opened, pages:changed, panel:action.
-- List every permission the code needs in manifest.permissions (ui.status for setStatus, ui.panel for setPanel, ui.styles for addStyles, plus the namespace permissions of the methods it calls), and declare status items and panels in manifest.statusItems / manifest.panels. Ask only for permissions you use.
-- Plugins run in an iframe with no access to the app's DOM; panels, status items, commands and addStyles(css) are how they show things.
-- To change an existing plugin, read it with plugins.getSource and patch it with plugins.edit (find/replace; the version is bumped for you). Use plugins.create again only for a rewrite.
+- Call every App API method as await this.app.<namespace>.<method>(params), e.g. this.app.editor.getMarkdown({}), this.app.pages.create({ title, markdown }), this.app.ui.notify({ message }).
+- Plugin helpers (cleaned up on unload): addCommand, registerEvent, setStatus, setPanel / onPanelAction, onViewMessage, addStyles(css), loadData() / saveData(patch) (small settings), this.storage.get/set/delete/list (private key-value storage, up to 64 MB), this.readFile(path) (files in the bundle), this.registerSuggester({ id, trigger: "@" }, getItems, onSelect?) (a menu at the cursor while typing), this.registerPropertyType(def) (render can be a function), this.addOverlay(def) → { update, remove }, this.exposeApi({ method }) / this.callPlugin(id, method, args) (plugins working together), this.register(cleanup).
+- Events: document:changed, selection:changed, page:opened, page:created, page:renamed, page:moved, page:deleted, page:saved, pages:changed, workspace:opened, theme:changed, layout:changed, settings:changed, panel:action, view:message.
+- List every permission the code needs in manifest.permissions: ui.status for setStatus, ui.panel for setPanel, ui.styles for addStyles, ui.overlay for overlays, databases.read for property types, plus the namespace permissions of the methods it calls. Declare status items and panels in manifest.statusItems / manifest.panels. Ask only for permissions you use.
+- Plugins run in an iframe with no access to the app's DOM. Commands, panels, status widgets and their popups, sidebar tabs, custom blocks and page types, overlays, property types, suggesters and addStyles(css) are how they show things.
+- Test with plugins.test and fix every error before plugins.create. To change an existing plugin, read it with plugins.getSource and patch it with plugins.edit (find/replace; the version is bumped for you). Use plugins.create again only for a rewrite.
 
 ## Changing what already exists
 - Widgets, sidebar tabs, block and page types, CSS snippets, component styles and Home widgets all have editable source. Find it with source.list, read it with source.get, then change only what's needed with source.edit (find/replace). Don't resend the whole HTML through setWidget / setTab / registerType / addWidget to change a few lines.`;

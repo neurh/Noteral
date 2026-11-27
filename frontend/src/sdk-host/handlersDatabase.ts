@@ -642,7 +642,7 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
     const { meta, schema } = requireDatabase(p.databaseId);
     const id = resolveProperty(schema, p.property);
     if (id === TITLE_ID) {
-      if (p.type || p.options || p.format || p.formula !== undefined || p.dateFormat !== undefined || p.display !== undefined) throw new Error("The title column is always text; only its name can change (use name or databases.rename).");
+      if (p.type || p.options || p.format || p.customType || p.config || p.formula !== undefined || p.dateFormat !== undefined || p.display !== undefined) throw new Error("The title column is always text; only its name can change (use name or databases.rename).");
       if (typeof p.name === "string" && p.name.trim()) renameTitle(schema, p.name.trim().slice(0, 100));
       await saveSchema(meta.id, schema);
       return schemaInfo(meta, schema);
@@ -677,7 +677,11 @@ export const DATABASE_HANDLERS: Record<string, (p: Params) => unknown> = {
         delete next.dateFormat;
       }
     }
-    applyPropertyExtras(schema, next, { formula: p.formula, format: p.format, dateFormat: p.dateFormat, display: p.display });
+    if (next.type !== "custom") {
+      delete next.customType;
+      delete next.config;
+    }
+    applyPropertyExtras(schema, next, { formula: p.formula, format: p.format, dateFormat: p.dateFormat, display: p.display, customType: p.customType, config: p.config });
     let removedOptions: Set<string> | undefined;
     if (Array.isArray(p.options)) {
       if (!hasOptions(next.type)) throw new Error(`"${next.name}" is ${next.type}; only select, multi-select and status have options.`);

@@ -30,6 +30,9 @@ type Link struct {
 	URL  string `json:"url"`
 }
 
+// errUnsupportedType marks a response Fetch cannot turn into text.
+var errUnsupportedType = errors.New("unsupported content type")
+
 // Page is a fetched document reduced to readable text.
 type Page struct {
 	URL         string `json:"url"`
@@ -50,10 +53,17 @@ type Page struct {
 // A 4xx/5xx response still yields the extracted Page together with an
 // "HTTP <code>" error.
 func (c *Client) Fetch(ctx context.Context, rawURL string, maxChars int) (Page, error) {
+	page, _, err := c.fetch(ctx, rawURL, maxChars)
+	return page, err
+}
+
+// fetch is Fetch that also hands back the response headers (nil when the
+// request never got a response).
+func (c *Client) fetch(ctx context.Context, rawURL string, maxChars int) (Page, http.Header, error) {
 	maxChars = clampInt(maxChars, defaultMaxChars, maxMaxChars)
 	u, err := parseHTTPURL(rawURL)
 	if err != nil {
-		return Page{URL: rawURL, Links: []Link{}}, err
+		return Page{URL: rawURL, Links: []Link{}}, nil, err
 	}
 	page := Page{URL: u.String(), Links: []Link{}}
 
@@ -61,14 +71,14 @@ func (c *Client) Fetch(ctx context.Context, rawURL string, maxChars int) (Page, 
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return page, errors.New("invalid URL")
+		return page, nil, errors.New("invalid URL")
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json;q=0.9,text/plain;q=0.8,*/*;q=0.5")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	res, err := c.http.Do(req)
 	if err != nil {
-		return page, humanize(ctx, err)
+		return page, nil, humanize(ctx, err)
 	}
 	defer res.Body.Close()
 	page.Status = res.StatusCode
@@ -76,7 +86,7 @@ func (c *Client) Fetch(ctx context.Context, rawURL string, maxChars int) (Page, 
 
 	body, bodyTruncated, err := readLimited(res.Body, maxFetchBody)
 	if err != nil {
-		return page, humanize(ctx, err)
+		return page, res.Header, humanize(ctx, err)
 	}
 
 	ctHeader := res.Header.Get("Content-Type")
@@ -93,7 +103,7 @@ func (c *Client) Fetch(ctx context.Context, rawURL string, maxChars int) (Page, 
 		body = toUTF8(body, ctHeader, true)
 		doc, err := html.Parse(bytes.NewReader(body))
 		if err != nil {
-			return page, errors.New("could not parse HTML")
+			return page, res.Header, errors.New("could not parse HTML")
 		}
 		ex := extract(doc, res.Request.URL)
 		page.Title, page.Description, text = ex.title, ex.description, ex.text
@@ -111,7 +121,7 @@ func (c *Client) Fetch(ctx context.Context, rawURL string, maxChars int) (Page, 
 	case strings.HasPrefix(mediaType, "text/") || isXMLType(mediaType):
 		text = string(toUTF8(body, ctHeader, false))
 	default:
-		return page, fmt.Errorf("unsupported content type: %s", mediaType)
+		return page, res.Header, fmt.Errorf("%w: %s", errUnsupportedType, mediaType)
 	}
 
 	text = strings.ToValidUTF8(text, "�")
@@ -119,9 +129,9 @@ func (c *Client) Fetch(ctx context.Context, rawURL string, maxChars int) (Page, 
 	page.Text = text
 	page.Truncated = cut || bodyTruncated
 	if res.StatusCode >= 400 {
-		return page, fmt.Errorf("HTTP %d %s", res.StatusCode, http.StatusText(res.StatusCode))
+		return page, res.Header, fmt.Errorf("HTTP %d %s", res.StatusCode, http.StatusText(res.StatusCode))
 	}
-	return page, nil
+	return page, res.Header, nil
 }
 
 func isJSONType(t string) bool {

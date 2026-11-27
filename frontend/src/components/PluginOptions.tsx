@@ -120,7 +120,7 @@ export function PluginOptions({ manifest }: { manifest: Manifest }) {
   );
 }
 
-function OptionField({
+export function OptionField({
   id,
   field,
   value,

@@ -523,3 +523,16 @@ Not checked: the real Wails/GTK window, the popover method (`ui.popover`) with a
 Checks: `tsc --noEmit` clean; vitest 39 files / 892 tests; Go `internal/plugins` and `internal/blocknote` tests pass; `build-sdk --check` OK (169 plugin methods, 10 events).
 
 Not checked: the real Wails/GTK window, macOS ⌘ shortcuts (only Ctrl was pressed), screen readers and touch.
+
+## Round 11 — editor link toolbar, link clicks, selection toolbar (2026-11-27)
+
+Scope: `EditorToolbars.tsx` (new), `PageView.tsx` link handling, `styles/editor-toolbars.css`.
+Stills via scripted Playwright against the server build (`/tmp/nrh/lt.mjs`), light/dark × 1366/390; `film --gate` does not apply to app screens.
+
+- **Link toolbar**: favicon (or page icon / mail) + host in bold, path muted; clicking it opens the link. Then Edit (URL + text form, Enter/Esc, app primary/secondary buttons), Copy (check for 1.4 s), Open in system browser (web links only), Remove (danger hover). BlockNote's default toolbar is turned off (`linkToolbar={false}`) — before this, both rendered on top of each other.
+- **Hidden while text is selected** so it never stacks on the selection toolbar.
+- **Clicks**: link click → in-app browser tab (pref "Open links from pages here", now on by default); Ctrl/⌘ or middle click → background tab; Shift → system browser; Alt → place caret. `links.onClick: () => false` stops BlockNote's own `window.open` (it opened a second tab). Ctrl/Shift mousedown on a link is swallowed so ProseMirror doesn't select the block.
+- **Selection toolbar**: Paragraph select (incl. Callout) | B I U S code | link, colour, alignment menu (icon shows current) | Ask AI menu (improve, fix, shorter, simpler, translate… / explain, summarize, ask…). Nest/unnest buttons dropped (Tab / Shift+Tab).
+- **Placement**: `offset 8, flip, shift(8), size` middleware — both toolbars stay inside the pane; at 390 the selection toolbar wraps to two rows and the link toolbar ellipsises the path.
+- Checks per run: one link toolbar, one tab per click, Ctrl+click opens in background and stays on the page, toolbar target opens a browser tab, 8 AI items, 4 align items, edit form, no console errors.
+- Known: while the caret sits inside a link, hovering that same link doesn't re-show the toolbar (BlockNote rule) until you click elsewhere.

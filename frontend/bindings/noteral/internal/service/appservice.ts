@@ -43,6 +43,14 @@ export function Bootstrap(): $CancellablePromise<$models.Bootstrap> {
     return $Call.ByID(1042870756);
 }
 
+/**
+ * BrowserLoad fetches a page for the in-app browser: its readable Markdown,
+ * and whether the site allows being shown in a frame.
+ */
+export function BrowserLoad(rawURL: string): $CancellablePromise<web$0.BrowsePage> {
+    return $Call.ByID(2738974754, rawURL);
+}
+
 export function CancelAIStream(requestID: string): $CancellablePromise<void> {
     return $Call.ByID(2795150786, requestID);
 }
@@ -138,6 +146,22 @@ export function GetAISettings(): $CancellablePromise<string> {
 
 export function GetBacklinks(workspaceID: string, pageID: string): $CancellablePromise<store$0.PageMeta[] | null> {
     return $Call.ByID(114972066, workspaceID, pageID);
+}
+
+/**
+ * GetBrowserState returns the workspace's saved browser tabs, bookmarks and
+ * history as a JSON object.
+ */
+export function GetBrowserState(workspaceID: string): $CancellablePromise<string> {
+    return $Call.ByID(2671956075, workspaceID);
+}
+
+/**
+ * GetCommunityReadme reads a plugin repository's README for the store's
+ * details page. Markdown is empty when the repository has none.
+ */
+export function GetCommunityReadme(repo: string): $CancellablePromise<plugins$0.Readme> {
+    return $Call.ByID(2207295333, repo);
 }
 
 /**
@@ -323,6 +347,13 @@ export function SaveAsset(workspaceID: string, pageID: string, filename: string,
 }
 
 /**
+ * SaveBrowserState stores the workspace's browser tabs, bookmarks and history.
+ */
+export function SaveBrowserState(workspaceID: string, doc: string): $CancellablePromise<void> {
+    return $Call.ByID(1357774426, workspaceID, doc);
+}
+
+/**
  * SaveCustomizations replaces the customization document.
  */
 export function SaveCustomizations(doc: string): $CancellablePromise<void> {
@@ -413,4 +444,54 @@ export function WebFetch(rawURL: string, maxChars: number): $CancellablePromise<
  */
 export function WebSearch(query: string, limit: number): $CancellablePromise<web$0.SearchResponse> {
     return $Call.ByID(570042044, query, limit);
+}
+
+/**
+ * ClearPluginStorage removes the keys in a scope that start with prefix.
+ */
+export function ClearPluginStorage(id: string, scope: string, prefix: string): $CancellablePromise<number> {
+    return $Call.ByID(1649542965, id, scope, prefix);
+}
+
+/**
+ * DeletePluginStorage removes one key.
+ */
+export function DeletePluginStorage(id: string, scope: string, key: string): $CancellablePromise<void> {
+    return $Call.ByID(3891214115, id, scope, key);
+}
+
+/**
+ * GetPluginStorage returns the raw JSON a plugin stored under key ("" if none).
+ * scope is "" for global storage or a workspace id.
+ */
+export function GetPluginStorage(id: string, scope: string, key: string): $CancellablePromise<string> {
+    return $Call.ByID(1021693390, id, scope, key);
+}
+
+/**
+ * GetPluginStorageUsage totals a plugin's storage across scopes.
+ */
+export function GetPluginStorageUsage(id: string): $CancellablePromise<plugins$0.StorageUsage> {
+    return $Call.ByID(1482840073, id);
+}
+
+/**
+ * ListPluginStorage lists a plugin's keys in a scope that start with prefix.
+ */
+export function ListPluginStorage(id: string, scope: string, prefix: string): $CancellablePromise<plugins$0.StorageEntry[] | null> {
+    return $Call.ByID(2279827454, id, scope, prefix);
+}
+
+/**
+ * SetPluginStorage stores raw JSON under key; "" or null deletes it.
+ */
+export function SetPluginStorage(id: string, scope: string, key: string, value: string): $CancellablePromise<void> {
+    return $Call.ByID(3802978786, id, scope, key, value);
+}
+
+/**
+ * ReadPluginFile returns a file from a plugin's installed bundle as text or base64.
+ */
+export function ReadPluginFile(id: string, path: string, encoding: string): $CancellablePromise<string> {
+    return $Call.ByID(3461194463, id, path, encoding);
 }

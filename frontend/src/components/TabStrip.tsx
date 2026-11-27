@@ -24,7 +24,9 @@ import {
   writeTabDrag,
 } from "../lib/dragTab";
 import { paneList, type PaneNode } from "../lib/panes";
-import { isHomeTab, kindOf, useAppStore } from "../store";
+import { isHomeTab, isVirtualTab, isWebTab, kindOf, useAppStore } from "../store";
+import { useBrowserStore } from "../browser/store";
+import { WebTabIcon } from "../browser/WebTabIcon";
 import { PageIcon } from "./PageIcon";
 import { KindIcon } from "./KindIcon";
 
@@ -52,6 +54,7 @@ function revealInTree(pageId: string) {
 export function TabStrip({ pane }: TabStripProps) {
   const pages = useAppStore((state) => state.pages);
   const homeTabs = useAppStore((state) => state.homeTabs);
+  const webTabs = useBrowserStore((state) => state.data.tabs);
   const layout = useAppStore((state) => state.layout);
   const maximizedPaneId = useAppStore((state) => state.maximizedPaneId);
   const selectTab = useAppStore((state) => state.selectTab);
@@ -121,8 +124,7 @@ export function TabStrip({ pane }: TabStripProps) {
 
   const openTabMenu = (event: { clientX: number; clientY: number; preventDefault: () => void }, tabId: string) => {
     const state = useAppStore.getState();
-    const home = isHomeTab(tabId);
-    const page = home ? undefined : pageById.get(tabId);
+    const page = isVirtualTab(tabId) ? undefined : pageById.get(tabId);
     const index = pane.tabs.indexOf(tabId);
     const closable = (id: string) => !(isHomeTab(id) && paneCount === 1 && pane.tabs.length === 1);
     const others = pane.tabs.filter((id) => id !== tabId);
@@ -165,7 +167,19 @@ export function TabStrip({ pane }: TabStripProps) {
           } satisfies PopupMenuItem]
         : []),
       { id: "new-tab", label: "New tab", icon: "plus", hint: "Ctrl+T", run: () => openHomeTab(undefined, pane.id) },
+      { id: "new-browser-tab", label: "New browser tab", icon: "globe", run: () => void useBrowserStore.getState().open("", { paneId: pane.id }) },
     ];
+    if (isWebTab(tabId)) {
+      const browser = useBrowserStore.getState();
+      const location = browser.tab(tabId).entries[browser.tab(tabId).index] ?? "";
+      if (/^https?:/i.test(location)) {
+        items.push(
+          { type: "separator" },
+          { id: "web-copy", label: "Copy address", icon: "link", run: () => void navigator.clipboard?.writeText(location) },
+          { id: "web-duplicate", label: "Duplicate tab", icon: "copy", run: () => void browser.open(location, { paneId: pane.id }) },
+        );
+      }
+    }
     if (page) {
       items.push(
         { type: "separator" },
@@ -198,9 +212,10 @@ export function TabStrip({ pane }: TabStripProps) {
         const settings = homeTabs[tabId];
         return (settings ? HOME_TEMPLATE_LABELS[settings.template] : "") || "Home";
       }
+      if (isWebTab(tabId)) return webTabs[tabId]?.title || "New tab";
       return pages.find((page) => page.id === tabId)?.title || "Untitled";
     },
-    [homeTabs, pages],
+    [homeTabs, pages, webTabs],
   );
 
   const focusTab = useCallback(
@@ -349,6 +364,8 @@ export function TabStrip({ pane }: TabStripProps) {
               >
                 {home ? (
                   <House size={13} className="tab-home-icon" />
+                ) : isWebTab(tabId) ? (
+                  <WebTabIcon tabId={tabId} />
                 ) : (
                   <span className="tab-icon" aria-hidden="true">
                     <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<KindIcon page={pageById.get(tabId)} size={13} />} />
@@ -509,6 +526,8 @@ export function TabStrip({ pane }: TabStripProps) {
                           >
                             {home ? (
                               <House size={13} className="tab-home-icon" />
+                            ) : isWebTab(tabId) ? (
+                              <WebTabIcon tabId={tabId} />
                             ) : (
                               <span className="tab-icon" aria-hidden="true">
                                 <PageIcon value={pageById.get(tabId)?.icon} size={13} fallback={<KindIcon page={pageById.get(tabId)} size={13} />} />
@@ -539,8 +558,8 @@ export function TabStrip({ pane }: TabStripProps) {
                       context={{
                         menu: "tab",
                         tabKey: pane.activeTabId,
-                        pageId: pane.activeTabId && !isHomeTab(pane.activeTabId) ? pane.activeTabId : undefined,
-                        kind: pane.activeTabId && !isHomeTab(pane.activeTabId) ? kindOf(pageById.get(pane.activeTabId)) : "home",
+                        pageId: pane.activeTabId && !isVirtualTab(pane.activeTabId) ? pane.activeTabId : undefined,
+                        kind: pane.activeTabId && !isVirtualTab(pane.activeTabId) ? kindOf(pageById.get(pane.activeTabId)) : isWebTab(pane.activeTabId) ? "web" : "home",
                       }}
                       onDone={() => setMenuOpen(false)}
                     />

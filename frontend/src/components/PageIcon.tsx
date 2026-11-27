@@ -47,6 +47,11 @@ export function parsePageIcon(value: string | undefined): ParsedPageIcon | null 
   }
   const asset = raw.startsWith("upload:") ? raw.slice(7) : raw;
   if (asset.startsWith("/__assets/") && !/["\\\n\r]/.test(asset)) return { kind: "image", src: asset };
+  // Plugin contributions name icons plainly ("pencil-ruler"), as the SDK docs describe.
+  if (/^[a-z][a-z0-9-]*$/.test(raw)) {
+    const name = resolveIconName(raw);
+    if (name) return { kind: "lucide", name };
+  }
   if (raw.length <= 12 && !/[/:.]/.test(raw)) return { kind: "emoji", char: raw };
   return null;
 }

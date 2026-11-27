@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { commandRegistry } from "../lib/commands";
 import { editorBridge } from "../lib/editorBridge";
+import { diffPages, isEmpty, MAX_PAGE_EVENTS, summary as pageSummary, type PageLike } from "../lib/pageEvents";
 import { handlerFor } from "../sdk-host/registry";
 import type { CallContext } from "../sdk-host/handlers";
 import { useAppStore } from "../store";
@@ -81,11 +82,57 @@ export function PluginHost() {
     if (workspaceId) void emitFrom("workspace:opened", "workspaces.current");
   }, [workspaceId]);
 
+  // page:saved — any document whose revision went up (editor saves and pages.write alike).
   useEffect(() => {
-    if (!pluginRuntime.wants("pages:changed")) return;
-    const timer = window.setTimeout(() => pluginRuntime.emit("pages:changed", { count: pageCount }), 250);
+    const revisions = new Map<string, number>();
+    for (const [id, doc] of Object.entries(useAppStore.getState().documents)) revisions.set(id, doc.revision);
+    const timers = new Map<string, number>();
+    const stop = useAppStore.subscribe((state, previous) => {
+      if (state.documents === previous.documents) return;
+      for (const [id, doc] of Object.entries(state.documents)) {
+        const before = revisions.get(id);
+        revisions.set(id, doc.revision);
+        if (before === undefined || doc.revision <= before || !pluginRuntime.wants("page:saved")) continue;
+        window.clearTimeout(timers.get(id));
+        timers.set(id, window.setTimeout(() => {
+          timers.delete(id);
+          const title = useAppStore.getState().pages.find((page) => page.id === id)?.title ?? "";
+          pluginRuntime.emit("page:saved", { pageId: id, title });
+        }, 400));
+      }
+    });
+    return () => {
+      stop();
+      for (const timer of timers.values()) window.clearTimeout(timer);
+    };
+  }, []);
+
+  // Page lifecycle events: diff the page list against the last snapshot plugins saw.
+  // A workspace switch resets the snapshot instead of reporting every page as new.
+  const pageSnapshot = useRef<{ workspaceId: string; pages: PageLike[] }>({ workspaceId: "", pages: [] });
+  useEffect(() => {
+    const snapshot = pageSnapshot.current;
+    if (snapshot.workspaceId !== workspaceId) {
+      pageSnapshot.current = { workspaceId, pages: pagesRef };
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const before = pageSnapshot.current.pages;
+      pageSnapshot.current = { workspaceId, pages: pagesRef };
+      const changes = diffPages(before, pagesRef);
+      if (isEmpty(changes)) return;
+      const emitEach = (event: string, list: unknown[]) => {
+        if (!list.length || !pluginRuntime.wants(event)) return;
+        for (const item of list.slice(0, MAX_PAGE_EVENTS)) pluginRuntime.emit(event, item);
+      };
+      emitEach("page:created", changes.created);
+      emitEach("page:renamed", changes.renamed);
+      emitEach("page:moved", changes.moved);
+      emitEach("page:deleted", changes.deleted);
+      if (pluginRuntime.wants("pages:changed")) pluginRuntime.emit("pages:changed", pageSummary(changes, pageCount));
+    }, 250);
     return () => window.clearTimeout(timer);
-  }, [pagesRef, pageCount]);
+  }, [pagesRef, pageCount, workspaceId]);
 
   useEffect(() => {
     let timer = 0;

@@ -23,7 +23,9 @@ export type PropertyType =
   | "phone"
   | "createdTime"
   | "lastEdited"
-  | "formula";
+  | "formula"
+  /** A type a plugin or layer registers (databases.registerPropertyType); see `customType`. */
+  | "custom";
 
 export type OptionColor = "default" | "gray" | "brown" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink" | "red";
 export const OPTION_COLORS: OptionColor[] = ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
@@ -71,6 +73,10 @@ export interface Property {
   resultType?: FormulaResultType;
   /** How number values show (number properties and number formulas). Absent = plain number. */
   display?: NumberDisplay;
+  /** For "custom" properties: the registered property type id, e.g. "rating". */
+  customType?: string;
+  /** For "custom" properties: the per-property options the type's config fields edit. */
+  config?: Record<string, unknown>;
 }
 
 export type FormulaResultType = "text" | "number" | "checkbox" | "date";
@@ -446,12 +452,35 @@ export const VIEW_TYPES: { type: ViewType; name: string }[] = [
 ];
 
 export function typeName(type: PropertyType): string {
+  if (type === "custom") return "Plugin type";
   return PROPERTY_TYPES.find((item) => item.type === type)?.name ?? type;
 }
 
 export function uid(prefix: string): string {
   const random = Math.random().toString(36).slice(2, 8);
   return `${prefix}_${Date.now().toString(36).slice(-4)}${random}`;
+}
+
+/**
+ * How a custom property type's values behave for filters, sorts, groups and calculations.
+ * Set by lib/contributions (which knows the registered types); pure modules stay pure.
+ */
+let customValueType: (customType: string) => FormulaResultType | undefined = () => undefined;
+export function setCustomValueTypeResolver(resolve: (customType: string) => FormulaResultType | undefined) {
+  customValueType = resolve;
+}
+
+function customResult(property: Property): FormulaResultType {
+  return (property.customType && customValueType(property.customType)) || "text";
+}
+
+/**
+ * A custom property's stored value: the value itself, or `{ value, ... }` when the type keeps
+ * extra fields. Sorting, filtering and grouping use the `value` part.
+ */
+export function customPrimitive(value: unknown): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value) && "value" in (value as Record<string, unknown>)) return (value as Record<string, unknown>).value;
+  return value;
 }
 
 export function isComputed(type: PropertyType): boolean {
@@ -463,11 +492,13 @@ export function isComputed(type: PropertyType): boolean {
  * a formula acts as the type of its results.
  */
 export function valueType(property: Property): PropertyType {
+  if (property.type === "custom") return customResult(property);
   return property.type === "formula" ? property.resultType ?? "text" : property.type;
 }
 
 /** The property as the type it behaves as (formulas → their result type). */
 export function asValueProperty(property: Property): Property {
+  if (property.type === "custom") return { ...property, type: customResult(property) };
   return property.type === "formula" ? { ...property, type: property.resultType ?? "text" } : property;
 }
 
@@ -645,6 +676,8 @@ export function cellValue(row: DatabaseRow, property: Property): unknown {
   if (property.id === TITLE_ID) return row.meta.title;
   if (property.type === "createdTime") return row.meta.createdAt;
   if (property.type === "lastEdited") return row.meta.updatedAt;
+  // Custom types (also when seen through asValueProperty) may store { value, ... }.
+  if (property.customType) return customPrimitive(row.values[property.id]);
   return row.values[property.id];
 }
 
@@ -722,6 +755,11 @@ export function formatNumber(value: unknown, format: NumberFormat = "number"): s
 
 /** Plain text of a cell, used for search, filters on text and exports. */
 export function cellText(row: DatabaseRow, input: Property): string {
+  if (input.type === "custom") {
+    const raw = row.values[input.id];
+    if (raw && typeof raw === "object" && !Array.isArray(raw) && typeof (raw as { text?: unknown }).text === "string") return (raw as { text: string }).text;
+    if (raw && typeof raw === "object" && !("value" in raw)) return JSON.stringify(raw).slice(0, 200);
+  }
   const property = asValueProperty(input);
   const value = cellValue(row, property);
   switch (property.type) {

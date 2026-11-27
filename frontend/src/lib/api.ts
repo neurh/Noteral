@@ -14,7 +14,7 @@ import type {
 } from "../../bindings/noteral/internal/plugins/models";
 import type { PickedPlugin, PluginEnvironment, PluginSource } from "../../bindings/noteral/internal/service/models";
 import type { ChatSummary, Model as AIModel, ProviderInput, ProviderView } from "../../bindings/noteral/internal/ai/models";
-import type { Page as WebPage, Request as WebRequest, Response as WebResponse, SearchResponse, SearchResult } from "../../bindings/noteral/internal/web/models";
+import type { BrowsePage, Page as WebPage, Request as WebRequest, Response as WebResponse, SearchResponse, SearchResult } from "../../bindings/noteral/internal/web/models";
 import type {
   AppSettings,
   PageDocument,
@@ -27,6 +27,7 @@ import type {
 
 export type {
   AIModel,
+  BrowsePage,
   ChatSummary,
   CommunityPlugin,
   PickedPlugin,
@@ -99,6 +100,7 @@ export const api = {
   installCatalogPlugin: (id: string, approved: string[]) => AppService.InstallCatalogPlugin(id, approved),
   fetchCommunityRegistry: (url = "") => AppService.FetchCommunityRegistry(url),
   getCommunityRelease: (repo: string, expectedId: string) => AppService.GetCommunityRelease(repo, expectedId),
+  getCommunityReadme: (repo: string) => AppService.GetCommunityReadme(repo),
   installCommunityPlugin: (repo: string, expectedId: string, approved: string[]) => AppService.InstallCommunityPlugin(repo, expectedId, approved),
   checkPluginUpdates: () => AppService.CheckPluginUpdates(),
   getPluginSource: (id: string) => AppService.GetPluginSource(id),
@@ -108,6 +110,13 @@ export const api = {
   getPluginRuntime: (id: string) => AppService.GetPluginRuntime(id),
   getPluginSettings: (id: string) => AppService.GetPluginSettings(id),
   savePluginSettings: (id: string, patch: Record<string, unknown>) => AppService.SavePluginSettings(id, patch),
+  getPluginStorage: (id: string, scope: string, key: string) => AppService.GetPluginStorage(id, scope, key),
+  setPluginStorage: (id: string, scope: string, key: string, value: string) => AppService.SetPluginStorage(id, scope, key, value),
+  deletePluginStorage: (id: string, scope: string, key: string) => AppService.DeletePluginStorage(id, scope, key),
+  listPluginStorage: (id: string, scope: string, prefix: string) => AppService.ListPluginStorage(id, scope, prefix).then((list) => list ?? []),
+  clearPluginStorage: (id: string, scope: string, prefix: string) => AppService.ClearPluginStorage(id, scope, prefix),
+  getPluginStorageUsage: (id: string) => AppService.GetPluginStorageUsage(id),
+  readPluginFile: (id: string, path: string, encoding: "text" | "base64") => AppService.ReadPluginFile(id, path, encoding),
 
   // Assistant: providers, streaming proxy, chats.
   listAIProviders: () => AppService.ListAIProviders(),
@@ -127,6 +136,12 @@ export const api = {
   // Free web tools (no API key): DuckDuckGo/Wikipedia search and readable fetch.
   webSearch: (query: string, limit = 8) => AppService.WebSearch(query, limit),
   webFetch: (url: string, maxChars = 20000) => AppService.WebFetch(url, maxChars),
+
+  // In-app browser: a readable copy of a page plus whether it may be framed,
+  // and the per-workspace browser document (tabs, bookmarks, history, prefs).
+  browserLoad: (url: string) => AppService.BrowserLoad(url),
+  getBrowserState: (workspaceId: string) => AppService.GetBrowserState(workspaceId),
+  saveBrowserState: (workspaceId: string, json: string) => AppService.SaveBrowserState(workspaceId, json),
 
   // Creator-mode customizations document (tokens, CSS snippets, layout).
   getCustomizations: () => AppService.GetCustomizations(),

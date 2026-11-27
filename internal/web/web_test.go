@@ -522,6 +522,14 @@ func TestDo(t *testing.T) {
 		t.Errorf("headers = %v", res.Headers)
 	}
 
+	res, err = c.Do(ctx, Request{Method: "POST", URL: srv.URL + "/echo", Body: base64.StdEncoding.EncodeToString([]byte("bin\x00ok")), BodyEncoding: "base64"})
+	if err != nil || res.Body != "got:bin\x00ok" && res.Body != base64.StdEncoding.EncodeToString([]byte("got:bin\x00ok")) {
+		t.Errorf("base64 body: %+v err %v", res, err)
+	}
+	if _, err := c.Do(ctx, Request{Method: "POST", URL: srv.URL + "/echo", Body: "%%%", BodyEncoding: "base64"}); err == nil {
+		t.Error("invalid base64 body should fail")
+	}
+
 	res, err = c.Do(ctx, Request{URL: srv.URL + "/bin"})
 	if err != nil {
 		t.Fatal(err)

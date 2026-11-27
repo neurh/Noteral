@@ -846,13 +846,26 @@ func (s *Store) GetBacklinks(workspaceID, pageID string) ([]PageMeta, error) {
 	return out, rows.Err()
 }
 
-const homeTabPrefix = "home:"
+const (
+	homeTabPrefix = "home:"
+	// webTabPrefix marks an in-app browser tab; its address lives in the
+	// workspace's browser state, not in the tab list.
+	webTabPrefix = "web:"
+)
 
-func isHomeTabID(id string) bool {
-	if !strings.HasPrefix(id, homeTabPrefix) || len(id) > 80 {
+func isHomeTabID(id string) bool { return isReservedTabID(id, homeTabPrefix) }
+
+func isWebTabID(id string) bool { return isReservedTabID(id, webTabPrefix) }
+
+// isVirtualTabID reports whether a tab is a Home or browser tab rather than a
+// page.
+func isVirtualTabID(id string) bool { return isHomeTabID(id) || isWebTabID(id) }
+
+func isReservedTabID(id, prefix string) bool {
+	if !strings.HasPrefix(id, prefix) || len(id) > 80 {
 		return false
 	}
-	suffix := id[len(homeTabPrefix):]
+	suffix := id[len(prefix):]
 	if suffix == "" {
 		return false
 	}
@@ -869,7 +882,7 @@ func newHomeTabID() string {
 }
 
 func activePageForTab(tabID string) string {
-	if isHomeTabID(tabID) {
+	if isVirtualTabID(tabID) {
 		return ""
 	}
 	return tabID
@@ -1034,7 +1047,7 @@ func normalizeHomeTabs(tabs []string, in map[string]HomeTabSettings) map[string]
 	return out
 }
 
-// normalizeTabState keeps known page tabs and reserved Home tabs, removes
+// normalizeTabState keeps known page tabs and reserved Home and browser tabs, removes
 // duplicates, and guarantees that a workspace always has at least one tab.
 func normalizeTabState(tabs []string, active string, valid map[string]bool) ([]string, string) {
 	seen := make(map[string]bool, len(tabs))
@@ -1043,7 +1056,7 @@ func normalizeTabState(tabs []string, active string, valid map[string]bool) ([]s
 		if len(clean) >= 50 {
 			break
 		}
-		if !valid[id] && !isHomeTabID(id) {
+		if !valid[id] && !isVirtualTabID(id) {
 			continue
 		}
 		if seen[id] {

@@ -36,7 +36,7 @@ export function RowProperties({ databaseId, rowId }: RowPropertiesProps) {
       </button>
       {db.schema.properties.map((property) => {
         const value = cellValue(row, property);
-        const empty = property.type !== "checkbox" && isEmptyValue(property.type === "date" ? dateStart(value) : value);
+        const empty = property.type !== "checkbox" && property.type !== "custom" && isEmptyValue(property.type === "date" ? dateStart(value) : value);
         const editable = isEditable(property);
         return (
           <div key={property.id} className="db-rowprop">
@@ -66,7 +66,7 @@ export function RowProperties({ databaseId, rowId }: RowPropertiesProps) {
                 else setEditing({ id: property.id, anchor: event.currentTarget });
               }}
             >
-              {empty ? <span className="db-rowprop-empty">Empty</span> : <CellDisplay property={property} row={row} />}
+              {empty ? <span className="db-rowprop-empty">Empty</span> : <CellDisplay property={property} row={row} db={db} onEdit={(anchor) => editable && setEditing({ id: property.id, anchor })} />}
             </div>
           </div>
         );
@@ -83,10 +83,10 @@ export function RowProperties({ databaseId, rowId }: RowPropertiesProps) {
       {adding ? (
         <Popover anchor={adding} onClose={() => setAdding(null)} width={230} label="Add a property">
           <TypeList
-            onPick={(type) => {
+            onPick={(type, customType) => {
               const anchor = adding;
               setAdding(null);
-              const property = addProperty(db, type);
+              const property = addProperty(db, type, { customType });
               setMenu({ property, anchor });
             }}
           />

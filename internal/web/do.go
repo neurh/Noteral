@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -16,7 +17,7 @@ import (
 const (
 	defaultDoTimeout = 15 * time.Second
 	maxDoTimeout     = 30 * time.Second
-	maxDoBody        = 2 << 20
+	maxDoBody        = 3 << 20
 
 	// BodyEncodingHeader is set to "base64" in Response.Headers when the
 	// response body was not valid UTF-8 and has been base64 encoded.
@@ -30,6 +31,8 @@ type Request struct {
 	Headers   map[string]string `json:"headers"`
 	Body      string            `json:"body"`
 	TimeoutMs int               `json:"timeoutMs"`
+	// BodyEncoding is "base64" when Body carries binary data; empty or "text" otherwise.
+	BodyEncoding string `json:"bodyEncoding,omitempty"`
 }
 
 // Response is the result of Do. Headers are flattened to their first value
@@ -80,7 +83,18 @@ func (c *Client) Do(ctx context.Context, r Request) (Response, error) {
 
 	var body io.Reader
 	if r.Body != "" && method != http.MethodHead {
-		body = strings.NewReader(r.Body)
+		switch r.BodyEncoding {
+		case "", "text":
+			body = strings.NewReader(r.Body)
+		case "base64":
+			raw, err := base64.StdEncoding.DecodeString(r.Body)
+			if err != nil {
+				return Response{}, errors.New("body is not valid base64")
+			}
+			body = bytes.NewReader(raw)
+		default:
+			return Response{}, fmt.Errorf("bodyEncoding must be text or base64")
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {

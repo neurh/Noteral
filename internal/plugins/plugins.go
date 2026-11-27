@@ -43,7 +43,7 @@ const (
 	sdkMajorMin = 1
 	sdkMajorMax = 2
 	// SDKVersion is the newest plugin SDK this host implements.
-	SDKVersion = "2.1.0"
+	SDKVersion = "2.3.0"
 )
 
 // ManifestFile and LegacyManifestFile are the two accepted manifest names. New
@@ -120,7 +120,7 @@ type SettingContribution struct {
 }
 
 var (
-	menuSlots    = map[string]bool{"page": true, "tree": true, "block": true, "tab": true, "status": true}
+	menuSlots    = map[string]bool{"page": true, "tree": true, "block": true, "tab": true, "status": true, "tabItem": true, "assistant": true, "treeSelection": true}
 	settingTypes = map[string]bool{"toggle": true, "text": true, "textarea": true, "number": true, "slider": true, "select": true, "color": true}
 	settingKeyRe = regexp.MustCompile(`^[a-zA-Z][\w.-]{0,63}$`)
 )
@@ -246,6 +246,7 @@ var allowedPermissions = map[string]bool{
 	"ui.notify":        true,
 	"ui.panel":         true,
 	"ui.modal":         true,
+	"ui.overlay":       true,
 	"ui.styles":        true,
 	"settings.read":    true,
 	"settings.write":   true,
@@ -259,6 +260,7 @@ var allowedPermissions = map[string]bool{
 	"commands.execute": true,
 	"clipboard":        true,
 	"network":          true,
+	"network.local":    true,
 	"blocks":           true,
 	"nodes":            true,
 	"home":             true,
@@ -633,6 +635,9 @@ func (m *Manager) Uninstall(id string) error {
 	if err := os.RemoveAll(base); err != nil {
 		return err
 	}
+	if err := m.removeStorage(id); err != nil {
+		return err
+	}
 	_, err := m.store.AppDB().Exec(`DELETE FROM plugin_state WHERE id=?`, id)
 	return err
 }
@@ -673,6 +678,10 @@ func (m *Manager) SaveSettings(id string, patch map[string]any) (map[string]any,
 	for k, v := range patch {
 		if len(k) > 80 {
 			return nil, fmt.Errorf("settings key is too long")
+		}
+		if v == nil {
+			delete(current, k)
+			continue
 		}
 		current[k] = v
 	}

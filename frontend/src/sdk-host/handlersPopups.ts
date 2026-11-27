@@ -7,15 +7,13 @@
  * A modal or popover view runs with its opener's owner and permissions and finishes with
  * `noteral.close(value)`, which resolves the call that opened it.
  */
-import { normalizeMenuItems, normalizeRect, popups } from "../lib/popups";
-import type { PopupOwner, PopupPlacement } from "../lib/popups";
+import { POPUP_PLACEMENTS, lastPointerPosition, normalizeMenuItems, normalizeRect, popups } from "../lib/popups";
+import type { PopoverRequest, PopupOwner, PopupPlacement, PopupRect } from "../lib/popups";
 import type { CallContext } from "./handlers";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Params = Record<string, any>;
 type Handler = (params: Params, ctx: CallContext) => unknown;
-
-const PLACEMENTS: readonly PopupPlacement[] = ["bottom-start", "bottom-end", "top-start", "top-end", "right-start", "left-start"];
 
 /** Who a popup view belongs to, from the calling context. */
 export function popupOwner(ctx: CallContext): PopupOwner {
@@ -30,9 +28,45 @@ function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function position(params: Params) {
-  const placement = PLACEMENTS.includes(params.placement) ? (params.placement as PopupPlacement) : undefined;
-  const anchor = normalizeRect(params.anchor);
+function rectOf(element: Element | null | undefined): PopupRect | undefined {
+  if (!element) return undefined;
+  const r = element.getBoundingClientRect();
+  return r.width || r.height ? { x: r.left, y: r.top, width: r.width, height: r.height } : undefined;
+}
+
+/**
+ * Named anchors, so plugin code without a DOM can place popups next to app things:
+ * "status:<widget id>" (the caller's own status widget), "block:<id>", "selection" and "pointer".
+ */
+function namedAnchor(name: string, ctx: CallContext): PopupRect | undefined {
+  if (typeof document === "undefined") return undefined;
+  if (name === "pointer") {
+    const at = lastPointerPosition();
+    return { x: at.x, y: at.y, width: 0, height: 0 };
+  }
+  if (name === "selection") {
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount) {
+      const r = selection.getRangeAt(0).getBoundingClientRect();
+      if (r.width || r.height) return { x: r.left, y: r.top, width: r.width, height: r.height };
+    }
+    return undefined;
+  }
+  const [kind, ...rest] = name.split(":");
+  const id = rest.join(":");
+  if (!id) return undefined;
+  if (kind === "status") {
+    const owner = popupOwner(ctx);
+    const key = `${owner.kind}:${owner.id}:${id}`;
+    return rectOf(document.querySelector(`[data-status-key="${CSS.escape(key)}"]`) ?? document.querySelector(`[data-status-key="${CSS.escape(id)}"]`));
+  }
+  if (kind === "block") return rectOf(document.querySelector(`.bn-block-outer[data-id="${CSS.escape(id)}"] .bn-block-content`) ?? document.querySelector(`[data-id="${CSS.escape(id)}"]`));
+  return undefined;
+}
+
+function position(params: Params, ctx?: CallContext) {
+  const placement = POPUP_PLACEMENTS.includes(params.placement) ? (params.placement as PopupPlacement) : undefined;
+  const anchor = typeof params.anchor === "string" && ctx ? namedAnchor(params.anchor, ctx) : normalizeRect(params.anchor);
   const x = num(params.x);
   const y = num(params.y);
   return { ...(anchor ? { anchor } : {}), ...(x !== undefined && y !== undefined ? { x, y } : {}), ...(placement ? { placement } : {}) };
@@ -78,17 +112,45 @@ export const POPUP_HANDLERS: Record<string, Handler> = {
       ...(p.dismissible === false ? { dismissible: false } : {}),
       ...(p.bare === true ? { bare: true } : {}),
     }),
-  "ui.popover": async (p, ctx) =>
-    popups.popover({
+  "ui.popover": async (p, ctx) => {
+    const parent = ctx.viewKey?.startsWith("popup:") ? Number(ctx.viewKey.slice(6)) : undefined;
+    const request: Omit<PopoverRequest, "kind"> = {
       owner: popupOwner(ctx),
       permissions: ctx.permissions ?? [],
       html: html(p),
       data: jsonData(p.data),
-      ...position(p),
+      ...position(p, ctx),
       ...(num(p.width) ? { width: p.width } : {}),
       ...(num(p.height) ? { height: p.height } : {}),
-    }),
-  "ui.closePopups": (_p, ctx) => {
-    popups.closeOwnedBy(popupOwner(ctx));
+      ...(num(p.maxHeight) ? { maxHeight: p.maxHeight } : {}),
+      ...(num(p.offset) !== undefined ? { offset: Math.max(-40, Math.min(80, p.offset)) } : {}),
+      ...(typeof p.name === "string" && p.name.trim() ? { name: p.name.trim().slice(0, 64) } : {}),
+      ...(p.bare === true ? { bare: true } : {}),
+      ...(p.persistent === true ? { persistent: true } : {}),
+      ...(p.escape === false ? { escape: false } : {}),
+      ...(parent !== undefined && Number.isFinite(parent) ? { parent } : {}),
+    };
+    // A status widget toggling its own popover: clicks on the widget shouldn't count as "outside".
+    if (typeof p.anchor === "string" && p.anchor.startsWith("status:")) {
+      const owner = request.owner;
+      request.ignore = `[data-status-key="${`${owner.kind}:${owner.id}:${p.anchor.slice(7)}`.replace(/["\\]/g, "")}"]`;
+    }
+    return popups.popover(request, { toggle: p.toggle === true });
+  },
+  "ui.updatePopover": (p, ctx) => {
+    const name = typeof p.name === "string" ? p.name.trim() : "";
+    const open = name ? popups.findPopover(popupOwner(ctx), name) : undefined;
+    if (!open) return false;
+    const patch: Parameters<typeof popups.updatePopover>[1] = {};
+    if (p.data !== undefined) patch.data = jsonData(p.data);
+    if (typeof p.html === "string" && p.html.trim()) patch.html = p.html;
+    if (num(p.width)) patch.width = p.width;
+    if (num(p.height)) patch.height = p.height;
+    Object.assign(patch, position(p, ctx));
+    return popups.updatePopover(open.id, patch);
+  },
+  "ui.closePopups": (p, ctx) => {
+    const name = typeof p.name === "string" && p.name.trim() ? p.name.trim() : undefined;
+    popups.closeOwnedBy(popupOwner(ctx), name);
   },
 };

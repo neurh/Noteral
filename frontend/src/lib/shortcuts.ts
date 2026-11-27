@@ -54,7 +54,7 @@ const RESERVED = new Set(
     "mod+shift+6", "mod+shift+7", "mod+shift+8", "mod+shift+9",
     "mod+shift+arrowup", "mod+shift+arrowdown", "mod+[", "mod+]",
     "mod+enter", "mod+backspace", "mod+delete", "mod+arrowleft", "mod+arrowright", "mod+arrowup", "mod+arrowdown",
-    "mod+home", "mod+end", "mod+tab", "mod+shift+tab", "mod+r", "mod+shift+r", "mod+q", "mod+=", "mod+-", "mod+0",
+    "mod+home", "mod+end", "mod+shift+o", "mod+tab", "mod+shift+tab", "mod+r", "mod+shift+r", "mod+q", "mod+=", "mod+-", "mod+0",
   ],
 );
 
